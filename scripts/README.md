@@ -21,7 +21,7 @@
 Qt 通过 [官方开源安装器](https://www.qt.io/download-qt-installer-oss)选择 **6.11.2**，只需桌面基础组件 qtbase（Core / Gui / Widgets / Test 及必需插件），不用 QML / WebEngine 或 GPL-only 模块。安装器可能同时展示其他组件，勿默认勾选。将 `QT_ROOT_DIR` 指向 kit 根目录。
 
 - macOS：准备 Xcode 15+ / 命令行工具；CMake 3.24+ 与 Ninja 可由开发者自行通过官方安装包或 Homebrew 安装（例如 `brew install cmake ninja`，脚本不会执行该命令）。
-- Windows：准备 Visual Studio 2022 C++ 桌面开发、Windows SDK、[CMake](https://cmake.org/download/)和 [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)。CMake 与 pwsh 加入当前用户 PATH。使用 VS 生成器，无需另装 Ninja 或手动运行 vcvars。
+- Windows：准备 Visual Studio 2022 C++ 桌面开发、Windows SDK、[CMake](https://cmake.org/download/)和 [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)。CMake 与 pwsh 加入当前用户 PATH。优先使用 VS 2022；兼容 VS 2026 宿主加装 MSVC v143 14.44 x64（需要 CMake ≥ 4.2）。脚本按已安装宿主选生成器并固定 `-T v143`，无需另装 Ninja 或手动运行 vcvars。
 - 可选的本地格式工具：已有 Python 3 时，可自行创建 `.venv`，在其中运行 `python -m pip install clang-format==18.1.8`，激活后执行 lint 脚本。只在需要格式检查时安装，不是应用构建的前置条件。
 
 环境脚本用 qmake 检查 **6.11.2**，Windows 还检查 MSVC kit；CMake `EXACT` 再次检查版本并拒绝静态 Qt。CI action、Qt、aqtinstall、py7zr 与 clang-format 均有固定版本或提交；runner 镜像和系统 SDK 随 `*-latest` 更新，详细版本以每次 CI 日志为准，不声称完整可复现构建。
@@ -33,9 +33,9 @@ Qt 通过 [官方开源安装器](https://www.qt.io/download-qt-installer-oss)�
 | `QT_ROOT_DIR` | Qt kit 根目录；未指定时从 PATH qmake 检测 |
 | `WAIBUSNAP_BUILD_DIR` | macOS 为仓库内 `build/macos`，Windows 为 `build/windows-x64`；建议自定义为绝对路径 |
 | `WAIBUSNAP_BUILD_TYPE` | `Release`；也接受 Debug / RelWithDebInfo / MinSizeRel；同一轮构建、测试、运行须保持一致 |
-| `MACOS_ARCHITECTURES` | 仅 macOS，默认 `uname -m`；可设 x86_64 或 `arm64;x86_64`（后两者待验证） |
+| `MACOS_ARCHITECTURES` | 仅 macOS，默认 `uname -m`；可设 x86_64 或 `arm64;x86_64`（x86_64 已通过 CI 交叉编译，通用二进制与 Intel 实机待验证） |
 
-macOS 配置固定部署下限 14.0，Windows 固定 VS 2022 x64。脚本不申请管理员权限、不变更系统策略。自定义架构请使用不同构建目录。
+macOS 配置固定部署下限 14.0，Windows 固定 MSVC v143 x64（宿主可为 VS 2022 / 2026）。脚本不申请管理员权限、不变更系统策略。自定义架构请使用不同构建目录。
 
 脚本始终开启 `BUILD_TESTING`。需要仅构建应用时，可手动使用相同 CMake 参数并传 `-DBUILD_TESTING=OFF`；此时既不查找 Qt Test，也不编译 `--smoke-test` 自动关闭入口。没有发布包入口，不能将该构建开关等同于发布验收。
 
@@ -49,7 +49,7 @@ macOS 配置固定部署下限 14.0，Windows 固定 VS 2022 x64。脚本不申�
 | Qt Test 6.11.2 | 测试可执行文件 | LGPLv3；不进入应用目标，[官方说明](https://doc.qt.io/qt-6.11/qttest-index.html) |
 | CMake / CTest ≥ 3.24 | 工程配置、构建调度、测试 | BSD 3-Clause；开发工具 |
 | Ninja | macOS 构建后端 | Apache-2.0；开发工具，runner 提供 |
-| Xcode / Apple SDK，MSVC 2022 / Windows SDK | 平台编译与系统头文件 | 各厂商 SDK / 工具许可；无新增应用库 |
+| Xcode / Apple SDK，MSVC v143 / Windows SDK | 平台编译与系统头文件 | 各厂商 SDK / 工具许可；无新增应用库 |
 | Python 3.14（CI） | 运行下载器与格式工具安装 | PSF；CI / 可选开发工具 |
 | PowerShell 7 | Windows 脚本宿主 | MIT；开发工具 |
 | clang-format 18.1.8 | 双端格式检查 | LLVM Apache-2.0 WITH LLVM-exception；PyPI 打包项目 MIT，[版本页](https://pypi.org/project/clang-format/18.1.8/) |
@@ -61,3 +61,5 @@ macOS 配置固定部署下限 14.0，Windows 固定 VS 2022 x64。脚本不申�
 安装器自身的 Python 传递包由其上游依赖解析；这些包不打包进应用。本轮不复制第三方 SDK 二进制、源码或许可证到仓库，也不产生可分发包。
 
 Qt 下载器说明：PyPI 的 aqtinstall 3.3.0 尚未支持 Qt 6.11 的 Windows 仓库新布局，首轮 CI 在获取 Updates.xml 时失败。因此 CI 将下载器锁定到已合入 [上游 PR #1000](https://github.com/miurahr/aqtinstall/pull/1000) 的提交 `8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b`，不跟随 master。此调整仅影响 CI 安装器，Qt 仍为 6.11.2。
+
+Windows runner 说明：`windows-latest` 在本次运行使用 Windows Server 2025 / VS 2026，包含 MSVC 14.44。脚本兼容该宿主并明确指定 v143，保留本地 VS 2022 路径；不把 Windows Server 的 CI 测试当作 Windows 11 实机验收。[官方镜像清单](https://github.com/actions/runner-images/blob/win25-vs2026/20260922.246/images/windows/Windows2025-VS2026-Readme.md)。

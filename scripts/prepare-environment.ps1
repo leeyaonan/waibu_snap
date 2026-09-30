@@ -9,9 +9,23 @@ foreach ($Tool in @('cmake', 'ctest')) {
     }
 }
 $VsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-if (-not (Test-Path $VsWhere)) { throw '请安装 Visual Studio 2022 C++ 桌面开发工具及 Windows SDK。' }
+if (-not (Test-Path $VsWhere)) { throw '请安装 Visual Studio C++ 桌面开发工具、MSVC v143 及 Windows SDK。' }
 $VsPath = & $VsWhere -latest -products '*' -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-if ($LASTEXITCODE -ne 0 -or -not $VsPath) { throw '未找到 Visual Studio 2022 C++ x64 工具链。' }
+if ($LASTEXITCODE -ne 0) { throw '查询 Visual Studio 2022 失败。' }
+$env:WAIBUSNAP_VS_GENERATOR = 'Visual Studio 17 2022'
+if (-not $VsPath) {
+    # 新 runner 使用 VS 2026 宿主，但仍显式选择其安装的 MSVC 2022 v143 工具集。
+    $VsPath = & $VsWhere -latest -products '*' -version '[18.0,19.0)' -requires Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64 -property installationPath
+    if ($LASTEXITCODE -ne 0 -or -not $VsPath) { throw '需要 VS 2022 C++，或 VS 2026 加装 MSVC v143 14.44 x64 工具集。' }
+    $env:WAIBUSNAP_VS_GENERATOR = 'Visual Studio 18 2026'
+    $CmakeVersion = & cmake --version
+    if ($LASTEXITCODE -ne 0) { throw '读取 CMake 版本失败。' }
+    if ($CmakeVersion[0] -notmatch 'cmake version (\d+\.\d+\.\d+)' -or [version]$Matches[1] -lt [version]'4.2.0') {
+        throw 'VS 2026 生成器需要 CMake 4.2 或更高版本。'
+    }
+}
+$env:WAIBUSNAP_VS_INSTANCE = $VsPath.Trim()
+Write-Host "构建宿主：$env:WAIBUSNAP_VS_GENERATOR；工具集：v143"
 if (-not $env:QT_ROOT_DIR) {
     $QmakeCommand = Get-Command qmake -ErrorAction SilentlyContinue
     if (-not $QmakeCommand) { throw '请安装 Qt 6.11.2 MSVC 2022 x64 组件并设置 QT_ROOT_DIR。' }

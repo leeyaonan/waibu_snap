@@ -9,7 +9,7 @@
 环境脚本只检测并给出指引，不自动下载或安装。Qt 尚未安装时，由开发者自行决定安装时间。
 
 - macOS：Xcode 15+ / 对应命令行工具、CMake 3.24+、Ninja、Qt **6.11.2** macOS 桌面组件。
-- Windows：PowerShell **7+**（`pwsh`）、Visual Studio **2022** 的“使用 C++ 的桌面开发”（含 MSVC x64 和 Windows SDK）、CMake 3.24+、Qt **6.11.2 MSVC 2022 64-bit**。不使用 MinGW 版 Qt。
+- Windows：PowerShell **7+**（`pwsh`）、Visual Studio **2022** 的“使用 C++ 的桌面开发”（含 MSVC x64 和 Windows SDK）、CMake 3.24+、Qt **6.11.2 MSVC 2022 64-bit**。也可使用 VS 2026 宿主加装 **MSVC v143 14.44 x64**，此时 CMake 必须 ≥ 4.2。不使用 MinGW 版 Qt。
 - Qt 可通过 [Qt 开源下载入口](https://www.qt.io/download-qt-installer-oss)安装；组件选择固定 **6.11.2**，macOS 为 `macos`，Windows 为 `msvc2022_64`。不使用跟随最新版的包管理命令代替版本锁定。
 - `QT_ROOT_DIR` 指向具体 kit 根目录（其下有 `bin/qmake` 或 `bin/qmake.exe`）。可省略该变量并从 PATH 中的 qmake 查找；版本不匹配会报错。
 
@@ -29,13 +29,13 @@ bash scripts/run-app.sh
 
 默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本直接启动包内程序；关闭窗口即退出。测试由 CTest 设置 `QT_QPA_PLATFORM=offscreen`，不需要截图权限或可见桌面。
 
-Intel 交叉构建路径（**待验证**，使用独立构建目录）：
+Intel 交叉构建路径（CI 已通过编译，**Intel 实机运行待验证**，使用独立构建目录）：
 
 ```bash
 MACOS_ARCHITECTURES=x86_64 WAIBUSNAP_BUILD_DIR="$PWD/build/macos-x86_64" bash scripts/build-project.sh
 ```
 
-是否可构建取决于所装 Qt kit 的 x86_64 slice；Apple Silicon 上的交叉构建或 Rosetta 运行不能代替 Intel 实机验收。
+CI 使用 Qt kit 的 x86_64 slice 交叉编译成功；Apple Silicon 上的交叉构建或 Rosetta 运行不能代替 Intel 实机验收。
 
 ## Windows：构建、运行与测试
 
@@ -49,7 +49,7 @@ $env:QT_ROOT_DIR = 'C:/Qt/6.11.2/msvc2022_64'
 ./scripts/run-app.ps1
 ```
 
-默认构建 MSVC x64 Release，产物为 `build/windows-x64/bin/Release/WaibuSnap.exe`。测试和运行脚本会把所选 Qt 的 `bin` 加入当前进程 PATH，使 DLL 可被加载；无需将 Qt 加入系统级 PATH。
+默认构建 MSVC v143 x64 Release，产物为 `build/windows-x64/bin/Release/WaibuSnap.exe`。测试和运行脚本会把所选 Qt 的 `bin` 加入当前进程 PATH，使 DLL 可被加载；无需将 Qt 加入系统级 PATH。
 
 ## 格式与 CI
 

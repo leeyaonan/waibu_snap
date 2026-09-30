@@ -14,7 +14,7 @@
 
 ## 代码规范
 
-- C++17；macOS 原生桥接使用 Objective-C++17，Windows 使用 MSVC 2022。仅支持 Qt 6.11.2 动态库。
+- C++17；macOS 原生桥接使用 Objective-C++17，Windows 使用 MSVC v143（VS 2022，或 VS 2026 宿主加装 14.44 工具集）。仅支持 Qt 6.11.2 动态库。
 - `.clang-format` 采用 LLVM 基础风格、4 空格、100 列、Allman 大括号；统一 clang-format 18.1.8。理由是沿用成熟规则并保持 Qt 多层调用清晰，避免双端手工排版分歧。
 - 类名 PascalCase，函数 / 变量 camelCase，文件名 snake_case，命名空间 `waibusnap`；测试标识使用英文，注释与场景说明使用中文。
 - 资源优先 RAII；QObject 明确父对象 / 所有权；共享接口不暴露原生句柄。平台代码只放 `src/platform/macos/`、`src/platform/windows/`，契约放 `src/interfaces/`。
