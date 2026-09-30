@@ -50,12 +50,14 @@ macOS 配置固定部署下限 14.0，Windows 固定 VS 2022 x64。脚本不申�
 | CMake / CTest ≥ 3.24 | 工程配置、构建调度、测试 | BSD 3-Clause；开发工具 |
 | Ninja | macOS 构建后端 | Apache-2.0；开发工具，runner 提供 |
 | Xcode / Apple SDK，MSVC 2022 / Windows SDK | 平台编译与系统头文件 | 各厂商 SDK / 工具许可；无新增应用库 |
-| Python 3.12（CI） | 运行下载器与格式工具安装 | PSF；CI / 可选开发工具 |
+| Python 3.14（CI） | 运行下载器与格式工具安装 | PSF；CI / 可选开发工具 |
 | PowerShell 7 | Windows 脚本宿主 | MIT；开发工具 |
 | clang-format 18.1.8 | 双端格式检查 | LLVM Apache-2.0 WITH LLVM-exception；PyPI 打包项目 MIT，[版本页](https://pypi.org/project/clang-format/18.1.8/) |
-| aqtinstall 3.3.0 | CI 从 Qt 下载站安装指定 qtbase | MIT；仅 CI，[源码](https://github.com/miurahr/aqtinstall) |
-| py7zr 1.1.0（安装 action 默认锁定） | CI 解压 Qt 归档 | LGPL-2.1-or-later；仅 CI，不进入应用 |
+| aqtinstall 固定提交 `8c3695d4…` | CI 从 Qt 下载站安装指定 qtbase | MIT；仅 CI，[源码](https://github.com/miurahr/aqtinstall) |
+| py7zr 1.1.0 | CI 解压 Qt 归档 | LGPL-2.1-or-later；仅 CI，不进入应用 |
 | jurplel/install-qt-action（固定 SHA） | CI Qt 下载 / 缓存及环境设置 | MIT；仅 CI，[源码](https://github.com/jurplel/install-qt-action) |
 | actions/checkout、actions/setup-python（固定 SHA） | CI 源码与 Python 准备 | MIT；仅 CI |
 
 安装器自身的 Python 传递包由其上游依赖解析；这些包不打包进应用。本轮不复制第三方 SDK 二进制、源码或许可证到仓库，也不产生可分发包。
+
+Qt 下载器说明：PyPI 的 aqtinstall 3.3.0 尚未支持 Qt 6.11 的 Windows 仓库新布局，首轮 CI 在获取 Updates.xml 时失败。因此 CI 将下载器锁定到已合入 [上游 PR #1000](https://github.com/miurahr/aqtinstall/pull/1000) 的提交 `8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b`，不跟随 master。此调整仅影响 CI 安装器，Qt 仍为 6.11.2。
