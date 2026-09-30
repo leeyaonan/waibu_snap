@@ -20,15 +20,18 @@ tmp/
 .env.*
 !.env.example
 
-# ============ 依赖与构建产物（占位，技术选型后按实际情况调整） ============
-node_modules/
+# ============ 构建与本地工具产物 ============
+.venv/
 dist/
 build/
+build-*/
 out/
-target/
 release/
+CMakeUserPresets.json
+compile_commands.json
+*.user
 
-# ============ 平台打包产物（占位） ============
+# ============ 平台打包产物 ============
 *.dmg
 *.pkg
 *.exe

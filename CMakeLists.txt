@@ -1,0 +1,40 @@
+cmake_minimum_required(VERSION 3.24)
+
+project(WaibuSnap VERSION 0.0.1 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 17)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+    set(CMAKE_OBJCXX_EXTENSIONS OFF)
+elseif(NOT WIN32)
+    message(FATAL_ERROR "当前工程仅支持 macOS 和 Windows。")
+endif()
+
+find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Gui Widgets)
+foreach(component IN ITEMS Core Gui Widgets)
+    get_target_property(qt_library_type Qt6::${component} TYPE)
+    if(NOT qt_library_type STREQUAL "SHARED_LIBRARY")
+        message(FATAL_ERROR "Qt ${component} 必须使用动态库，当前为 ${qt_library_type}。")
+    endif()
+endforeach()
+
+qt_standard_project_setup()
+include(CTest)
+
+add_library(waibusnap_options INTERFACE)
+if(MSVC)
+    target_compile_options(waibusnap_options INTERFACE /W4 /permissive- /utf-8)
+else()
+    target_compile_options(waibusnap_options INTERFACE -Wall -Wextra -Wpedantic)
+endif()
+
+add_subdirectory(src)
+if(BUILD_TESTING)
+    find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Test)
+    add_subdirectory(tests)
+endif()
