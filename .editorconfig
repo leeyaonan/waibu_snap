@@ -1,0 +1,16 @@
+# 跨平台编辑器统一规范（macOS / Windows 双机协作）
+# 缩进等语言相关规则待技术选型确定后按语言补充。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+# Windows 专用脚本
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
