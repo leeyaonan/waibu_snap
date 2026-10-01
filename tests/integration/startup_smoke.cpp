@@ -1,29 +1,43 @@
-#include "ui/startup_window.h"
-
+#include "ui/selection_overlay.h"
+#include <QApplication>
 #include <QProcess>
+#include <QSignalSpy>
 #include <QTest>
-
 class StartupSmokeTest final : public QObject
 {
     Q_OBJECT
-
   private slots:
-    void windowCanOpenAndClose()
+    void overlayCanPaintSelectAndCancel()
     {
-        // 双端：验证实际窗口的可见性及关闭后的状态。
-        waibusnap::StartupWindow window;
-        window.show();
-        QTRY_VERIFY(window.isVisible());
-        QVERIFY(window.close());
-        QVERIFY(!window.isVisible());
+        waibusnap::CaptureFrame frame;
+        frame.display.logicalGeometry = QRect(0, 0, 320, 200);
+        frame.display.devicePixelRatio = 2;
+        frame.pixels = QImage(640, 400, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(Qt::red);
+        frame.pixels.setDevicePixelRatio(2);
+        waibusnap::SelectionOverlay overlay(frame);
+        QSignalSpy painted(&overlay, &waibusnap::SelectionOverlay::firstPaintCompleted);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        QTRY_COMPARE(painted.count(), 1);
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(80, 60));
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(20, 10));
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(0).toRect(), QRect(40, 20, 120, 100));
+        QVERIFY(finished.first().at(1).toBool());
+        QVERIFY(!overlay.isVisible());
+        waibusnap::SelectionOverlay cancelled(frame);
+        QSignalSpy cancellation(&cancelled, &waibusnap::SelectionOverlay::finished);
+        cancelled.show();
+        QTest::keyClick(&cancelled, Qt::Key_Escape);
+        QCOMPARE(cancellation.count(), 1);
+        QVERIFY(!cancellation.first().at(1).toBool());
+        QVERIFY(!cancelled.isVisible());
     }
-
     void applicationCanStartAndExit()
     {
-        // 双端：启动真正的 .app 内可执行文件 / .exe，验证事件循环和动态库加载。
         const QString executable = qEnvironmentVariable("WAIBUSNAP_TEST_APP");
         QVERIFY2(!executable.isEmpty(), "请通过 CTest 设置应用路径后运行。");
-
         QProcess process;
         process.setProgram(executable);
         process.setArguments({QStringLiteral("--smoke-test")});
@@ -31,9 +45,18 @@ class StartupSmokeTest final : public QObject
         QVERIFY2(process.waitForStarted(5000), qPrintable(process.errorString()));
         QVERIFY2(process.waitForFinished(10000), qPrintable(process.errorString()));
         QCOMPARE(process.exitStatus(), QProcess::NormalExit);
-        QVERIFY2(process.exitCode() == 0, process.readAllStandardError().constData());
+        const QByteArray diagnostics = process.readAllStandardError();
+        QVERIFY2(process.exitCode() == 0, diagnostics.constData());
+        QVERIFY(diagnostics.contains("托盘生命周期已验证"));
+    }
+    void injectionRequiresExplicitTestMode()
+    {
+        QProcess process;
+        process.start(qEnvironmentVariable("WAIBUSNAP_TEST_APP"), {"--test-count", "2"});
+        QVERIFY(process.waitForFinished(5000));
+        QCOMPARE(process.exitCode(), 2);
+        QVERIFY(process.readAllStandardError().contains("--test-mode"));
     }
 };
-
 QTEST_MAIN(StartupSmokeTest)
 #include "startup_smoke.moc"
