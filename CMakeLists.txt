@@ -38,3 +38,22 @@ if(BUILD_TESTING)
     find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Test)
     add_subdirectory(tests)
 endif()
+
+# 构建时元数据与实际测量时元数据分别保存，防止测量工具误标构建 commit。
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    OUTPUT_VARIABLE WAIBUSNAP_BUILD_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(COMMAND git status --porcelain WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    OUTPUT_VARIABLE WAIBUSNAP_BUILD_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(WAIBUSNAP_BUILD_DIRTY)
+    set(WAIBUSNAP_BUILD_DIRTY_JSON true)
+else()
+    set(WAIBUSNAP_BUILD_DIRTY_JSON false)
+endif()
+if(APPLE)
+    execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE WAIBUSNAP_BUILD_SDK
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND xcrun --show-sdk-version OUTPUT_VARIABLE WAIBUSNAP_BUILD_SDK_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/build-metadata-$<CONFIG>.json" CONTENT
+"{\"commit\":\"${WAIBUSNAP_BUILD_COMMIT}\",\"dirty\":${WAIBUSNAP_BUILD_DIRTY_JSON},\"configuration\":\"$<CONFIG>\",\"compiler_path\":\"${CMAKE_CXX_COMPILER}\",\"compiler_id\":\"${CMAKE_CXX_COMPILER_ID}\",\"compiler_version\":\"${CMAKE_CXX_COMPILER_VERSION}\",\"qt_version\":\"${Qt6_VERSION}\",\"sdk\":\"${WAIBUSNAP_BUILD_SDK}\",\"sdk_version\":\"${WAIBUSNAP_BUILD_SDK_VERSION}\",\"deployment_target\":\"${CMAKE_OSX_DEPLOYMENT_TARGET}\",\"architecture\":\"${CMAKE_OSX_ARCHITECTURES}\"}\n")
