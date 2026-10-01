@@ -1,0 +1,8 @@
+# LLVM 提供成熟的 C++ / Objective-C++ 规则；4 空格与 100 列便于阅读 Qt 代码。
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+BreakBeforeBraces: Allman
+PointerAlignment: Left
+NamespaceIndentation: None
+FixNamespaceComments: false

@@ -1,5 +1,5 @@
 # 跨平台编辑器统一规范（macOS / Windows 双机协作）
-# 缩进等语言相关规则待技术选型确定后按语言补充。
+# C++ 与 Objective-C++ 的完整格式由 .clang-format 定义。
 root = true
 
 [*]
@@ -7,6 +7,11 @@ charset = utf-8
 end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml}]
+indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
