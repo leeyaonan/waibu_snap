@@ -74,4 +74,5 @@ jobs:
         run: |
           if [[ -d build ]]; then
             find build -name LastTest.log -type f -exec cat {} \;
+            find build -name '*-output.txt' -type f -exec cat {} \;
           fi

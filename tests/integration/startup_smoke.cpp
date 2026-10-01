@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QProcess>
 #include <QSignalSpy>
+#include <QString>
 #include <QTest>
 class StartupSmokeTest final : public QObject
 {
@@ -46,14 +47,20 @@ class StartupSmokeTest final : public QObject
         QVERIFY2(process.waitForFinished(10000), qPrintable(process.errorString()));
         QCOMPARE(process.exitStatus(), QProcess::NormalExit);
         const QByteArray diagnostics = process.readAllStandardError();
-        QVERIFY2(process.exitCode() == 0, diagnostics.constData());
+        QVERIFY2(process.exitCode() == 0,
+                 qPrintable(QStringLiteral("exitStatus=%1 exitCode=%2 stderr=%3")
+                                .arg(process.exitStatus() == QProcess::NormalExit
+                                         ? QStringLiteral("NormalExit")
+                                         : QStringLiteral("CrashExit"))
+                                .arg(process.exitCode())
+                                .arg(QString::fromUtf8(diagnostics))));
         QVERIFY(diagnostics.contains("托盘生命周期已验证"));
     }
     void injectionRequiresExplicitTestMode()
     {
         QProcess process;
         process.start(qEnvironmentVariable("WAIBUSNAP_TEST_APP"), {"--test-count", "2"});
-        QVERIFY(process.waitForFinished(5000));
+        QVERIFY2(process.waitForFinished(5000), qPrintable(process.errorString()));
         QCOMPARE(process.exitCode(), 2);
         QVERIFY(process.readAllStandardError().contains("--test-mode"));
     }
