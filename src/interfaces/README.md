@@ -1,7 +1,5 @@
-# 共享平台契约
+# 共享平台接口
 
-当前仅以 `platformName()` 验证共享声明与双端实现的编译连接。
+`global_hotkey.h`：F1 注册结果与回调；`display_topology.h`：显示器 ID、逐屏逻辑矩形、DPR、布局版本与光标定位；`capture_provider.h`：权限、异步单帧、不可变源像素及数值错误；`presentation_observer.h`：目标窗口刷新代理与取消句柄。`QImage` 自带物理尺寸、stride、sRGB 与 DPR，`CaptureFrame` 记录捕获时刻。
 
-后续 `CaptureProvider`、`WindowCatalog`、`GlobalHotkey`、`DisplayTopology`、`PermissionService`、`PinWindowPolicy` 的接口也定义在此处，具体实现放入 `platform/macos/` 或 `platform/windows/`。本轮不提前虚构这些功能的方法或成功结果。
-
-跨层数据必须明确显示器 ID、坐标空间、物理像素尺寸 / stride、色彩信息、捕获时间与布局版本。系统句柄与系统头文件只能存在于平台目录。
+接口只含 Qt / C++ 值类型；不暴露 CGImage、EventHotKeyRef、NSWindow 或 HWND。系统对象只在平台目录解析与释放。Windows 提供可编译桩并如实反馈未实现。

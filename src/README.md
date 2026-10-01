@@ -2,15 +2,15 @@
 
 | 目录 | 职责 | 初始化状态 |
 | --- | --- | --- |
-| `app/` | 应用装配、启动、退出 | QApplication 与单个空窗口 |
-| `interfaces/` | 共享平台契约 | 最小平台名称接口；六个功能适配契约后续按规格定义 |
-| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | 仅编译入口，没有系统能力调用 |
-| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 仅编译入口，没有系统能力调用 |
-| `core/` | 图像与标注核心 | 仅职责占位 |
-| `session/` | 会话与文档状态 | 仅职责占位 |
-| `ui/` | Qt Widgets 视图与桌面入口 | 只有空窗口 |
+| `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口 |
+| `interfaces/` | 共享平台契约 | 热键、显示器定位、单帧捕获与呈现观察契约 |
+| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon / ScreenCaptureKit / AppKit 单帧原型及外部测量探针 |
+| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现 |
+| `core/` | 图像与标注核心 | 半开物理像素选区归一化 |
+| `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
+| `ui/` | Qt Widgets 视图与桌面入口 | 静态冻结画面、拖选与 Esc；无默认主窗口 |
 | `output/` | 输出与生命周期 | 仅职责占位 |
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
 
-图像坐标、色彩、输出与换栈条件沿用工作区技术选型第 7 节；本轮没有实现或验证这些产品契约。
+图像坐标、色彩、输出与换栈条件沿用工作区技术选型第 7 节；本轮仅落地 V02-1 的 macOS 最小切片；后续标注、输出与完整契约验收待验证。
