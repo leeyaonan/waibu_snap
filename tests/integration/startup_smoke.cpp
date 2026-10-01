@@ -1,9 +1,22 @@
 #include "ui/selection_overlay.h"
 #include <QApplication>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QSignalSpy>
 #include <QString>
 #include <QTest>
+
+namespace
+{
+// Windows 无控制台时 Qt 日志默认走调试器而不是 stderr；测试依赖子进程 stderr，
+// 显式启用官方开关（QT_FORCE_STDERR_LOGGING），双端行为一致。
+QProcessEnvironment childProcessEnvironment()
+{
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
+    return environment;
+}
+} // namespace
 class StartupSmokeTest final : public QObject
 {
     Q_OBJECT
@@ -42,6 +55,7 @@ class StartupSmokeTest final : public QObject
         QProcess process;
         process.setProgram(executable);
         process.setArguments({QStringLiteral("--smoke-test")});
+        process.setProcessEnvironment(childProcessEnvironment());
         process.start();
         QVERIFY2(process.waitForStarted(5000), qPrintable(process.errorString()));
         QVERIFY2(process.waitForFinished(10000), qPrintable(process.errorString()));
@@ -54,11 +68,13 @@ class StartupSmokeTest final : public QObject
                                          : QStringLiteral("CrashExit"))
                                 .arg(process.exitCode())
                                 .arg(QString::fromUtf8(diagnostics))));
-        QVERIFY(diagnostics.contains("托盘生命周期已验证"));
+        // 标记自带 ASCII 片段，避免 Windows 本地 8 位编码转换影响断言。
+        QVERIFY(diagnostics.contains("tray-lifecycle-verified"));
     }
     void injectionRequiresExplicitTestMode()
     {
         QProcess process;
+        process.setProcessEnvironment(childProcessEnvironment());
         process.start(qEnvironmentVariable("WAIBUSNAP_TEST_APP"), {"--test-count", "2"});
         QVERIFY2(process.waitForFinished(5000), qPrintable(process.errorString()));
         QCOMPARE(process.exitCode(), 2);

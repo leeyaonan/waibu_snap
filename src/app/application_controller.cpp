@@ -282,7 +282,7 @@ void ApplicationController::startSmokeTest()
                                                application_.exit(22);
                                                return;
                                            }
-                                           qInfo("托盘生命周期已验证");
+                                           qInfo("托盘生命周期已验证（tray-lifecycle-verified）");
                                            menu_.actions().last()->trigger();
                                        });
                                });
