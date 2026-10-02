@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QStringList>
 namespace waibusnap
 {
 namespace
@@ -45,5 +46,65 @@ QString AppSettings::saveHotkey(const QKeySequence& sequence) const
     if (settings.status() != QSettings::NoError)
         return QStringLiteral("设置文件写入失败。新键已生效，但重启后可能无法保留，请重试保存。");
     return {};
+}
+HotkeySettings::HotkeySettings(AppSettings settings, GlobalHotkey& hotkey,
+                               std::function<void()> handler)
+    : settings_(std::move(settings)), hotkey_(hotkey), handler_(std::move(handler)),
+      preferredSequence_(defaultScreenshotHotkey())
+{
+}
+HotkeyRegistration HotkeySettings::registerSequence(const QKeySequence& sequence)
+{
+    const auto registration = hotkey_.registerHotkey(sequence, handler_);
+    if (registration.enabled)
+        enabledSequence_ = sequence;
+    explanation_ = registration.explanation;
+    return registration;
+}
+HotkeyStartup HotkeySettings::initialize()
+{
+    const auto loaded = settings_.loadHotkey();
+    preferredSequence_ = loaded.sequence;
+    QStringList report;
+    QStringList warnings;
+    if (!loaded.explanation.isEmpty())
+    {
+        report.append(loaded.explanation);
+        warnings.append(loaded.explanation);
+    }
+    auto registration = registerSequence(preferredSequence_);
+    report.append(registration.explanation);
+    if (!registration.enabled && preferredSequence_ != defaultScreenshotHotkey())
+    {
+        warnings.append(registration.explanation);
+        report.append(QStringLiteral("存储截图键注册失败，尝试默认 F1。"));
+        preferredSequence_ = defaultScreenshotHotkey();
+        registration = registerSequence(preferredSequence_);
+        report.append(registration.explanation);
+    }
+    if (!registration.enabled)
+        warnings.append(registration.explanation);
+    return {report.join(QLatin1Char('\n')), warnings.join(QLatin1Char('\n'))};
+}
+QKeySequence HotkeySettings::currentSequence() const
+{
+    return enabled() ? enabledSequence_ : preferredSequence_;
+}
+QString HotkeySettings::tooltip() const
+{
+    return enabled() ? QStringLiteral("WaibuSnap · 截图键 %1")
+                           .arg(enabledSequence_.toString(QKeySequence::NativeText))
+                     : QStringLiteral("WaibuSnap · %1").arg(explanation_);
+}
+QString HotkeySettings::changeHotkey(const QKeySequence& sequence)
+{
+    const QString error = hotkeyValidationError(sequence);
+    if (!error.isEmpty())
+        return error;
+    const auto registration = registerSequence(sequence);
+    if (!registration.enabled)
+        return registration.explanation;
+    preferredSequence_ = sequence;
+    return settings_.saveHotkey(sequence);
 }
 }

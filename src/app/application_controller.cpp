@@ -1,5 +1,7 @@
 #include "app/application_controller.h"
+#include "core/window_snapping.h"
 #include "session/monotonic_clock.h"
+#include "ui/settings_dialog.h"
 #include <QAction>
 #include <QDebug>
 #include <QMessageBox>
@@ -10,7 +12,10 @@ namespace waibusnap
 {
 ApplicationController::ApplicationController(QApplication& application, RunOptions options)
     : application_(application), options_(std::move(options)), hotkey_(createGlobalHotkey()),
-      displays_(createDisplayTopology()), capture_(createCaptureProvider())
+      hotkeySettings_(AppSettings(options_.settingsFile), *hotkey_,
+                      [this] { trigger(QStringLiteral("hotkey")); }),
+      displays_(createDisplayTopology()), capture_(createCaptureProvider()),
+      windows_(createWindowEnumerator())
 {
     application_.setQuitOnLastWindowClosed(false);
     captureTimeout_.setSingleShot(true);
@@ -21,6 +26,8 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                     fail(6, QStringLiteral("截图会话超时，请重新尝试。"));
             });
     menu_.addAction(QStringLiteral("截图"), this, [this] { trigger(QStringLiteral("tray")); });
+    settingsAction_ =
+        menu_.addAction(QStringLiteral("设置…"), this, &ApplicationController::openSettings);
     menu_.addAction(QStringLiteral("退出"), this, &ApplicationController::quit);
     QPixmap icon(32, 32);
     icon.fill(Qt::transparent);
@@ -76,12 +83,14 @@ void ApplicationController::start()
         QTimer::singleShot(0, &application_, [this] { application_.exit(2); });
         return;
     }
-    const auto registration = hotkey_->registerF1([this] { trigger(QStringLiteral("hotkey")); });
-    tray_.setToolTip(QStringLiteral("WaibuSnap · %1").arg(registration.explanation));
+    const auto startup = hotkeySettings_.initialize();
+    qInfo().noquote() << startup.report;
+    tray_.setToolTip(hotkeySettings_.tooltip());
     tray_.show();
-    if (!registration.enabled)
-        tray_.showMessage(QStringLiteral("快捷键未启用"), registration.explanation,
-                          QSystemTrayIcon::Warning);
+    if (!startup.warning.isEmpty() && !options_.testMode)
+        tray_.showMessage(hotkeySettings_.enabled() ? QStringLiteral("截图键已回退")
+                                                    : QStringLiteral("快捷键未启用"),
+                          startup.warning, QSystemTrayIcon::Warning);
     if (options_.testMode)
     {
         // 仅受控模式有这些定时器；空闲采样必须走普通启动。
@@ -89,12 +98,32 @@ void ApplicationController::start()
                            [this] { trigger(QStringLiteral("injected")); });
     }
 }
+QString ApplicationController::changeHotkey(const QKeySequence& sequence)
+{
+    const QString error = hotkeySettings_.changeHotkey(sequence);
+    qInfo().noquote() << (error.isEmpty() ? hotkeySettings_.explanation() : error);
+    tray_.setToolTip(hotkeySettings_.tooltip());
+    return error;
+}
+void ApplicationController::openSettings()
+{
+    if (active_ || quitting_ || settingsOpen_)
+        return;
+    settingsOpen_ = true;
+    SettingsDialog dialog(
+        hotkeySettings_.currentSequence(),
+        [this](const QKeySequence& sequence) { return changeHotkey(sequence); },
+        hotkeySettings_.enabled() ? QString() : hotkeySettings_.explanation());
+    dialog.exec();
+    settingsOpen_ = false;
+}
 void ApplicationController::trigger(const QString& source)
 {
     const qint64 t0 = monotonicNs();
-    if (active_ || quitting_)
+    if (active_ || quitting_ || settingsOpen_)
         return;
     active_ = true;
+    settingsAction_->setEnabled(false);
     const quint64 token = ++token_;
     metrics_ = {};
     metrics_.sequence = ++sequence_;
@@ -144,7 +173,10 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     }
     metrics_.frameWidth = result.frame.pixels.width();
     metrics_.frameHeight = result.frame.pixels.height();
-    overlay_ = new SelectionOverlay(std::move(result.frame));
+    const auto listed = windows_->visibleWindows(result.frame.display);
+    const auto localWindows =
+        localWindowRects(listed.windows, result.frame.display.logicalGeometry);
+    overlay_ = new SelectionOverlay(std::move(result.frame), {}, localWindows, listed.error);
     overlay_->winId();
     metrics_.windowCreated = monotonicNs();
     connect(overlay_, &SelectionOverlay::finished, this,
@@ -213,6 +245,7 @@ void ApplicationController::finish(QRect pixels, int outcome)
     }
     const bool written = appendMetrics(options_.metricsFile, metrics_);
     active_ = false;
+    settingsAction_->setEnabled(!quitting_);
     if (!written)
         qCritical("无法写入会话测量日志。");
     if (options_.testMode && !quitting_)
@@ -244,7 +277,7 @@ void ApplicationController::quit()
     quitting_ = true;
     if (active_)
         finish({}, 9);
-    hotkey_.reset();
+    hotkey_->unregister();
     tray_.hide();
     application_.quit();
 }
@@ -255,7 +288,8 @@ void ApplicationController::startSmokeTest()
         0, this,
         [this]
         {
-            if (application_.quitOnLastWindowClosed() || menu_.actions().size() != 2 ||
+            if (application_.quitOnLastWindowClosed() || menu_.actions().size() != 3 ||
+                menu_.actions().at(1)->text() != QStringLiteral("设置…") ||
                 !QApplication::topLevelWidgets().contains(&menu_))
             {
                 application_.exit(20);
@@ -280,6 +314,31 @@ void ApplicationController::startSmokeTest()
                                            if (QApplication::topLevelWidgets().size() != 1)
                                            {
                                                application_.exit(22);
+                                               return;
+                                           }
+                                           QTimer::singleShot(
+                                               0, this,
+                                               [this]
+                                               {
+                                                   auto* dialog = qobject_cast<SettingsDialog*>(
+                                                       QApplication::activeModalWidget());
+                                                   if (!dialog)
+                                                   {
+                                                       application_.exit(23);
+                                                       return;
+                                                   }
+                                                   trigger(QStringLiteral("hotkey"));
+                                                   if (active_)
+                                                   {
+                                                       application_.exit(24);
+                                                       return;
+                                                   }
+                                                   dialog->reject();
+                                               });
+                                           settingsAction_->trigger();
+                                           if (settingsOpen_ || !settingsAction_->isEnabled())
+                                           {
+                                               application_.exit(25);
                                                return;
                                            }
                                            qInfo("托盘生命周期已验证（tray-lifecycle-verified）");
