@@ -297,6 +297,69 @@ class StartupSmokeTest final : public QObject
         drag(overlay, press, press + QPoint(20, 10));
         QCOMPARE(overlay.selection(), expected);
     }
+    void savedSelectionCanCopyLatestPixels()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QImage copied;
+        int calls = 0;
+        waibusnap::OverlayActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            ++calls;
+            return waibusnap::ImageOutputResult{true, {}};
+        };
+        waibusnap::SelectionOverlay overlay(sampleFrame(), actions);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {20, 10}, {80, 60});
+        const QString path = temporary.filePath(QStringLiteral("之前保存.png"));
+        QVERIFY(overlay.exportToPath(path));
+        QCOMPARE(calls, 0);
+        drag(overlay, {50, 35}, {60, 45});
+        auto* button = overlay.findChild<QPushButton*>(QStringLiteral("copyButton"));
+        QVERIFY(button);
+        QTest::mouseClick(button, Qt::LeftButton);
+        QCOMPARE(calls, 1);
+        QCOMPARE(copied.size(), QSize(120, 100));
+        QCOMPARE(copied.devicePixelRatio(), qreal(1));
+        QCOMPARE(copied.pixelColor(10, 10), QColor(Qt::red));
+        QCOMPARE(QImage(path).pixelColor(10, 10), QColor(Qt::green));
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(0).toRect(), QRect(60, 40, 120, 100));
+        QCOMPARE(finished.first().at(1).toInt(), 10);
+    }
+    void closeDuringSaveDialogDoesNotExport()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("不能保存.png"));
+        waibusnap::OverlayActions actions;
+        actions.chooseSavePath = [&](QWidget* parent, const QString&)
+        {
+            parent->close();
+            return path;
+        };
+        waibusnap::SelectionOverlay overlay(sampleFrame(), actions);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {20, 10}, {80, 60});
+        auto* button = overlay.findChild<QPushButton*>(QStringLiteral("saveButton"));
+        QVERIFY(button);
+        QTest::mouseClick(button, Qt::LeftButton);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(1).toInt(), 2);
+        QVERIFY(!QFileInfo::exists(path));
+    }
+    void reverseResizeStopsAtOnePhysicalPixel()
+    {
+        waibusnap::SelectionOverlay overlay(sampleFrame());
+        overlay.show();
+        drag(overlay, {80, 60}, {200, 140});
+        drag(overlay, {80, 60}, {300, 190});
+        QCOMPARE(overlay.selection(), QRect(399, 279, 1, 1));
+    }
     void overlayCanPaintSelectAndCancel()
     {
         waibusnap::CaptureFrame frame;
