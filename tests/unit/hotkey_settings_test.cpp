@@ -4,6 +4,38 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
+namespace
+{
+class FakeHotkey final : public waibusnap::GlobalHotkey
+{
+  public:
+    QStringList rejected;
+    QVector<QKeySequence> attempts;
+    QKeySequence enabled;
+    std::function<void()> handler;
+    std::function<void()> beforeRegistration;
+    waibusnap::HotkeyRegistration registerHotkey(const QKeySequence& sequence,
+                                                 std::function<void()> callback) override
+    {
+        attempts.append(sequence);
+        if (beforeRegistration)
+            beforeRegistration();
+        if (rejected.contains(sequence.toString(QKeySequence::PortableText)))
+            return {false, QStringLiteral("测试占用：%1，原绑定保留")
+                               .arg(sequence.toString(QKeySequence::NativeText))};
+        enabled = sequence;
+        handler = std::move(callback);
+        return {
+            true,
+            QStringLiteral("截图键 %1 已启用").arg(sequence.toString(QKeySequence::NativeText))};
+    }
+    void unregister() override
+    {
+        enabled = {};
+        handler = {};
+    }
+};
+}
 class HotkeySettingsTest final : public QObject
 {
     Q_OBJECT
@@ -100,6 +132,111 @@ class HotkeySettingsTest final : public QObject
         QVERIFY(!waibusnap::AppSettings(path + QStringLiteral("/child.ini"))
                      .saveHotkey(waibusnap::defaultScreenshotHotkey())
                      .isEmpty());
+    }
+    void startupFallbackChain_data()
+    {
+        QTest::addColumn<int>("scenario");
+        QTest::newRow("stored-success") << 0;
+        QTest::newRow("stored-fails-default-success") << 1;
+        QTest::newRow("both-fail") << 2;
+        QTest::newRow("invalid-default-success") << 3;
+        QTest::newRow("invalid-default-fails") << 4;
+    }
+    void startupFallbackChain()
+    {
+        QFETCH(int, scenario);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        waibusnap::AppSettings settings(path);
+        const QString stored = scenario >= 3 ? QStringLiteral("A") : QStringLiteral("Ctrl+Shift+2");
+        {
+            QSettings ini(path, QSettings::IniFormat);
+            ini.setValue(QStringLiteral("hotkey/sequence"), stored);
+            ini.sync();
+        }
+        FakeHotkey fake;
+        if (scenario == 1 || scenario == 2)
+            fake.rejected.append(QStringLiteral("Ctrl+Shift+2"));
+        if (scenario == 2 || scenario == 4)
+            fake.rejected.append(QStringLiteral("F1"));
+        waibusnap::HotkeySettings preferences(settings, fake, [] {});
+        const auto startup = preferences.initialize();
+        QCOMPARE(fake.attempts.size(),
+                 scenario == 1 || scenario == 2 ? qsizetype(2) : qsizetype(1));
+        QCOMPARE(preferences.enabled(), scenario != 2 && scenario != 4);
+        QCOMPARE(startup.warning.isEmpty(), scenario == 0);
+        if (scenario == 0)
+            QCOMPARE(preferences.currentSequence(), QKeySequence::fromString(stored));
+        else
+            QCOMPARE(preferences.currentSequence(), waibusnap::defaultScreenshotHotkey());
+        if (scenario >= 3)
+            QVERIFY(startup.report.contains(QStringLiteral("回退默认 F1")));
+        if (scenario == 1 || scenario == 2)
+            QVERIFY(startup.report.contains(QStringLiteral("尝试默认 F1")));
+        if (preferences.enabled())
+            QCOMPARE(preferences.tooltip(),
+                     QStringLiteral("WaibuSnap · 截图键 %1")
+                         .arg(fake.enabled.toString(QKeySequence::NativeText)));
+        else
+        {
+            QVERIFY(preferences.tooltip().contains(QStringLiteral("测试占用")));
+            QVERIFY(!preferences.tooltip().contains(QStringLiteral("已启用")));
+        }
+        QSettings ini(path, QSettings::IniFormat);
+        QCOMPARE(ini.value(QStringLiteral("hotkey/sequence")).toString(), stored);
+    }
+    void changeRegistersBeforeWritingAndFailurePreservesState()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        waibusnap::AppSettings settings(path);
+        QVERIFY(settings.saveHotkey(waibusnap::defaultScreenshotHotkey()).isEmpty());
+        FakeHotkey fake;
+        int triggers = 0;
+        waibusnap::HotkeySettings preferences(settings, fake, [&] { ++triggers; });
+        preferences.initialize();
+        const auto original = fake.enabled;
+        const auto chosen = QKeySequence::fromString(QStringLiteral("Ctrl+Shift+2"));
+        fake.rejected.append(QStringLiteral("Ctrl+Shift+2"));
+        QVERIFY(!preferences.changeHotkey(chosen).isEmpty());
+        QCOMPARE(fake.enabled, original);
+        QCOMPARE(preferences.currentSequence(), original);
+        QCOMPARE(settings.loadHotkey().sequence, original);
+        QCOMPARE(preferences.tooltip(), QStringLiteral("WaibuSnap · 截图键 F1"));
+        fake.handler();
+        QCOMPARE(triggers, 1);
+        const auto attempts = fake.attempts.size();
+        QVERIFY(!preferences.changeHotkey(QKeySequence(Qt::Key_A)).isEmpty());
+        QCOMPARE(fake.attempts.size(), attempts);
+        fake.rejected.clear();
+        fake.beforeRegistration = [&] { QCOMPARE(settings.loadHotkey().sequence, original); };
+        QVERIFY(preferences.changeHotkey(chosen).isEmpty());
+        QCOMPARE(fake.enabled, chosen);
+        QCOMPARE(preferences.currentSequence(), chosen);
+        QCOMPARE(settings.loadHotkey().sequence, chosen);
+        QCOMPARE(waibusnap::AppSettings(path).loadHotkey().sequence, chosen);
+        fake.handler();
+        QCOMPARE(triggers, 2);
+    }
+    void saveFailureDoesNotClaimPersistence()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("blocker"));
+        QFile blocker(path);
+        QVERIFY(blocker.open(QIODevice::WriteOnly));
+        blocker.close();
+        FakeHotkey fake;
+        waibusnap::HotkeySettings preferences(
+            waibusnap::AppSettings(path + QStringLiteral("/settings.ini")), fake, [] {});
+        const auto chosen = QKeySequence::fromString(QStringLiteral("Ctrl+Shift+2"));
+        const QString error = preferences.changeHotkey(chosen);
+        QVERIFY(error.contains(QStringLiteral("重启后可能无法保留")));
+        QVERIFY(preferences.enabled());
+        QCOMPARE(preferences.currentSequence(), chosen);
+        QVERIFY(preferences.tooltip().contains(chosen.toString(QKeySequence::NativeText)));
     }
 };
 QTEST_MAIN(HotkeySettingsTest)

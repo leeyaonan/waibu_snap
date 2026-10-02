@@ -1,8 +1,12 @@
+#include "app/app_settings.h"
+#include "app/hotkey_rules.h"
 #include "ui/selection_overlay.h"
+#include "ui/settings_dialog.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -44,6 +48,171 @@ class StartupSmokeTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void settingsMetadataValidationFailureAndPersistence()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        waibusnap::AppSettings settings(path);
+        const auto original = waibusnap::defaultScreenshotHotkey();
+        QVERIFY(settings.saveHotkey(original).isEmpty());
+        int registrations = 0;
+        QKeySequence enabled = original;
+        waibusnap::SettingsDialog dialog(original,
+                                         [&](const QKeySequence& sequence)
+                                         {
+                                             ++registrations;
+                                             if (registrations == 1)
+                                                 return QStringLiteral("测试注册冲突，原绑定保留");
+                                             enabled = sequence;
+                                             return settings.saveHotkey(sequence);
+                                         });
+        dialog.show();
+        auto* editor = dialog.findChild<QKeySequenceEdit*>(QStringLiteral("hotkeyEditor"));
+        auto* save = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
+        auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("cancelSettingsButton"));
+        auto* status = dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"));
+        auto* help = dialog.findChild<QLabel*>(QStringLiteral("hotkeyHelp"));
+        QVERIFY(editor && save && cancel && status && help);
+        QCOMPARE(editor->maximumSequenceLength(), qsizetype(1));
+        QCOMPARE(editor->keySequence(), original);
+        QCOMPARE(save->text(), QStringLiteral("保存"));
+        QCOMPARE(cancel->text(), QStringLiteral("取消"));
+        QVERIFY(help->text().contains(QStringLiteral("Fn / 地球键")));
+        QVERIFY(help->text().contains(QStringLiteral("不修改系统键盘设置")));
+        editor->setKeySequence(QKeySequence(Qt::Key_A));
+        QTest::mouseClick(save, Qt::LeftButton);
+        QCOMPARE(registrations, 0);
+        QVERIFY(dialog.isVisible());
+        QVERIFY(!status->text().isEmpty());
+        QCOMPARE(enabled, original);
+        QCOMPARE(settings.loadHotkey().sequence, original);
+        const auto chosen = QKeySequence::fromString(QStringLiteral("Ctrl+Shift+2"));
+        editor->setKeySequence(chosen);
+        QTest::mouseClick(save, Qt::LeftButton);
+        QCOMPARE(registrations, 1);
+        QVERIFY(dialog.isVisible());
+        QVERIFY(status->text().contains(QStringLiteral("原绑定保留")));
+        QCOMPARE(enabled, original);
+        QCOMPARE(settings.loadHotkey().sequence, original);
+        QTest::mouseClick(save, Qt::LeftButton);
+        QCOMPARE(registrations, 2);
+        QCOMPARE(enabled, chosen);
+        QCOMPARE(settings.loadHotkey().sequence, chosen);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(!dialog.isVisible());
+    }
+    void settingsCancelDoesNotSave_data()
+    {
+        QTest::addColumn<bool>("escape");
+        QTest::newRow("cancel") << false;
+        QTest::newRow("escape-editor") << true;
+    }
+    void settingsCancelDoesNotSave()
+    {
+        QFETCH(bool, escape);
+        int saves = 0;
+        waibusnap::SettingsDialog dialog(waibusnap::defaultScreenshotHotkey(),
+                                         [&](const QKeySequence&)
+                                         {
+                                             ++saves;
+                                             return QString();
+                                         });
+        dialog.show();
+        auto* editor = dialog.findChild<QKeySequenceEdit*>(QStringLiteral("hotkeyEditor"));
+        editor->setKeySequence(QKeySequence::fromString(QStringLiteral("Ctrl+Shift+2")));
+        if (escape)
+            QTest::keyClick(editor, Qt::Key_Escape);
+        else
+            QTest::mouseClick(
+                dialog.findChild<QPushButton*>(QStringLiteral("cancelSettingsButton")),
+                Qt::LeftButton);
+        QCOMPARE(saves, 0);
+        QVERIFY(!dialog.isVisible());
+        QCOMPARE(dialog.result(), int(QDialog::Rejected));
+    }
+    void windowHoverClickAndAdjustment()
+    {
+        const QVector<QRect> windows = {{20, 10, 60, 50}, {40, 20, 100, 80}};
+        waibusnap::SelectionOverlay overlay(sampleFrame(), {}, windows);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        QTest::mouseMove(&overlay, {50, 35});
+        QCOMPARE(overlay.hoveredWindowPixels(), QRect(40, 20, 120, 100));
+        QCOMPARE(overlay.cursor().shape(), Qt::CrossCursor);
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, {50, 35});
+        QVERIFY(overlay.hoveredWindowPixels().isEmpty());
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, {52, 36});
+        QCOMPARE(overlay.selection(), QRect(40, 20, 120, 100));
+        QCOMPARE(finished.count(), 0);
+        QVERIFY(overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"))->isVisible());
+        QTest::mouseMove(&overlay, {100, 60});
+        QVERIFY(overlay.hoveredWindowPixels().isEmpty());
+        drag(overlay, {50, 35}, {60, 45});
+        QCOMPARE(overlay.selection(), QRect(60, 40, 120, 100));
+        drag(overlay, {90, 70}, {100, 80});
+        QCOMPARE(overlay.selection(), QRect(60, 40, 140, 120));
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 50});
+        QVERIFY(overlay.selection().isEmpty());
+        QCOMPARE(overlay.hoveredWindowPixels(), QRect(80, 40, 200, 160));
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {50, 35});
+        QCOMPARE(overlay.selection(), QRect(40, 20, 120, 100));
+        drag(overlay, {200, 100}, {270, 160});
+        QCOMPARE(overlay.selection(), QRect(400, 200, 140, 120));
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {300, 180});
+        QVERIFY(overlay.selection().isEmpty());
+        QVERIFY(overlay.hoveredWindowPixels().isEmpty());
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {300, 180});
+        QVERIFY(overlay.selection().isEmpty());
+        QCOMPARE(finished.count(), 0);
+    }
+    void windowDragWinsAndOutputsFrozenPixels()
+    {
+        int copies = 0;
+        QImage copied;
+        waibusnap::OverlayActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            ++copies;
+            return waibusnap::ImageOutputResult{true, {}};
+        };
+        waibusnap::SelectionOverlay overlay(sampleFrame(), actions, {{20, 10, 60, 50}});
+        overlay.show();
+        drag(overlay, {50, 35}, {70, 45});
+        QCOMPARE(overlay.selection(), QRect(100, 70, 40, 20));
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {300, 180});
+        // 已拖动的手势即使回到按下点，也不能误吸附。
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, {50, 35});
+        QTest::mouseMove(&overlay, {70, 45});
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, {50, 35});
+        QVERIFY(overlay.selection().isEmpty());
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {50, 35});
+        QCOMPARE(copies, 0);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("吸附.png"));
+        QVERIFY(overlay.exportToPath(path));
+        QCOMPARE(QImage(path).pixelColor(10, 10), QColor(Qt::green));
+        QTest::mouseClick(overlay.findChild<QPushButton*>(QStringLiteral("copyButton")),
+                          Qt::LeftButton);
+        QCOMPARE(copies, 1);
+        QCOMPARE(copied.size(), QSize(120, 100));
+        QCOMPARE(copied.pixelColor(0, 0), QColor(Qt::red));
+        QCOMPARE(copied.pixelColor(10, 10), QColor(Qt::green));
+    }
+    void enumerationErrorStillAllowsManualSelection()
+    {
+        waibusnap::SelectionOverlay overlay(sampleFrame(), {}, {{20, 10, 60, 50}},
+                                            QStringLiteral("枚举失败"));
+        overlay.show();
+        QTest::mouseMove(&overlay, {50, 35});
+        QVERIFY(overlay.hoveredWindowPixels().isEmpty());
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {50, 35});
+        QVERIFY(overlay.selection().isEmpty());
+        drag(overlay, {20, 10}, {80, 60});
+        QCOMPARE(overlay.selection(), QRect(40, 20, 120, 100));
+    }
     void copyFailureCanRetryAndEndsOnlyOnSuccess()
     {
         int calls = 0;
@@ -398,11 +567,14 @@ class StartupSmokeTest final : public QObject
     }
     void applicationCanStartAndExit()
     {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
         const QString executable = qEnvironmentVariable("WAIBUSNAP_TEST_APP");
         QVERIFY2(!executable.isEmpty(), "请通过 CTest 设置应用路径后运行。");
         QProcess process;
         process.setProgram(executable);
-        process.setArguments({QStringLiteral("--smoke-test")});
+        process.setArguments({QStringLiteral("--smoke-test"), QStringLiteral("--settings-file"),
+                              temporary.filePath(QStringLiteral("settings.ini"))});
         process.setProcessEnvironment(childProcessEnvironment());
         process.start();
         QVERIFY2(process.waitForStarted(5000), qPrintable(process.errorString()));
@@ -421,9 +593,13 @@ class StartupSmokeTest final : public QObject
     }
     void injectionRequiresExplicitTestMode()
     {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
         QProcess process;
         process.setProcessEnvironment(childProcessEnvironment());
-        process.start(qEnvironmentVariable("WAIBUSNAP_TEST_APP"), {"--test-count", "2"});
+        process.start(qEnvironmentVariable("WAIBUSNAP_TEST_APP"),
+                      {"--test-count", "2", "--settings-file",
+                       temporary.filePath(QStringLiteral("settings.ini"))});
         QVERIFY2(process.waitForFinished(5000), qPrintable(process.errorString()));
         QCOMPARE(process.exitCode(), 2);
         QVERIFY(process.readAllStandardError().contains("--test-mode"));

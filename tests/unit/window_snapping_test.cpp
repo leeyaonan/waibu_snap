@@ -49,5 +49,9 @@ class WindowSnappingTest final : public QObject
         QVERIFY(waibusnap::windowPixelSelection(logical, scale, {}).isEmpty());
     }
 };
-QTEST_APPLESS_MAIN(WindowSnappingTest)
+int main(int argc, char* argv[])
+{
+    WindowSnappingTest test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "window_snapping_test.moc"
