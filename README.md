@@ -2,9 +2,17 @@
 
 跨平台 PC 截图工具，目标平台为 macOS 14.0+（arm64 / x86_64）和 Windows 11 x64。
 
-当前进入**功能开发：选区交互与输出闭环**。macOS 托盘驻留、Carbon F1、鼠标所在显示器的 ScreenCaptureKit 单帧捕获；冻结画面可框选、移动、拖动四边 / 四角调整大小，实时显示物理像素尺寸；浮动工具栏支持复制、保存 PNG 与取消。仍无标注、贴图、窗口吸附、放大镜、键盘像素微调、设置界面或 JPEG。Windows 同步编译共享几何、视图与输出代码，但原生热键、显示器定位及捕获如实返回“未实现”。性能门槛与完整平台兼容性仍按实机记录验收。
+当前进入**功能开发：窗口吸附与快捷键设置**。macOS 托盘驻留、Carbon 可改全局截图键、鼠标所在显示器的 ScreenCaptureKit 单帧捕获；冻结画面可悬停预览普通窗口、单击吸附或自由框选，随后移动、拖动四边 / 四角调整大小，实时显示物理像素尺寸；浮动工具栏支持复制、保存 PNG 与取消。托盘提供「截图 / 设置… / 退出」。仍无标注、贴图、放大镜、键盘像素微调或 JPEG。Windows 同步编译共享几何、设置、视图与输出代码，原生热键、显示器定位、捕获与窗口枚举如实返回“未实现”。性能门槛与完整平台兼容性仍按实机记录验收。
 
 运行后使用菜单栏“截图”或 F1（Fn 模式由系统决定）；首次截图需要屏幕录制授权。拒绝时显示中文说明，不生成伪成功画面；授权后重试，系统要求时重启。此原型不申请辅助功能或输入监控。
+
+空闲选区态悬停高亮光标下最前的普通窗口，单击仅确认选区，不直接复制或保存。窗口外框包含标题栏，越屏部分裁剪到会话所在屏；输出仍为冻结桌面中当时可见的像素，保留其他窗口遮挡。窗口列表在采集成功后、创建覆盖层前读取一次，会话内不扫描；枚举失败或没有可吸附窗口时，提示手动框选。吸附后可移动、调整，外部单击清除后恢复悬停，外部拖动可替换选区。
+
+「设置…」支持 F1–F12 或带 Ctrl / Command、Control、Alt / Option 的字母与数字；拒绝空键、多段序列、裸字母 / 数字、仅 Shift 的字母 / 数字以及空格、Tab、Esc 等未支持键。新键注册成功后释放旧键并保存，失败保持旧绑定与配置；注册成功但设置写入失败时明确提示本次已生效、重启后可能无法保留，允许重试。Mac 的 ⌘⇧3 / 4 / 5 提示可能被系统占用并拒绝绑定，不抢占系统截图组合。
+
+设置使用 `AppLocalDataLocation/settings.ini`，唯一键 `hotkey/sequence` 按 PortableText 存储，界面按 NativeText 展示。启动时非法配置明确回退 F1；合法存储键注册失败则尝试 F1，两者均失败时仅托盘入口可用，tooltip 反映实际状态。启动回退不自动改写文件。设置打开期间暂停截图热键，截图会话期间「设置…」置灰，关闭会话后恢复；取消或 Esc 不保存，退出释放热键。
+
+开发与受控验证使用 `--settings-file <临时 INI 路径>` 隔离配置，此参数不要求 `--test-mode`；省略时才使用正常配置域。原有受控参数、测量日志格式与结果码保持不变。
 
 拖选松开后保留选区，内部拖动保持尺寸，边角调整夹取在起始屏内。反向拖过对侧时夹停在对侧前 1 个物理像素，不翻转手柄；选区外单击清除，选区外拖动替换。零面积不进入选区态。复制成功结束会话，失败保留并可点「复制」重试；只有复制入口写剪贴板。保存成功短暂显示文件名且保留会话，继续移动 / 调整即重新标记未保存；取消、关闭或 Esc 均不产生额外输出，主动保存的文件保留。本轮不做未保存退出提示。
 
@@ -32,7 +40,8 @@ export QT_ROOT_DIR="$HOME/Qt/6.11.2/macos"
 bash scripts/prepare-environment.sh
 bash scripts/build-project.sh
 bash scripts/test-project.sh
-bash scripts/run-app.sh
+settings_dir="$(mktemp -d)"
+bash scripts/run-app.sh --settings-file "$settings_dir/settings.ini" --metrics-file "$settings_dir/sessions.jsonl"
 ```
 
 默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本直接启动包内程序；应用以托盘驻留，关闭选区不会退出，退出走托盘菜单。测量彩排、真实 F1 日志与完整口径见 [脚本登记](scripts/README.md#v02-测量工具与实现策略)。测试由 CTest 设置 `QT_QPA_PLATFORM=offscreen`，不需要截图权限或可见桌面。
@@ -54,7 +63,9 @@ $env:QT_ROOT_DIR = 'C:/Qt/6.11.2/msvc2022_64'
 ./scripts/prepare-environment.ps1
 ./scripts/build-project.ps1
 ./scripts/test-project.ps1
-./scripts/run-app.ps1
+$settingsDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+New-Item -ItemType Directory -Path $settingsDir | Out-Null
+./scripts/run-app.ps1 --settings-file (Join-Path $settingsDir 'settings.ini') --metrics-file (Join-Path $settingsDir 'sessions.jsonl')
 ```
 
 默认构建 MSVC v143 x64 Release，产物为 `build/windows-x64/bin/Release/WaibuSnap.exe`。测试和运行脚本会把所选 Qt 的 `bin` 加入当前进程 PATH，使 DLL 可被加载；无需将 Qt 加入系统级 PATH。
