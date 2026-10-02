@@ -17,6 +17,11 @@ target_link_libraries(selection_geometry_test PRIVATE waibusnap_core Qt6::Test w
 set_target_properties(selection_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME selection_geometry COMMAND selection_geometry_test)
 
+qt_add_executable(image_output_test unit/image_output_test.cpp)
+target_link_libraries(image_output_test PRIVATE waibusnap_output Qt6::Test waibusnap_options)
+set_target_properties(image_output_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME image_output COMMAND image_output_test)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME measurement_tool COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/unit/measurement_tool_test.py")

@@ -2,12 +2,16 @@
 #include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
 #include <QCloseEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -29,6 +33,12 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions)
     setWindowTitle(QStringLiteral("WaibuSnap 选区"));
     if (!actions_.copyImage)
         actions_.copyImage = copyImageToClipboard;
+    if (!actions_.chooseSavePath)
+        actions_.chooseSavePath = [](QWidget* parent, const QString& suggestion)
+        {
+            return QFileDialog::getSaveFileName(parent, QStringLiteral("保存截图为 PNG"),
+                                                suggestion, QStringLiteral("PNG 图片 (*.png)"));
+        };
     toolbar_ = new QWidget(this);
     toolbar_->setObjectName(QStringLiteral("selectionToolbar"));
     toolbar_->setCursor(Qt::ArrowCursor);
@@ -44,7 +54,6 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions)
     copy->setObjectName(QStringLiteral("copyButton"));
     auto* save = new QPushButton(QStringLiteral("保存"), toolbar_);
     save->setObjectName(QStringLiteral("saveButton"));
-    save->setEnabled(false);
     auto* cancel = new QPushButton(QStringLiteral("取消"), toolbar_);
     cancel->setObjectName(QStringLiteral("cancelButton"));
     buttons->addWidget(copy);
@@ -59,6 +68,7 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions)
     layout->addWidget(status_);
     toolbar_->hide();
     connect(copy, &QPushButton::clicked, this, &SelectionOverlay::copySelection);
+    connect(save, &QPushButton::clicked, this, &SelectionOverlay::saveSelection);
     connect(cancel, &QPushButton::clicked, this, [this] { complete(cancelledSessionOutcome); });
     statusTimeout_.setSingleShot(true);
     connect(&statusTimeout_, &QTimer::timeout, this,
@@ -70,7 +80,7 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions)
 }
 void SelectionOverlay::updateToolbar()
 {
-    if (finished_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+    if (finished_ || selection_.isEmpty() || dragMode_ == DragMode::Create)
     {
         toolbar_->hide();
         return;
@@ -84,6 +94,7 @@ void SelectionOverlay::updateToolbar()
         y = qRound(region.top()) - toolbar_->height() - 10;
     y = std::clamp(y, 0, std::max(0, height() - toolbar_->height()));
     toolbar_->move(x, y);
+    toolbar_->setEnabled(dragMode_ == DragMode::None && !saveDialogOpen_);
     toolbar_->show();
 }
 void SelectionOverlay::showStatus(const QString& text, bool temporary)
@@ -97,7 +108,7 @@ void SelectionOverlay::showStatus(const QString& text, bool temporary)
 }
 void SelectionOverlay::copySelection()
 {
-    if (finished_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+    if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None)
         return;
     const ImageOutputResult result =
         actions_.copyImage(cropFrozenSelection(frame_.pixels, selection_));
@@ -106,6 +117,73 @@ void SelectionOverlay::copySelection()
     else
         showStatus(QStringLiteral("复制失败：%1 点击「复制」重试。").arg(result.explanation),
                    false);
+}
+void SelectionOverlay::saveSelection()
+{
+    if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+        return;
+    QString directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    if (directory.isEmpty())
+        directory = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    QString suggestion = suggestedPngPath(directory);
+    saveDialogOpen_ = true;
+    toolbar_->setEnabled(false);
+    QPointer<SelectionOverlay> self(this);
+    const auto chooseSavePath = actions_.chooseSavePath;
+    QString path;
+    while (true)
+    {
+        const QString chosen = chooseSavePath(this, suggestion);
+        // 原生面板的嵌套事件循环可能遇到显示器变更或应用退出，不能访问已销毁会话。
+        if (!self)
+            return;
+        if (finished_ || chosen.isEmpty())
+            break;
+        path = pngFilePath(chosen);
+        if (path == chosen || !QFileInfo::exists(path))
+            break;
+        // 补后缀可能指向另一个已有文件，必须让原生面板确认最终 PNG 路径。
+        suggestion = path;
+        path.clear();
+        showStatus(QStringLiteral("补全后缀后文件已存在，请在保存面板确认覆盖。"), false);
+    }
+    saveDialogOpen_ = false;
+    if (finished_)
+        return;
+    updateToolbar();
+    raise();
+    activateWindow();
+    setFocus(Qt::OtherFocusReason);
+    if (!path.isEmpty())
+        exportToPath(path);
+}
+bool SelectionOverlay::exportToPath(const QString& path)
+{
+    if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None ||
+        path.isEmpty())
+        return false;
+    showStatus(QStringLiteral("正在保存 PNG…"), false);
+    const ImageOutputResult result =
+        exportPngToPath(cropFrozenSelection(frame_.pixels, selection_), path);
+    if (!result.success)
+    {
+        showStatus(
+            QStringLiteral("保存失败：%1 点击「保存」选择路径并重试。").arg(result.explanation),
+            false);
+        return false;
+    }
+    saved_ = true;
+    showStatus(QStringLiteral("已保存：%1").arg(QFileInfo(pngFilePath(path)).fileName()), true);
+    return true;
+}
+void SelectionOverlay::setSelection(QRect pixels)
+{
+    if (pixels == selection_)
+        return;
+    selection_ = pixels;
+    saved_ = false;
+    statusTimeout_.stop();
+    status_->hide();
 }
 QRect SelectionOverlay::selection() const { return selection_; }
 QRectF SelectionOverlay::logicalSelection() const
@@ -159,14 +237,14 @@ void SelectionOverlay::updateCursor(QPointF position)
 void SelectionOverlay::dragTo(QPointF position)
 {
     if (dragMode_ == DragMode::Create)
-        selection_ = normalizedPixelSelection(press_, position, frame_.display.devicePixelRatio,
-                                              frame_.pixels.size());
+        setSelection(normalizedPixelSelection(press_, position, frame_.display.devicePixelRatio,
+                                              frame_.pixels.size()));
     else if (dragMode_ == DragMode::Move)
-        selection_ = movedPixelSelection(initialSelection_, position - press_,
-                                         frame_.display.devicePixelRatio, frame_.pixels.size());
+        setSelection(movedPixelSelection(initialSelection_, position - press_,
+                                         frame_.display.devicePixelRatio, frame_.pixels.size()));
     else if (dragMode_ == DragMode::Resize)
-        selection_ = resizedPixelSelection(initialSelection_, resizeEdges_, position - press_,
-                                           frame_.display.devicePixelRatio, frame_.pixels.size());
+        setSelection(resizedPixelSelection(initialSelection_, resizeEdges_, position - press_,
+                                           frame_.display.devicePixelRatio, frame_.pixels.size()));
     updateCursor(position);
     updateToolbar();
     update();
@@ -217,7 +295,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
 }
 void SelectionOverlay::mousePressEvent(QMouseEvent* event)
 {
-    if (finished_ || event->button() != Qt::LeftButton)
+    if (finished_ || saveDialogOpen_ || event->button() != Qt::LeftButton)
         return;
     press_ = event->position();
     initialSelection_ = selection_;
@@ -229,7 +307,7 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
     else
     {
         dragMode_ = DragMode::Create;
-        selection_ = {};
+        setSelection({});
     }
     updateCursor(press_);
     updateToolbar();
@@ -237,6 +315,8 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
 }
 void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
 {
+    if (finished_ || saveDialogOpen_)
+        return;
     if (dragMode_ != DragMode::None)
         dragTo(event->position());
     else
@@ -244,7 +324,8 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
 }
 void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (dragMode_ == DragMode::None || event->button() != Qt::LeftButton)
+    if (finished_ || saveDialogOpen_ || dragMode_ == DragMode::None ||
+        event->button() != Qt::LeftButton)
         return;
     dragTo(event->position());
     dragMode_ = DragMode::None;
@@ -254,7 +335,9 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
 }
 void SelectionOverlay::keyPressEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_Escape)
+    if (event->key() == Qt::Key_Escape && saveDialogOpen_)
+        event->accept();
+    else if (event->key() == Qt::Key_Escape)
         complete(cancelledSessionOutcome);
     else
         QWidget::keyPressEvent(event);

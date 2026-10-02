@@ -11,6 +11,7 @@ namespace waibusnap
 struct OverlayActions
 {
     std::function<ImageOutputResult(const QImage&)> copyImage;
+    std::function<QString(QWidget*, const QString&)> chooseSavePath;
 };
 class SelectionOverlay final : public QWidget
 {
@@ -19,6 +20,9 @@ class SelectionOverlay final : public QWidget
     explicit SelectionOverlay(CaptureFrame frame, OverlayActions actions = {});
     QRect selection() const;
     bool hasPainted() const { return painted_; }
+    bool isSelectionSaved() const { return saved_; }
+    // 不打开对话框；路径确认由保存入口负责，供导出测试和后续输出入口复用。
+    bool exportToPath(const QString& path);
   signals:
     void firstPaintCompleted(qint64 timestamp);
     void finished(QRect pixels, int outcome);
@@ -41,6 +45,8 @@ class SelectionOverlay final : public QWidget
     };
     void complete(int outcome);
     void copySelection();
+    void saveSelection();
+    void setSelection(QRect pixels);
     void updateToolbar();
     void showStatus(const QString& text, bool temporary);
     QRectF logicalSelection() const;
@@ -59,5 +65,7 @@ class SelectionOverlay final : public QWidget
     SelectionEdges resizeEdges_;
     bool painted_ = false;
     bool finished_ = false;
+    bool saved_ = false;
+    bool saveDialogOpen_ = false;
 };
 }
