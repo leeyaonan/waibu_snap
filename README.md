@@ -2,7 +2,9 @@
 
 跨平台 PC 截图工具，目标平台为 macOS 14.0+（arm64 / x86_64）和 Windows 11 x64。
 
-当前是**工程初始化骨架**：Qt 6.11.2 Widgets / C++17 空窗口，可启动、关闭；没有截图、热键、贴图或其他 Must 功能。macOS 使用 Objective-C++ 平台编译入口，Windows 使用 MSVC 平台入口。
+当前为 **V02 最小垂直原型**：macOS 托盘驻留、Carbon F1、鼠标所在显示器的 ScreenCaptureKit 单帧捕获、冻结画面拖选、像素尺寸与 Esc 取消。松开确认只记录选区并关闭；没有标注、吸附、放大镜、贴图、保存或复制。Windows 同步编译共享视图与接口，但原生热键、显示器定位及捕获如实返回“未实现”。性能门槛与完整平台兼容性均待验证。
+
+运行后使用菜单栏“截图”或 F1（Fn 模式由系统决定）；首次截图需要屏幕录制授权。拒绝时显示中文说明，不生成伪成功画面；授权后重试，系统要求时重启。此原型不申请辅助功能或输入监控。
 
 ## 环境准备
 
@@ -27,7 +29,7 @@ bash scripts/test-project.sh
 bash scripts/run-app.sh
 ```
 
-默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本直接启动包内程序；关闭窗口即退出。测试由 CTest 设置 `QT_QPA_PLATFORM=offscreen`，不需要截图权限或可见桌面。
+默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本直接启动包内程序；应用以托盘驻留，关闭选区不会退出，退出走托盘菜单。测量彩排、真实 F1 日志与完整口径见 [脚本登记](scripts/README.md#v02-测量工具与实现策略)。测试由 CTest 设置 `QT_QPA_PLATFORM=offscreen`，不需要截图权限或可见桌面。
 
 Intel 交叉构建路径（CI 已通过编译，**Intel 实机运行待验证**，使用独立构建目录）：
 
