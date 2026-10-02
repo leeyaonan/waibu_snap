@@ -32,6 +32,39 @@ class SelectionGeometryTest final : public QObject
         QVERIFY(!json.contains("nf01_proxy_ms"));
         QVERIFY(!json.contains("interactive_ns"));
     }
+    void movementKeepsSizeAndClamps()
+    {
+        const QRect initial(20, 30, 40, 50);
+        QCOMPARE(waibusnap::movedPixelSelection(initial, {-100, -100}, 2, {200, 200}),
+                 QRect(0, 0, 40, 50));
+        QCOMPARE(waibusnap::movedPixelSelection(initial, {100, 100}, 2, {200, 200}),
+                 QRect(160, 150, 40, 50));
+        QCOMPARE(waibusnap::movedPixelSelection(initial, {0.34, -0.34}, 1.5, {200, 200}),
+                 QRect(21, 29, 40, 50));
+        QVERIFY(waibusnap::movedPixelSelection(initial, {}, 0, {200, 200}).isEmpty());
+    }
+    void resizingClampsAtOppositeEdge()
+    {
+        using waibusnap::SelectionEdge;
+        const QRect initial(20, 30, 40, 50);
+        QCOMPARE(waibusnap::resizedPixelSelection(initial, SelectionEdge::Left | SelectionEdge::Top,
+                                                  {100, 100}, 2, {200, 200}),
+                 QRect(59, 79, 1, 1));
+        QCOMPARE(waibusnap::resizedPixelSelection(initial,
+                                                  SelectionEdge::Right | SelectionEdge::Bottom,
+                                                  {-100, -100}, 2, {200, 200}),
+                 QRect(20, 30, 1, 1));
+        QCOMPARE(waibusnap::resizedPixelSelection(initial, SelectionEdge::Left | SelectionEdge::Top,
+                                                  {-100, -100}, 2, {200, 200}),
+                 QRect(0, 0, 60, 80));
+        QCOMPARE(waibusnap::resizedPixelSelection(initial,
+                                                  SelectionEdge::Right | SelectionEdge::Bottom,
+                                                  {100, 100}, 2, {200, 200}),
+                 QRect(20, 30, 180, 170));
+        QCOMPARE(waibusnap::resizedPixelSelection(initial, SelectionEdge::Right, {0.34, 10}, 1.5,
+                                                  {200, 200}),
+                 QRect(20, 30, 41, 50));
+    }
 };
 QTEST_APPLESS_MAIN(SelectionGeometryTest)
 #include "selection_geometry_test.moc"

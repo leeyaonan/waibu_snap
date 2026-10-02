@@ -1,4 +1,5 @@
 #pragma once
+#include "core/selection_geometry.h"
 #include "interfaces/capture_provider.h"
 #include <QWidget>
 namespace waibusnap
@@ -23,11 +24,24 @@ class SelectionOverlay final : public QWidget
     void closeEvent(QCloseEvent*) override;
 
   private:
+    enum class DragMode
+    {
+        None,
+        Create,
+        Move,
+        Resize
+    };
     void complete(bool confirmed);
+    QRectF logicalSelection() const;
+    SelectionEdges edgesAt(QPointF position) const;
+    void updateCursor(QPointF position);
+    void dragTo(QPointF position);
     CaptureFrame frame_;
-    QPointF anchor_;
-    QPointF cursor_;
-    bool dragging_ = false;
+    QRect selection_;
+    QRect initialSelection_;
+    QPointF press_;
+    DragMode dragMode_ = DragMode::None;
+    SelectionEdges resizeEdges_;
     bool painted_ = false;
     bool finished_ = false;
 };
