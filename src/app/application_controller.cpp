@@ -324,13 +324,15 @@ void ApplicationController::startSmokeTest()
                                                        QApplication::activeModalWidget());
                                                    if (!dialog)
                                                    {
-                                                       application_.exit(23);
+                                                       qCritical("冒烟验证未找到设置对话框。");
+                                                       application_.exit(20);
                                                        return;
                                                    }
                                                    trigger(QStringLiteral("hotkey"));
                                                    if (active_)
                                                    {
-                                                       application_.exit(24);
+                                                       qCritical("设置期间热键未被忽略。");
+                                                       application_.exit(20);
                                                        return;
                                                    }
                                                    dialog->reject();
@@ -338,7 +340,8 @@ void ApplicationController::startSmokeTest()
                                            settingsAction_->trigger();
                                            if (settingsOpen_ || !settingsAction_->isEnabled())
                                            {
-                                               application_.exit(25);
+                                               qCritical("设置关闭后入口状态未恢复。");
+                                               application_.exit(20);
                                                return;
                                            }
                                            qInfo("托盘生命周期已验证（tray-lifecycle-verified）");
