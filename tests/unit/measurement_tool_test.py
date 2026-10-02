@@ -33,6 +33,15 @@ class MeasurementTest(unittest.TestCase):
         self.assertEqual(delta / 1000000000 * 100, 50)
         self.assertFalse(incomplete)
 
+    def test_copied_sessions_preserve_legacy_filter(self):
+        rows = [{"cold": False, "nf01_proxy_ms": 20, "interactive_ns": "2", "outcome": outcome}
+                for outcome in (1, 2, 10)]
+        rows += [{"cold": False, "nf01_proxy_ms": 1, "outcome": 10},
+                 {"cold": False, "nf01_proxy_ms": 1, "interactive_ns": "2", "outcome": 9}]
+        result = measurement.nf01_summary(rows)
+        self.assertEqual(result["warm"]["count"], 3)
+        self.assertEqual(result["warm"]["p95_proxy_ms"], 20)
+
     def test_process_exit_marks_incomplete_accounting(self):
         before = {"app": [{"pid": 1, "birth": "a", "cpu_ns": "100", "error": 0}]}
         delta, incomplete = measurement.cpu_delta(before, {"app": []}, "app")

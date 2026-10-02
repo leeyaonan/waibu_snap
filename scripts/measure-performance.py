@@ -208,7 +208,7 @@ def nf01_summary(rows):
               "note": "代理时间未通过外部呈现校验；不能宣布正式 NF01 达标。"}
     for cold, name in ((True, "cold"), (False, "warm")):
         samples = [row for row in rows if row.get("cold") is cold and row.get("interactive_ns")
-                   and row.get("outcome") in (1, 2)]
+                   and row.get("outcome") in (1, 2, 10)]
         times = [row["nf01_proxy_ms"] for row in samples]
         result[name] = {"count": len(times), "p95_proxy_ms": nearest_rank(times),
                         "maximum_proxy_ms": max(times) if times else None,

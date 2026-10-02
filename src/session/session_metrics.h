@@ -3,6 +3,8 @@
 #include <QString>
 namespace waibusnap
 {
+inline constexpr int cancelledSessionOutcome = 2;
+inline constexpr int copiedSessionOutcome = 10;
 struct SessionMetrics
 {
     int sequence = 0;

@@ -148,7 +148,7 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     overlay_->winId();
     metrics_.windowCreated = monotonicNs();
     connect(overlay_, &SelectionOverlay::finished, this,
-            [this](QRect pixels, bool confirmed) { finish(pixels, confirmed ? 1 : 2); });
+            [this](QRect pixels, int outcome) { finish(pixels, outcome); });
     connect(overlay_, &SelectionOverlay::firstPaintCompleted, this,
             [this, token](qint64 timestamp)
             {

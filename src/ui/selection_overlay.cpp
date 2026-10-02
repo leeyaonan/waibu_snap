@@ -1,10 +1,14 @@
 #include "ui/selection_overlay.h"
 #include "session/monotonic_clock.h"
+#include "session/session_metrics.h"
 #include <QCloseEvent>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
+#include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
 namespace waibusnap
@@ -13,9 +17,9 @@ namespace
 {
 constexpr qreal handleRadius = 6;
 }
-SelectionOverlay::SelectionOverlay(CaptureFrame frame)
+SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
-      frame_(std::move(frame))
+      frame_(std::move(frame)), actions_(std::move(actions))
 {
     setAttribute(Qt::WA_OpaquePaintEvent);
     setFocusPolicy(Qt::StrongFocus);
@@ -23,6 +27,85 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame)
     setCursor(Qt::CrossCursor);
     setGeometry(frame_.display.logicalGeometry);
     setWindowTitle(QStringLiteral("WaibuSnap 选区"));
+    if (!actions_.copyImage)
+        actions_.copyImage = copyImageToClipboard;
+    toolbar_ = new QWidget(this);
+    toolbar_->setObjectName(QStringLiteral("selectionToolbar"));
+    toolbar_->setCursor(Qt::ArrowCursor);
+    toolbar_->setFixedWidth(260);
+    toolbar_->setStyleSheet(QStringLiteral(
+        "QWidget#selectionToolbar { background: #202020; border-radius: 6px; }"
+        "QPushButton { color: white; background: #404040; padding: 8px; border-radius: 4px; }"
+        "QPushButton:hover { background: #705030; }"
+        "QLabel { color: white; }"));
+    auto* layout = new QVBoxLayout(toolbar_);
+    auto* buttons = new QHBoxLayout;
+    auto* copy = new QPushButton(QStringLiteral("复制"), toolbar_);
+    copy->setObjectName(QStringLiteral("copyButton"));
+    auto* save = new QPushButton(QStringLiteral("保存"), toolbar_);
+    save->setObjectName(QStringLiteral("saveButton"));
+    save->setEnabled(false);
+    auto* cancel = new QPushButton(QStringLiteral("取消"), toolbar_);
+    cancel->setObjectName(QStringLiteral("cancelButton"));
+    buttons->addWidget(copy);
+    buttons->addWidget(save);
+    buttons->addWidget(cancel);
+    layout->addLayout(buttons);
+    status_ = new QLabel(toolbar_);
+    status_->setObjectName(QStringLiteral("outputStatus"));
+    status_->setWordWrap(true);
+    status_->setTextFormat(Qt::PlainText);
+    status_->hide();
+    layout->addWidget(status_);
+    toolbar_->hide();
+    connect(copy, &QPushButton::clicked, this, &SelectionOverlay::copySelection);
+    connect(cancel, &QPushButton::clicked, this, [this] { complete(cancelledSessionOutcome); });
+    statusTimeout_.setSingleShot(true);
+    connect(&statusTimeout_, &QTimer::timeout, this,
+            [this]
+            {
+                status_->hide();
+                updateToolbar();
+            });
+}
+void SelectionOverlay::updateToolbar()
+{
+    if (finished_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+    {
+        toolbar_->hide();
+        return;
+    }
+    toolbar_->adjustSize();
+    const QRectF region = logicalSelection();
+    const int x = std::clamp(qRound(region.right()) - toolbar_->width(), 0,
+                             std::max(0, width() - toolbar_->width()));
+    int y = qRound(region.bottom()) + 10;
+    if (y + toolbar_->height() > height())
+        y = qRound(region.top()) - toolbar_->height() - 10;
+    y = std::clamp(y, 0, std::max(0, height() - toolbar_->height()));
+    toolbar_->move(x, y);
+    toolbar_->show();
+}
+void SelectionOverlay::showStatus(const QString& text, bool temporary)
+{
+    statusTimeout_.stop();
+    status_->setText(text);
+    status_->show();
+    updateToolbar();
+    if (temporary)
+        statusTimeout_.start(3000);
+}
+void SelectionOverlay::copySelection()
+{
+    if (finished_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+        return;
+    const ImageOutputResult result =
+        actions_.copyImage(cropFrozenSelection(frame_.pixels, selection_));
+    if (result.success)
+        complete(copiedSessionOutcome);
+    else
+        showStatus(QStringLiteral("复制失败：%1 点击「复制」重试。").arg(result.explanation),
+                   false);
 }
 QRect SelectionOverlay::selection() const { return selection_; }
 QRectF SelectionOverlay::logicalSelection() const
@@ -85,6 +168,7 @@ void SelectionOverlay::dragTo(QPointF position)
         selection_ = resizedPixelSelection(initialSelection_, resizeEdges_, position - press_,
                                            frame_.display.devicePixelRatio, frame_.pixels.size());
     updateCursor(position);
+    updateToolbar();
     update();
 }
 void SelectionOverlay::paintEvent(QPaintEvent*)
@@ -148,6 +232,7 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
         selection_ = {};
     }
     updateCursor(press_);
+    updateToolbar();
     update();
 }
 void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
@@ -164,12 +249,13 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
     dragTo(event->position());
     dragMode_ = DragMode::None;
     updateCursor(event->position());
+    updateToolbar();
     update();
 }
 void SelectionOverlay::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Escape)
-        complete(false);
+        complete(cancelledSessionOutcome);
     else
         QWidget::keyPressEvent(event);
 }
@@ -179,15 +265,15 @@ void SelectionOverlay::closeEvent(QCloseEvent* event)
     if (!finished_)
     {
         finished_ = true;
-        emit finished({}, false);
+        emit finished({}, cancelledSessionOutcome);
     }
 }
-void SelectionOverlay::complete(bool confirmed)
+void SelectionOverlay::complete(int outcome)
 {
     if (finished_)
         return;
     finished_ = true;
     hide();
-    emit finished(confirmed ? selection() : QRect(), confirmed);
+    emit finished(outcome == copiedSessionOutcome ? selection() : QRect(), outcome);
 }
 }
