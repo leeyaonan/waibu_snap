@@ -1,4 +1,5 @@
 #include "app/application_controller.h"
+#include "interfaces/platform_workarounds.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -6,6 +7,7 @@
 int main(int argc, char* argv[])
 {
     QApplication application(argc, argv);
+    waibusnap::installPlatformCompatibilityWorkarounds();
     QApplication::setApplicationName(QStringLiteral("WaibuSnap"));
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("WaibuSnap V02 最小截图原型"));

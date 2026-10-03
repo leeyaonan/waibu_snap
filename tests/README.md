@@ -10,6 +10,7 @@
 | `window_snapping` | 全局转屏内坐标与越屏裁剪、屏外丢弃且前后序不变；重叠取最前、缝隙 / 空列表未命中、半开命中边界；1.5× / 2×、半像素取整、按两端边缘求宽高、物理范围夹取与无效输入 |
 | `hotkey_settings` | 合法 / 非法键矩阵、Portable / Native 往返；临时 INI 往返、缺文件默认且不创建、损坏值 / 文件回退且不改写；替身验证存储键成功、存储键失败后 F1 成功、双失败仅托盘状态；改键非法不注册、冲突保旧与配置不变、注册前文件仍为旧值、成功持久化、写入失败不虚报重启保留 |
 | `probe_cpu_calibration`（macOS） | libproc Mach 时间换算对照 getrusage CPU 微秒时间；原错误在 M3 Pro 上先失败，修正后通过 |
+| `platform_workarounds`（macOS） | 安装前 AppKitDefined 的 `clickCount` 确实抛 NSException；安装后返回 1、不抛，鼠标双击仍返回 2，重复安装不替换已安装实现 |
 | `measurement_tool` | nearest-rank 30 次第 29 项、最大样本和空样本；有效会话集合 `(1, 2, 10)`、旧码兼容与缺失终点过滤；刷新代理不能宣布通过；跨进程 CPU 总和、进程退出后的记账缺口 |
 
 `startup_smoke` 使用 `QT_QPA_PLATFORM=offscreen`，验证 QWidget / 菜单动作与生命周期；无头环境不显示系统托盘，也不注册真实热键或申请屏幕录制权限。复制测试注入 `OverlayActions::copyImage`，仅验证动作次数、物理像素 / DPR 及终态，不读写或断言系统剪贴板。面板测试注入 `chooseSavePath`，路径导出调用真实 PNG 编码与原子提交，不能代替原生面板实机验收。

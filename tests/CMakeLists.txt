@@ -38,6 +38,13 @@ add_test(NAME measurement_tool COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/unit/measurement_tool_test.py")
 
 if(APPLE)
+    qt_add_executable(platform_workarounds_test unit/platform_workarounds_test.mm)
+    target_link_libraries(platform_workarounds_test PRIVATE waibusnap_platform Qt6::Test
+        waibusnap_options "${AppKit_FRAMEWORK}")
+    target_compile_options(platform_workarounds_test PRIVATE -fobjc-arc)
+    add_test(NAME platform_workarounds COMMAND platform_workarounds_test)
+    set_tests_properties(platform_workarounds PROPERTIES TIMEOUT 10)
+
     add_test(NAME probe_cpu_calibration COMMAND waibusnap_measure_probe --self-test)
     set_tests_properties(probe_cpu_calibration PROPERTIES TIMEOUT 10)
 endif()
