@@ -140,8 +140,7 @@ void ApplicationController::trigger(const QString& source)
         // 脚本不弹授权窗、不将权限时间混入性能。首次授权由用户从 F1 / 托盘执行。
         if (options_.testMode || !capture_->requestPermission())
         {
-            fail(3, QStringLiteral("请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 "
-                                   "WaibuSnap。允许后重试；系统要求时重启。未授权不会生成截图。"));
+            fail(3, capture_->permissionExplanation());
             return;
         }
     }

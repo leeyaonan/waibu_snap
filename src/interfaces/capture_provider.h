@@ -31,6 +31,11 @@ class CaptureProvider
     virtual ~CaptureProvider() = default;
     virtual bool hasPermission() const = 0;
     virtual bool requestPermission() = 0;
+    virtual QString permissionExplanation() const
+    {
+        return QStringLiteral("请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许 "
+                              "WaibuSnap。允许后重试；系统要求时重启。未授权不会生成截图。");
+    }
     // 异步结果在 GUI 线程交付；取消会话后调用方仍须防止迟到回调。
     virtual void capture(const DisplayTarget& display,
                          std::function<void(CaptureResult)> completion) = 0;

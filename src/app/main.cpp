@@ -1,11 +1,15 @@
 #include "app/application_controller.h"
+#include "interfaces/platform_info.h"
+#include "interfaces/platform_workarounds.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QLockFile>
 #include <QStandardPaths>
 int main(int argc, char* argv[])
 {
     QApplication application(argc, argv);
+    waibusnap::installPlatformCompatibilityWorkarounds();
     QApplication::setApplicationName(QStringLiteral("WaibuSnap"));
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("WaibuSnap V02 最小截图原型"));
@@ -55,6 +59,26 @@ int main(int argc, char* argv[])
             qCritical("受控参数必须显式启用 --test-mode。");
             return 2;
         }
+    // 普通运行持锁至 main 退出；受控与冒烟路径由各自工具管理实例。
+    std::unique_ptr<QLockFile> instanceLock;
+    if (waibusnap::requiresSingleInstanceProtection() && !options.testMode && !options.smokeTest)
+    {
+        const QString dataDirectory =
+            QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        if (!QDir().mkpath(dataDirectory))
+        {
+            qCritical("无法创建应用数据目录，不能建立单实例锁。");
+            return 2;
+        }
+        instanceLock = std::make_unique<QLockFile>(
+            QDir(dataDirectory).filePath(QStringLiteral("waibusnap.lock")));
+        if (!instanceLock->tryLock(0))
+        {
+            qInfo("WaibuSnap 无法取得单实例锁；如已有实例，请先从菜单栏退出，或直接使用它。"
+                  "若没有运行实例，请检查应用数据目录的写入权限。");
+            return 0;
+        }
+    }
     waibusnap::ApplicationController controller(application, options);
     controller.start();
     return application.exec();

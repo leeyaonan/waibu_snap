@@ -16,6 +16,11 @@ namespace waibusnap
 {
 namespace
 {
+QString permissionLaunchHint()
+{
+    return QStringLiteral("若已授权仍失败：macOS 27 起请从访达或用 open 命令启动应用"
+                          "（从终端直接执行不会继承授权）。");
+}
 quint64 layoutVersion()
 {
     // 仅按需读取布局，不在空闲期间轮询。
@@ -139,20 +144,21 @@ class MacHotkey final : public GlobalHotkey
                                       std::function<void()> handler) override
     {
         const QString name = sequence.toString(QKeySequence::NativeText);
+        const QString bindingState = hotkey_
+                                         ? QStringLiteral("原绑定保留。")
+                                         : QStringLiteral("当前未启用截图快捷键，可使用托盘入口。");
         UInt32 code = 0;
         UInt32 modifiers = 0;
         if (!keyMapping(sequence, code, modifiers))
             return {false,
-                    QStringLiteral(
-                        "无法映射截图键 %1，请使用 F1–F12 或带修饰键的字母 / 数字；原绑定保留。")
-                        .arg(name)};
+                    QStringLiteral("无法映射截图键 %1，请使用 F1–F12 或带修饰键的字母 / 数字；%2")
+                        .arg(name, bindingState)};
         // 系统截图组合不能靠注册成功证明可用，不尝试抢占。
         if (modifiers == (cmdKey | shiftKey) &&
             (code == kVK_ANSI_3 || code == kVK_ANSI_4 || code == kVK_ANSI_5))
             return {false,
-                    QStringLiteral(
-                        "截图键 %1 可能被系统截图占用，无法确认可用；请换一个组合，原绑定保留。")
-                        .arg(name)};
+                    QStringLiteral("截图键 %1 可能被系统截图占用，无法确认可用；请换一个组合，%2")
+                        .arg(name, bindingState)};
         const QString enabled = QStringLiteral("截图键 %1 已启用（Fn 模式由系统决定）。").arg(name);
         if (hotkey_ && sequence == sequence_)
         {
@@ -179,11 +185,12 @@ class MacHotkey final : public GlobalHotkey
                 RemoveEventHandler(eventHandler_);
                 eventHandler_ = nullptr;
             }
-            return {false,
-                    QStringLiteral("截图键 %1 无法启用（系统错误 "
-                                   "%2），可能被系统或其他应用占用；原绑定保留，可使用托盘截图。")
-                        .arg(name)
-                        .arg(status)};
+            return {false, QStringLiteral("截图键 %1 无法启用（系统错误 "
+                                          "%2），可能被系统或其他应用占用；%3")
+                               .arg(name)
+                               .arg(status)
+                               .arg(hotkey_ ? QStringLiteral("原绑定保留，可使用托盘截图。")
+                                            : bindingState)};
         }
         const EventHotKeyRef previous = hotkey_;
         hotkey_ = replacement;
@@ -271,6 +278,13 @@ class MacCapture final : public CaptureProvider
   public:
     bool hasPermission() const override { return CGPreflightScreenCaptureAccess(); }
     bool requestPermission() override { return CGRequestScreenCaptureAccess(); }
+    QString permissionExplanation() const override
+    {
+        return QStringLiteral(
+                   "尚未获得屏幕录制权限，请在系统设置 → 隐私与安全性 → "
+                   "屏幕与系统音频录制中允许 WaibuSnap，然后重试；系统要求时请重启应用。") +
+               permissionLaunchHint();
+    }
     void capture(const DisplayTarget& target,
                  std::function<void(CaptureResult)> completion) override
     {
@@ -278,12 +292,7 @@ class MacCapture final : public CaptureProvider
         const DisplayTarget requested = target;
         if (!hasPermission())
         {
-            deliver(std::move(completion),
-                    {{},
-                     CaptureError::Permission,
-                     QStringLiteral(
-                         "尚未获得屏幕录制权限，请在系统设置 → 隐私与安全性 → "
-                         "屏幕与系统音频录制中允许 WaibuSnap，然后重试；系统要求时请重启应用。")});
+            deliver(std::move(completion), {{}, CaptureError::Permission, permissionExplanation()});
             return;
         }
         [SCShareableContent
@@ -349,9 +358,11 @@ class MacCapture final : public CaptureProvider
                                                                        "%1），请检查屏幕录制授权；"
                                                                        "重新授权后重试，系统要求时"
                                                                        "重启应用。")
-                                                                       .arg(captureError
-                                                                                ? captureError.code
-                                                                                : -1)});
+                                                                           .arg(captureError
+                                                                                    ? captureError
+                                                                                          .code
+                                                                                    : -1) +
+                                                                       permissionLaunchHint()});
                                                               return;
                                                           }
                                                           const int width =

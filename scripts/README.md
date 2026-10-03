@@ -26,6 +26,12 @@ Qt 通过 [官方开源安装器](https://www.qt.io/download-qt-installer-oss)�
 
 环境脚本用 qmake 检查 **6.11.2**，Windows 还检查 MSVC kit；CMake `EXACT` 再次检查版本并拒绝静态 Qt。CI action、Qt、aqtinstall、py7zr 与 clang-format 均有固定版本或提交；runner 镜像和系统 SDK 随 `*-latest` 更新，详细版本以每次 CI 日志为准，不声称完整可复现构建。
 
+## macOS 27 授权归属
+
+macOS 27 起 TCC 按责任进程判定屏幕录制授权，终端直接执行 `.app/Contents/MacOS/WaibuSnap` 时不会继承应用的授权。真实截图必须经 LaunchServices 启动：访达、`open` 或 `run-app.sh`。首次仍需在系统设置允许 WaibuSnap，系统要求时重启；脚本不替用户授权。
+
+`run-app.sh` 用 `open -W -n <WaibuSnap.app> --stdout <日志> --stderr <日志> --args ...` 启动，标准输出 / 错误写入 `$WAIBUSNAP_BUILD_DIR/logs/run-app.log`（默认 `build/macos/logs/run-app.log`），并由 `tail -f` 保持终端可见，阻塞到应用退出。Ctrl+C 仅停止脚本与日志跟随，应用继续驻留；请从菜单栏退出。启动前 `pgrep -x WaibuSnap` 检查已有实例，存在时说明「请先从菜单栏退出，或直接使用它」并结束。`open` 的退出状态反映启动 / 等待器状态，受控捕获是否成功仍须检查会话日志的数量、结果码与可交互终点。
+
 ## 参数
 
 | 环境变量 | 默认 / 作用 |
@@ -90,6 +96,8 @@ bash scripts/measure-idle.sh --rehearsal --duration-seconds 60 --output build/re
 正式采集保留默认 30 / 30 和 300 秒，**本轮不执行**。正式模式拒绝源码脏状态、构建脏状态、构建 commit 与当前 commit 不同、非 Release 或少于规定样本数。合并后重新构建，不沿用功能分支二进制。固定等待默认 15 秒，可用 `--stable-seconds` 增加；稳定判据为末 5 次 RSS 波动 ≤ 5 MiB、两半 CPU 均值差 ≤ 0.5 个百分点，至少等待 10 秒。未稳定时退出失败，不选择更低占用片段。
 
 NF01 每个冷样本独立启动新进程，第一次截图标记冷；热采集另启一个进程，首次冷截图留作诊断，后续才进入热汇总。外部工具在预定首次触发前读取稳定基线，并预留 1 秒避免探针与捕获重叠。后续间隔默认 2 秒。测试模式自动取消覆盖层，选区尺寸为 0；取消前已经记录可交互代理终点。
+
+工具版本 **3** 的 NF01 分支使用 `open -n <WaibuSnap.app> --stdout <stdout.log> --stderr <stderr.log> --args <受控参数>`，避免 macOS 27 的授权归属问题。启动前检查禁止并存实例，启动后最多 10 秒轮询 `pgrep -x WaibuSnap` 确定新 PID；稳定采样、等待与停止使用基于 `os.kill(pid, 0)` 的轻量进程句柄。LaunchServices 启动的进程无法由本工具取回退出码，因此退出后仍强制核对会话数量、可交互终点与原有有效结果码集合；提前退出、缺失记录或超时均报错并给出 stderr 路径。stdout / stderr 按每轮冷 / 热样本分别保留。无捕获的 idle 分支仍直接启动包内程序，NF 判定与采样口径保持原样。
 
 真实 F1 的手动路径（不启用测试模式）：
 
