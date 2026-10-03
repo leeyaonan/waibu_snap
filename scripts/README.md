@@ -26,6 +26,12 @@ Qt 通过 [官方开源安装器](https://www.qt.io/download-qt-installer-oss)�
 
 环境脚本用 qmake 检查 **6.11.2**，Windows 还检查 MSVC kit；CMake `EXACT` 再次检查版本并拒绝静态 Qt。CI action、Qt、aqtinstall、py7zr 与 clang-format 均有固定版本或提交；runner 镜像和系统 SDK 随 `*-latest` 更新，详细版本以每次 CI 日志为准，不声称完整可复现构建。
 
+## macOS 27 授权归属
+
+macOS 27 起 TCC 按责任进程判定屏幕录制授权，终端直接执行 `.app/Contents/MacOS/WaibuSnap` 时不会继承应用的授权。真实截图必须经 LaunchServices 启动：访达、`open` 或 `run-app.sh`。首次仍需在系统设置允许 WaibuSnap，系统要求时重启；脚本不替用户授权。
+
+`run-app.sh` 用 `open -W -n <WaibuSnap.app> --stdout <日志> --stderr <日志> --args ...` 启动，标准输出 / 错误写入 `$WAIBUSNAP_BUILD_DIR/logs/run-app.log`（默认 `build/macos/logs/run-app.log`），并由 `tail -f` 保持终端可见，阻塞到应用退出。Ctrl+C 仅停止脚本与日志跟随，应用继续驻留；请从菜单栏退出。启动前 `pgrep -x WaibuSnap` 检查已有实例，存在时说明「请先从菜单栏退出，或直接使用它」并结束。`open` 的退出状态反映启动 / 等待器状态，受控捕获是否成功仍须检查会话日志的数量、结果码与可交互终点。
+
 ## 参数
 
 | 环境变量 | 默认 / 作用 |

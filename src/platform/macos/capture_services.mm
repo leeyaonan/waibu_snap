@@ -16,6 +16,11 @@ namespace waibusnap
 {
 namespace
 {
+QString permissionLaunchHint()
+{
+    return QStringLiteral("若已授权仍失败：macOS 27 起请从访达或用 open 命令启动应用"
+                          "（从终端直接执行不会继承授权）。");
+}
 quint64 layoutVersion()
 {
     // 仅按需读取布局，不在空闲期间轮询。
@@ -271,6 +276,13 @@ class MacCapture final : public CaptureProvider
   public:
     bool hasPermission() const override { return CGPreflightScreenCaptureAccess(); }
     bool requestPermission() override { return CGRequestScreenCaptureAccess(); }
+    QString permissionExplanation() const override
+    {
+        return QStringLiteral(
+                   "尚未获得屏幕录制权限，请在系统设置 → 隐私与安全性 → "
+                   "屏幕与系统音频录制中允许 WaibuSnap，然后重试；系统要求时请重启应用。") +
+               permissionLaunchHint();
+    }
     void capture(const DisplayTarget& target,
                  std::function<void(CaptureResult)> completion) override
     {
@@ -278,12 +290,7 @@ class MacCapture final : public CaptureProvider
         const DisplayTarget requested = target;
         if (!hasPermission())
         {
-            deliver(std::move(completion),
-                    {{},
-                     CaptureError::Permission,
-                     QStringLiteral(
-                         "尚未获得屏幕录制权限，请在系统设置 → 隐私与安全性 → "
-                         "屏幕与系统音频录制中允许 WaibuSnap，然后重试；系统要求时请重启应用。")});
+            deliver(std::move(completion), {{}, CaptureError::Permission, permissionExplanation()});
             return;
         }
         [SCShareableContent
@@ -349,9 +356,11 @@ class MacCapture final : public CaptureProvider
                                                                        "%1），请检查屏幕录制授权；"
                                                                        "重新授权后重试，系统要求时"
                                                                        "重启应用。")
-                                                                       .arg(captureError
-                                                                                ? captureError.code
-                                                                                : -1)});
+                                                                           .arg(captureError
+                                                                                    ? captureError
+                                                                                          .code
+                                                                                    : -1) +
+                                                                       permissionLaunchHint()});
                                                               return;
                                                           }
                                                           const int width =
