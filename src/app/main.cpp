@@ -1,4 +1,5 @@
 #include "app/application_controller.h"
+#include "interfaces/platform_info.h"
 #include "interfaces/platform_workarounds.h"
 #include <QApplication>
 #include <QCommandLineParser>
@@ -60,7 +61,7 @@ int main(int argc, char* argv[])
         }
     // 普通运行持锁至 main 退出；受控与冒烟路径由各自工具管理实例。
     std::unique_ptr<QLockFile> instanceLock;
-    if (!options.testMode && !options.smokeTest)
+    if (waibusnap::requiresSingleInstanceProtection() && !options.testMode && !options.smokeTest)
     {
         const QString dataDirectory =
             QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
