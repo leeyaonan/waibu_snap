@@ -1,4 +1,5 @@
 #include "ui/selection_overlay.h"
+#include "core/window_snapping.h"
 #include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
 #include <QCloseEvent>
@@ -20,11 +21,18 @@ namespace waibusnap
 namespace
 {
 constexpr qreal handleRadius = 6;
+constexpr qreal windowClickDistance = 3;
 }
-SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions)
+SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
+                                   QVector<QRect> windows, QString snappingError)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
-      frame_(std::move(frame)), actions_(std::move(actions))
+      frame_(std::move(frame)), actions_(std::move(actions)), windows_(std::move(windows))
 {
+    if (!snappingError.isEmpty() || windows_.isEmpty())
+    {
+        windows_.clear();
+        snappingNotice_ = QStringLiteral("窗口吸附不可用，请手动框选");
+    }
     setAttribute(Qt::WA_OpaquePaintEvent);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -181,6 +189,8 @@ void SelectionOverlay::setSelection(QRect pixels)
     if (pixels == selection_)
         return;
     selection_ = pixels;
+    if (!pixels.isEmpty())
+        hoveredWindowPixels_ = {};
     saved_ = false;
     statusTimeout_.stop();
     status_->hide();
@@ -236,9 +246,14 @@ void SelectionOverlay::updateCursor(QPointF position)
 }
 void SelectionOverlay::dragTo(QPointF position)
 {
+    maximumPressDistance_ = std::max(
+        maximumPressDistance_, std::hypot(position.x() - press_.x(), position.y() - press_.y()));
     if (dragMode_ == DragMode::Create)
-        setSelection(normalizedPixelSelection(press_, position, frame_.display.devicePixelRatio,
-                                              frame_.pixels.size()));
+    {
+        if (pressedWindow_ < 0 || maximumPressDistance_ > windowClickDistance)
+            setSelection(normalizedPixelSelection(press_, position, frame_.display.devicePixelRatio,
+                                                  frame_.pixels.size()));
+    }
     else if (dragMode_ == DragMode::Move)
         setSelection(movedPixelSelection(initialSelection_, position - press_,
                                          frame_.display.devicePixelRatio, frame_.pixels.size()));
@@ -247,6 +262,27 @@ void SelectionOverlay::dragTo(QPointF position)
                                            frame_.display.devicePixelRatio, frame_.pixels.size()));
     updateCursor(position);
     updateToolbar();
+    update();
+}
+void SelectionOverlay::updateHover(QPointF position)
+{
+    const int index =
+        selection_.isEmpty() && dragMode_ == DragMode::None && !finished_ && !saveDialogOpen_
+            ? windowAt(windows_, position)
+            : -1;
+    const QRect pixels =
+        index >= 0 ? windowPixelSelection(windows_[index], frame_.display.devicePixelRatio,
+                                          frame_.pixels.size())
+                   : QRect();
+    if (pixels != hoveredWindowPixels_)
+    {
+        hoveredWindowPixels_ = pixels;
+        update();
+    }
+}
+void SelectionOverlay::leaveEvent(QEvent*)
+{
+    hoveredWindowPixels_ = {};
     update();
 }
 void SelectionOverlay::paintEvent(QPaintEvent*)
@@ -263,6 +299,15 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         if (!selection_.isEmpty())
             shade.addRect(region);
         painter.fillPath(shade, QColor(0, 0, 0, 75));
+        if (!hoveredWindowPixels_.isEmpty())
+        {
+            const QRectF hover(hoveredWindowPixels_.x() / scale, hoveredWindowPixels_.y() / scale,
+                               hoveredWindowPixels_.width() / scale,
+                               hoveredWindowPixels_.height() / scale);
+            painter.fillRect(hover, QColor(60, 170, 255, 55));
+            painter.setPen(QPen(QColor(90, 200, 255), 2, Qt::DashLine));
+            painter.drawRect(hover);
+        }
         painter.setPen(QPen(Qt::white, 1.0 / scale));
         if (!selection_.isEmpty())
         {
@@ -278,14 +323,19 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
                             painter.drawRect(QRectF(x[column] - 3, y[row] - 3, 6, 6));
             }
         }
-        const QString text =
-            QStringLiteral("%1 × %2 像素   拖拽框选 · 内部移动 · 边角调整 · Esc 取消")
-                .arg(selection_.width())
-                .arg(selection_.height());
+        const QString text = QStringLiteral("%1 × %2 像素   单击吸附 · 拖拽框选 · Esc 取消")
+                                 .arg(selection_.width())
+                                 .arg(selection_.height());
         const QRect box(16, 16, std::max(0, std::min(width() - 32, 580)), 36);
         painter.fillRect(box, QColor(20, 20, 20, 220));
         painter.setPen(Qt::white);
         painter.drawText(box.adjusted(12, 0, -12, 0), Qt::AlignVCenter, text);
+        if (!snappingNotice_.isEmpty())
+        {
+            const QRect notice = box.translated(0, 40);
+            painter.fillRect(notice, QColor(20, 20, 20, 220));
+            painter.drawText(notice.adjusted(12, 0, -12, 0), Qt::AlignVCenter, snappingNotice_);
+        }
     }
     if (!painted_)
     {
@@ -299,6 +349,9 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
         return;
     press_ = event->position();
     initialSelection_ = selection_;
+    maximumPressDistance_ = 0;
+    pressedWindow_ = selection_.isEmpty() ? windowAt(windows_, press_) : -1;
+    hoveredWindowPixels_ = {};
     resizeEdges_ = edgesAt(press_);
     if (resizeEdges_)
         dragMode_ = DragMode::Resize;
@@ -320,7 +373,10 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
     if (dragMode_ != DragMode::None)
         dragTo(event->position());
     else
+    {
+        updateHover(event->position());
         updateCursor(event->position());
+    }
 }
 void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
 {
@@ -328,7 +384,12 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         event->button() != Qt::LeftButton)
         return;
     dragTo(event->position());
+    if (dragMode_ == DragMode::Create && pressedWindow_ >= 0 &&
+        maximumPressDistance_ <= windowClickDistance)
+        setSelection(windowPixelSelection(windows_[pressedWindow_], frame_.display.devicePixelRatio,
+                                          frame_.pixels.size()));
     dragMode_ = DragMode::None;
+    updateHover(event->position());
     updateCursor(event->position());
     updateToolbar();
     update();
@@ -347,6 +408,7 @@ void SelectionOverlay::closeEvent(QCloseEvent* event)
     event->accept();
     if (!finished_)
     {
+        hoveredWindowPixels_ = {};
         finished_ = true;
         emit finished({}, cancelledSessionOutcome);
     }
@@ -356,6 +418,7 @@ void SelectionOverlay::complete(int outcome)
     if (finished_)
         return;
     finished_ = true;
+    hoveredWindowPixels_ = {};
     hide();
     emit finished(outcome == copiedSessionOutcome ? selection() : QRect(), outcome);
 }

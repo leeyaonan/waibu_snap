@@ -1,7 +1,9 @@
 #pragma once
+#include "app/app_settings.h"
 #include "interfaces/capture_provider.h"
 #include "interfaces/global_hotkey.h"
 #include "interfaces/presentation_observer.h"
+#include "interfaces/window_enumerator.h"
 #include "session/session_metrics.h"
 #include "ui/selection_overlay.h"
 #include <QApplication>
@@ -14,6 +16,7 @@ namespace waibusnap
 struct RunOptions
 {
     QString metricsFile;
+    QString settingsFile;
     bool testMode = false;
     bool smokeTest = false;
     int testCount = 1;
@@ -37,13 +40,18 @@ class ApplicationController final : public QObject
     void finish(QRect pixels, int outcome);
     void fail(int outcome, const QString& explanation);
     void startSmokeTest();
+    void openSettings();
+    QString changeHotkey(const QKeySequence& sequence);
     QApplication& application_;
     RunOptions options_;
+    QAction* settingsAction_ = nullptr;
     QMenu menu_;
     QSystemTrayIcon tray_;
     std::unique_ptr<GlobalHotkey> hotkey_;
+    HotkeySettings hotkeySettings_;
     std::unique_ptr<DisplayTopology> displays_;
     std::unique_ptr<CaptureProvider> capture_;
+    std::unique_ptr<WindowEnumerator> windows_;
     std::unique_ptr<PresentationObservation> observation_;
     QPointer<SelectionOverlay> overlay_;
     SessionMetrics metrics_;
@@ -52,5 +60,6 @@ class ApplicationController final : public QObject
     quint64 token_ = 0;
     bool active_ = false;
     bool quitting_ = false;
+    bool settingsOpen_ = false;
 };
 }

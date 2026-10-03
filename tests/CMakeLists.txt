@@ -22,6 +22,17 @@ target_link_libraries(image_output_test PRIVATE waibusnap_output Qt6::Test waibu
 set_target_properties(image_output_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME image_output COMMAND image_output_test)
 
+qt_add_executable(window_snapping_test unit/window_snapping_test.cpp)
+target_link_libraries(window_snapping_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(window_snapping_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME window_snapping COMMAND window_snapping_test)
+
+qt_add_executable(hotkey_settings_test unit/hotkey_settings_test.cpp)
+target_link_libraries(hotkey_settings_test PRIVATE waibusnap_settings Qt6::Widgets Qt6::Test waibusnap_options)
+set_target_properties(hotkey_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME hotkey_settings COMMAND hotkey_settings_test)
+set_tests_properties(hotkey_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME measurement_tool COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/unit/measurement_tool_test.py")

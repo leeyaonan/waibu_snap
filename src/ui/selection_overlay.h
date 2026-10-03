@@ -4,6 +4,7 @@
 #include "output/image_output.h"
 #include <QLabel>
 #include <QTimer>
+#include <QVector>
 #include <QWidget>
 #include <functional>
 namespace waibusnap
@@ -17,8 +18,10 @@ class SelectionOverlay final : public QWidget
 {
     Q_OBJECT
   public:
-    explicit SelectionOverlay(CaptureFrame frame, OverlayActions actions = {});
+    explicit SelectionOverlay(CaptureFrame frame, OverlayActions actions = {},
+                              QVector<QRect> windows = {}, QString snappingError = {});
     QRect selection() const;
+    QRect hoveredWindowPixels() const { return hoveredWindowPixels_; }
     bool hasPainted() const { return painted_; }
     bool isSelectionSaved() const { return saved_; }
     // 不打开对话框；路径确认由保存入口负责，供导出测试和后续输出入口复用。
@@ -34,6 +37,7 @@ class SelectionOverlay final : public QWidget
     void mouseReleaseEvent(QMouseEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
     void closeEvent(QCloseEvent*) override;
+    void leaveEvent(QEvent*) override;
 
   private:
     enum class DragMode
@@ -53,6 +57,7 @@ class SelectionOverlay final : public QWidget
     SelectionEdges edgesAt(QPointF position) const;
     void updateCursor(QPointF position);
     void dragTo(QPointF position);
+    void updateHover(QPointF position);
     CaptureFrame frame_;
     OverlayActions actions_;
     QWidget* toolbar_ = nullptr;
@@ -60,6 +65,11 @@ class SelectionOverlay final : public QWidget
     QTimer statusTimeout_;
     QRect selection_;
     QRect initialSelection_;
+    QVector<QRect> windows_;
+    QString snappingNotice_;
+    QRect hoveredWindowPixels_;
+    int pressedWindow_ = -1;
+    qreal maximumPressDistance_ = 0;
     QPointF press_;
     DragMode dragMode_ = DragMode::None;
     SelectionEdges resizeEdges_;
