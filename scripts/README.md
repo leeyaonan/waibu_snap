@@ -97,6 +97,8 @@ bash scripts/measure-idle.sh --rehearsal --duration-seconds 60 --output build/re
 
 NF01 每个冷样本独立启动新进程，第一次截图标记冷；热采集另启一个进程，首次冷截图留作诊断，后续才进入热汇总。外部工具在预定首次触发前读取稳定基线，并预留 1 秒避免探针与捕获重叠。后续间隔默认 2 秒。测试模式自动取消覆盖层，选区尺寸为 0；取消前已经记录可交互代理终点。
 
+工具版本 **3** 的 NF01 分支使用 `open -n <WaibuSnap.app> --stdout <stdout.log> --stderr <stderr.log> --args <受控参数>`，避免 macOS 27 的授权归属问题。启动前检查禁止并存实例，启动后最多 10 秒轮询 `pgrep -x WaibuSnap` 确定新 PID；稳定采样、等待与停止使用基于 `os.kill(pid, 0)` 的轻量进程句柄。LaunchServices 启动的进程无法由本工具取回退出码，因此退出后仍强制核对会话数量、可交互终点与原有有效结果码集合；提前退出、缺失记录或超时均报错并给出 stderr 路径。stdout / stderr 按每轮冷 / 热样本分别保留。无捕获的 idle 分支仍直接启动包内程序，NF 判定与采样口径保持原样。
+
 真实 F1 的手动路径（不启用测试模式）：
 
 ```bash
