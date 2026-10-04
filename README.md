@@ -14,6 +14,8 @@
 
 开发与受控验证使用 `--settings-file <临时 INI 路径>` 隔离配置，此参数不要求 `--test-mode`；省略时才使用正常配置域。原有受控参数、测量日志格式与结果码保持不变。
 
+macOS 普通运行在 `AppLocalDataLocation/waibusnap.lock` 持有单实例锁，重复启动打印中文说明并正常退出，避免重复托盘和热键冲突。`--test-mode` / `--smoke-test` 跳过该锁；`--settings-file` 仅隔离设置，不改变锁的位置或单实例规则。无法创建应用数据目录时启动失败。平台策略暂不在 Windows 启用该锁，保持 Windows 原有启动行为。
+
 拖选松开后保留选区，内部拖动保持尺寸，边角调整夹取在起始屏内。反向拖过对侧时夹停在对侧前 1 个物理像素，不翻转手柄；选区外单击清除，选区外拖动替换。零面积不进入选区态。复制成功结束会话，失败保留并可点「复制」重试；只有复制入口写剪贴板。保存成功短暂显示文件名且保留会话，继续移动 / 调整即重新标记未保存；取消、关闭或 Esc 均不产生额外输出，主动保存的文件保留。本轮不做未保存退出提示。
 
 保存使用原生 PNG 面板和带时间戳的建议文件名；缺少 `.png` 时自动追加（其他后缀也追加 `.png`，不会输出 JPEG）。覆盖确认交给原生面板，补后缀后碰到已有文件会重新打开面板确认最终路径。保存取消返回选区；失败显示中文原因并可重新选择路径，原子写入失败保留原文件。面板期间 Esc 由面板处理，关闭面板后恢复覆盖层焦点。
@@ -44,7 +46,7 @@ settings_dir="$(mktemp -d)"
 bash scripts/run-app.sh --settings-file "$settings_dir/settings.ini" --metrics-file "$settings_dir/sessions.jsonl"
 ```
 
-默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本直接启动包内程序；应用以托盘驻留，关闭选区不会退出，退出走托盘菜单。测量彩排、真实 F1 日志与完整口径见 [脚本登记](scripts/README.md#v02-测量工具与实现策略)。测试由 CTest 设置 `QT_QPA_PLATFORM=offscreen`，不需要截图权限或可见桌面。
+默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本经 LaunchServices（`open`）启动，参数通过 `--args` 透传，终端跟随 `build/macos/logs/run-app.log` 并等待应用退出；Ctrl+C 只结束脚本，应用继续留在托盘。已有实例时脚本提示先退出或直接使用它。应用以托盘驻留，关闭选区不会退出，退出走托盘菜单。测量彩排、真实 F1 日志与完整口径见 [脚本登记](scripts/README.md#v02-测量工具与实现策略)。无头测试不需要截图权限或可见桌面。
 
 Intel 交叉构建路径（CI 已通过编译，**Intel 实机运行待验证**，使用独立构建目录）：
 
@@ -53,6 +55,14 @@ MACOS_ARCHITECTURES=x86_64 WAIBUSNAP_BUILD_DIR="$PWD/build/macos-x86_64" bash sc
 ```
 
 CI 使用 Qt kit 的 x86_64 slice 交叉编译成功；Apple Silicon 上的交叉构建或 Rosetta 运行不能代替 Intel 实机验收。
+
+## macOS 27 已知问题与兼容处理
+
+Qt 6.11.2 的 `QSystemTrayIcon` 假定 `NSApp.currentEvent` 是鼠标事件；macOS 27 的手势回调可能携带 KitDefined 事件，读取 `clickCount` 会触发 AppKit 异常（[QTBUG-147449](https://bugreports.qt.io/browse/QTBUG-147449)）。当前在创建窗口 / 托盘前幂等安装本进程 `NSEvent.clickCount` 绕行：鼠标事件调用原实现，其他事件返回 1。它影响本进程该方法的所有调用；合成事件回归测试不能替代托盘反复点击的真机核对。
+
+本轮保持 Qt **6.11.2**。升级到含官方修复的版本（≥6.12.0，或包含 qtbase 6.11 分支 [6192d9edd0](https://github.com/qt/qtbase/commit/6192d9edd00caa14ed6b67c32c0cd8cfe95cf815) 的 6.11.x）后删除绕行、安装入口及相应测试。
+
+macOS 27 起，屏幕录制授权按 TCC 的责任进程归属判定。从终端直接执行包内二进制时，应用已获授权仍可能被判未授权。需要真实截图时，通过访达、`open build/macos/bin/WaibuSnap.app` 或 `bash scripts/run-app.sh` 启动；授权或撤销后按系统要求重启应用。NF01 采集同样使用 LaunchServices，详见 [授权归属说明](scripts/README.md#macos-27-授权归属)。
 
 ## Windows：构建、运行与测试
 

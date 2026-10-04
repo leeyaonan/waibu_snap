@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-TOOL_VERSION = "2"
+TOOL_VERSION = "3"
 MIB = 1024 * 1024
 REPO = Path(__file__).resolve().parent.parent
 
@@ -192,7 +192,7 @@ def stop(process):
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
+            process.send_signal(signal.SIGKILL)
             process.wait()
 
 
@@ -216,6 +216,68 @@ def nf01_summary(rows):
     return result
 
 
+class LaunchServicesProcess:
+    """LaunchServices 子进程不属于本工具；只判活，退出状态须由完整会话记录验证。"""
+    def __init__(self, pid):
+        self.pid = pid
+
+    def poll(self):
+        try:
+            os.kill(self.pid, 0)
+        except ProcessLookupError:
+            return 0
+        except PermissionError:
+            # 存在但不允许发信号，不能误判为已经退出。
+            pass
+        return None
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(f"WaibuSnap PID {self.pid}", timeout)
+            time.sleep(0.1)
+        return 0
+
+    def send_signal(self, sig):
+        try:
+            os.kill(self.pid, sig)
+        except ProcessLookupError:
+            pass
+
+
+def application_pids(timeout=10):
+    result = subprocess.run(["pgrep", "-x", "WaibuSnap"], capture_output=True,
+                            text=True, timeout=timeout)
+    if result.returncode == 1:
+        return set()
+    if result.returncode:
+        raise RuntimeError(f"无法检查 WaibuSnap 实例：{result.stderr.strip()}")
+    return {int(pid) for pid in result.stdout.split()}
+
+
+def start_nf01_process(app, stdout, stderr, arguments):
+    existing = application_pids()
+    if existing:
+        raise RuntimeError("请先从托盘退出已有 WaibuSnap，采集工具将独占应用实例。")
+    # macOS 27 起 TCC 按责任进程判定授权，真实捕获必须经 LaunchServices。
+    # idle 无捕获、无授权依赖，继续沿用直接 Popen。
+    deadline = time.monotonic() + 10
+    result = subprocess.run(["open", "-n", str(app.parents[2]),
+                             "--stdout", str(stdout), "--stderr", str(stderr),
+                             "--args", *arguments], capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise RuntimeError(f"LaunchServices 启动失败：{result.stderr.strip()}")
+    while time.monotonic() < deadline:
+        pids = application_pids(timeout=max(0.01, deadline - time.monotonic())) - existing
+        if len(pids) > 1:
+            raise RuntimeError("启动后发现多个 WaibuSnap 实例，无法确定采集 PID。")
+        if pids:
+            return LaunchServicesProcess(pids.pop())
+        time.sleep(0.1)
+    raise RuntimeError("LaunchServices 启动后 10 秒内未找到 WaibuSnap PID；应用可能提前退出。")
+
+
 def measure_nf01(args, app, probe, output):
     collected = []
     runs = [("cold", i, 1) for i in range(args.cold)]
@@ -224,25 +286,32 @@ def measure_nf01(args, app, probe, output):
         runs.append(("warm", 0, args.warm + 1))
     for kind, index, count in runs:
         log = output / f"{kind}-{index:02d}.jsonl"
+        stdout = output / f"{kind}-{index:02d}-stdout.log"
         stderr = output / f"{kind}-{index:02d}-stderr.log"
-        with stderr.open("w", encoding="utf-8") as diagnostics:
-            process = subprocess.Popen([str(app), "--test-mode", "--test-count", str(count),
+        process = None
+        try:
+            process = start_nf01_process(app, stdout, stderr, ["--test-mode", "--test-count", str(count),
                 "--test-stable-ms", str(round(args.stable_seconds * 1000)),
                 "--test-interval-ms", str(round(args.interval_seconds * 1000)),
-                "--metrics-file", str(log)], stdout=diagnostics, stderr=diagnostics)
-            try:
-                stability = collect_stability(probe, process, args.stable_seconds)
-                write_json(output / f"{kind}-{index:02d}-stability.json", stability)
-                if not stability["stable"]:
-                    raise RuntimeError("启动后尚未稳定，请增加等待时间再采集。")
-                remaining_timeout = count * (args.interval_seconds + 20) + 30
-                if process.wait(timeout=remaining_timeout):
-                    raise RuntimeError(f"截图未完成，请查看 {stderr.name} 和授权状态。")
-            finally:
+                "--metrics-file", str(log)])
+            stability = collect_stability(probe, process, args.stable_seconds)
+            write_json(output / f"{kind}-{index:02d}-stability.json", stability)
+            if not stability["stable"]:
+                raise RuntimeError("启动后尚未稳定，请增加等待时间再采集。")
+            remaining_timeout = count * (args.interval_seconds + 20) + 30
+            process.wait(timeout=remaining_timeout)
+            # os.kill(pid, 0) 不能取回退出码，不能仅以进程消失认定捕获成功。
+            if not log.is_file():
+                raise RuntimeError("应用退出但没有会话记录，截图未完成。")
+            rows = [json.loads(line) for line in log.read_text().splitlines()]
+            if len(rows) != count or any(not row.get("interactive_ns") or
+                                        row.get("outcome") not in (1, 2, 10) for row in rows):
+                raise RuntimeError("会话记录数量、可交互终点或有效结果码缺失。")
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError(f"NF01 采集失败：{error}；请查看 stderr：{stderr}") from error
+        finally:
+            if process is not None:
                 stop(process)
-        rows = [json.loads(line) for line in log.read_text().splitlines()]
-        if len(rows) != count or any(not row.get("interactive_ns") for row in rows):
-            raise RuntimeError("会话记录数量或可交互终点缺失。")
         for row in rows:
             row["collection"] = kind
         collected.extend(rows if kind == "cold" else rows[1:])
