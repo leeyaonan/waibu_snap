@@ -15,8 +15,10 @@ else
     [[ "$pgrep_status" == 1 ]] || { echo "无法检查 WaibuSnap 实例。" >&2; exit 1; }
 fi
 mkdir -p "$build_dir/logs"
-log="$build_dir/logs/run-app.log"
-: > "$log"
+stdout_log="$build_dir/logs/run-app.stdout.log"
+stderr_log="$build_dir/logs/run-app.stderr.log"
+: > "$stdout_log"
+: > "$stderr_log"
 launcher_pid=""
 tail_pid=""
 cleanup() {
@@ -31,9 +33,9 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-open -W -n "$app" --stdout "$log" --stderr "$log" --args "$@" &
+open -W -n "$app" --stdout "$stdout_log" --stderr "$stderr_log" --args "$@" &
 launcher_pid=$!
-tail -n +1 -f "$log" &
+tail -n +1 -f "$stderr_log" &
 tail_pid=$!
 status=0
 wait "$launcher_pid" || status=$?
