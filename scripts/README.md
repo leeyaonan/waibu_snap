@@ -13,8 +13,9 @@
 | Qt Test / CTest | `bash scripts/test-project.sh` | `./scripts/test-project.ps1` |
 | 启动已构建程序 | `bash scripts/run-app.sh` | `./scripts/run-app.ps1` |
 | 格式检查（不改文件） | `bash scripts/lint-code.sh` | `./scripts/lint-code.ps1` |
+| 一次性创建本机开发签名证书（显式执行） | `bash scripts/create-dev-signing-cert.sh` | `./scripts/create-dev-signing-cert.ps1` 仅提示 macOS 并非零退出 |
 
-本轮新增的性能采集入口在下节登记；Windows 入口明确非零失败（待补）。无自动下载、安装、打包或发布脚本。失败返回非零退出码；测试使用 `--no-tests=error`，避免零测试假通过。
+性能采集入口在下节登记；Windows 入口明确非零失败（待补）。环境 / 构建不会自动下载工具或创建证书，无打包或发布脚本。失败返回非零退出码；测试使用 `--no-tests=error`，避免零测试假通过。
 
 ## 手动准备与版本锁定
 
@@ -30,7 +31,47 @@ Qt 通过 [官方开源安装器](https://www.qt.io/download-qt-installer-oss)�
 
 macOS 27 起 TCC 按责任进程判定屏幕录制授权，终端直接执行 `.app/Contents/MacOS/WaibuSnap` 时不会继承应用的授权。真实截图必须经 LaunchServices 启动：访达、`open` 或 `run-app.sh`。首次仍需在系统设置允许 WaibuSnap，系统要求时重启；脚本不替用户授权。
 
-`run-app.sh` 用 `open -W -n <WaibuSnap.app> --stdout <日志> --stderr <日志> --args ...` 启动，标准输出 / 错误写入 `$WAIBUSNAP_BUILD_DIR/logs/run-app.log`（默认 `build/macos/logs/run-app.log`），并由 `tail -f` 保持终端可见，阻塞到应用退出。Ctrl+C 仅停止脚本与日志跟随，应用继续驻留；请从菜单栏退出。启动前 `pgrep -x WaibuSnap` 检查已有实例，存在时说明「请先从菜单栏退出，或直接使用它」并结束。`open` 的退出状态反映启动 / 等待器状态，受控捕获是否成功仍须检查会话日志的数量、结果码与可交互终点。
+`run-app.sh` 用 `open -W -n <WaibuSnap.app> --stdout <stdout日志> --stderr <stderr日志> --args ...` 启动，标准输出 / 错误分别写入 `$WAIBUSNAP_BUILD_DIR/logs/run-app.stdout.log` 与 `run-app.stderr.log`（默认目录 `build/macos/logs`），终端由 `tail -f` 跟随 stderr，阻塞到应用退出。独立文件避免两个输出流各自写入时覆盖日志。Ctrl+C 仅停止脚本与日志跟随，应用继续驻留；请从菜单栏退出。启动前 `pgrep -x WaibuSnap` 检查已有实例，存在时说明「请先从菜单栏退出，或直接使用它」并结束。`open` 的退出状态反映启动 / 等待器状态，受控捕获是否成功仍须检查会话日志的数量、结果码与可交互终点。
+
+## 本机稳定签名
+
+ad-hoc 签名的 cdhash 随二进制重建变化，macOS 27 的屏幕录制授权会继续绑定旧构建。使用固定自签名证书「WaibuSnap Dev」后，应用的 designated requirement 为 `identifier "local.waibusnap.dev" and certificate leaf = H"<证书 SHA-1>"`，同一证书与标识跨重建保持稳定，终结重建后反复授权。Apple 对代码身份与 requirement 的说明见 [TN2206](https://developer.apple.com/library/archive/technotes/tn2206/)。
+
+一次性准备（在本机由开发者显式执行）：
+
+```bash
+bash scripts/create-dev-signing-cert.sh
+bash scripts/build-project.sh
+```
+
+证书脚本使用已有 `openssl` 与系统 `security`，生成十年有效的 RSA 2048 自签名代码签名证书，导入当前用户登录钥匙串，并仅预授权 `/usr/bin/codesign`；再次运行检测到已有身份即退出，不替换证书。配置文件兼容系统 LibreSSL；私钥、证书与 p12 只暂存于权限受限的 `mktemp` 目录，退出即清理，私钥最终仅保存在钥匙串。不得将这些文件提交到仓库。
+
+脚本优先尝试用户域代码签名信任（不使用 sudo）。若认证取消或信任失败，可在「钥匙串访问 → 登录 → WaibuSnap Dev」双击证书 → 显示简介 → 信任 → 代码签名：始终信任。信任是建议步骤，签名本身不依赖；未信任时 `find-identity -v` 可能不列出身份，构建仍从全部代码签名身份解析证书。首次 codesign 若弹出钥匙串访问提示，点「始终允许」。
+
+首次切换到证书签名后，先退出旧实例，由用户执行 `tccutil reset ScreenCapture local.waibusnap.dev`，或在系统设置移除旧条目；随后 `bash scripts/run-app.sh` 普通启动 → F1 / 托盘「截图」→ 系统弹窗「允许」，系统要求时重启。证书与 bundle id 保持相同时，后续重建无需重新授权。更换证书或 bundle id 必须重新授权；当前开发标识固定为 `local.waibusnap.dev`，若修改 CMake 的 bundle id，也须同步更新构建脚本的签名标识与 requirement 校验。脚本不执行 `tccutil`，不修改屏幕录制权限。
+
+本机构建未设置 `WAIBUSNAP_CODESIGN_IDENTITY` 时自动检测「WaibuSnap Dev」；未找到则保持 ad-hoc 并提示本节。显式非空值支持完整身份名称或证书 SHA-1，不存在或名称对应多个证书时失败；签名失败不会静默回退。设为空或 `none` 跳过证书签名，并显式恢复 ad-hoc（增量构建未重链接时也生效）：
+
+```bash
+WAIBUSNAP_CODESIGN_IDENTITY="WaibuSnap Dev" bash scripts/build-project.sh
+WAIBUSNAP_CODESIGN_IDENTITY=none bash scripts/build-project.sh
+WAIBUSNAP_CODESIGN_IDENTITY= bash scripts/build-project.sh
+```
+
+构建仅对 `bin/WaibuSnap.app` 使用 `codesign --force --sign <身份> --identifier local.waibusnap.dev --timestamp=none`，随后验证签名并打印 Authority / Identifier / CDHash 和 designated requirement。无 `--deep`、无 hardened runtime，不签外部 Qt 动态库或 `waibusnap_measure_probe`，不改变 CMake、CTest 或测试脚本。
+
+手动校验（构建目录按实际配置调整）：
+
+```bash
+security find-identity -v -p codesigning
+codesign --verify --verbose=2 build/macos/bin/WaibuSnap.app
+codesign -dvvv build/macos/bin/WaibuSnap.app
+codesign -d -r- build/macos/bin/WaibuSnap.app
+```
+
+删除证书、私钥和用户信任：`security delete-identity -c "WaibuSnap Dev" -t`。也可在钥匙串访问中删除对应身份。重新生成同名证书仍会改变证书叶哈希，原屏幕录制授权不能沿用。
+
+CI（`CI=true` 或 `GITHUB_ACTIONS=true`）固定保持 ad-hoc，不检测或安装证书；Windows 构建行为不变。此身份仅用于本机开发，不是 Apple Developer / Developer ID 证书，不提供公证或分发签名；发布策略与打包边界不变。
 
 ## 参数
 
@@ -40,8 +81,9 @@ macOS 27 起 TCC 按责任进程判定屏幕录制授权，终端直接执行 `.
 | `WAIBUSNAP_BUILD_DIR` | macOS 为仓库内 `build/macos`，Windows 为 `build/windows-x64`；建议自定义为绝对路径 |
 | `WAIBUSNAP_BUILD_TYPE` | `Release`；也接受 Debug / RelWithDebInfo / MinSizeRel；同一轮构建、测试、运行须保持一致 |
 | `MACOS_ARCHITECTURES` | 仅 macOS，默认 `uname -m`；可设 x86_64 或 `arm64;x86_64`（x86_64 已通过 CI 交叉编译，通用二进制与 Intel 实机待验证） |
+| `WAIBUSNAP_CODESIGN_IDENTITY` | 仅本机 macOS；未设置时自动检测 WaibuSnap Dev，非空值指定名称 / SHA-1；空值 / `none` 恢复 ad-hoc；CI 固定 ad-hoc |
 
-macOS 配置固定部署下限 14.0，Windows 固定 MSVC v143 x64（宿主可为 VS 2022 / 2026）。脚本不申请管理员权限、不变更系统策略。自定义架构请使用不同构建目录。
+macOS 配置固定部署下限 14.0，Windows 固定 MSVC v143 x64（宿主可为 VS 2022 / 2026）。脚本不申请管理员权限；仅显式执行的证书脚本导入登录钥匙串并尝试用户域代码签名信任。自定义架构请使用不同构建目录。
 
 Qt Test 与测量工具计算单测需要 Python 3（仅标准库，CI 已提供）。脚本始终开启 `BUILD_TESTING`。需要仅构建应用时，可手动使用相同 CMake 参数并传 `-DBUILD_TESTING=OFF`；此时既不查找 Qt Test，也不编译 `--smoke-test` 自动关闭入口。没有发布包入口，不能将该构建开关等同于发布验收。
 

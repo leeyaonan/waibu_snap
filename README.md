@@ -46,7 +46,7 @@ settings_dir="$(mktemp -d)"
 bash scripts/run-app.sh --settings-file "$settings_dir/settings.ini" --metrics-file "$settings_dir/sessions.jsonl"
 ```
 
-默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本经 LaunchServices（`open`）启动，参数通过 `--args` 透传，终端跟随 `build/macos/logs/run-app.log` 并等待应用退出；Ctrl+C 只结束脚本，应用继续留在托盘。已有实例时脚本提示先退出或直接使用它。应用以托盘驻留，关闭选区不会退出，退出走托盘菜单。测量彩排、真实 F1 日志与完整口径见 [脚本登记](scripts/README.md#v02-测量工具与实现策略)。无头测试不需要截图权限或可见桌面。
+默认构建当前主机架构的 Release，产物为 `build/macos/bin/WaibuSnap.app`。运行脚本经 LaunchServices（`open`）启动，参数通过 `--args` 透传，stdout / stderr 分别保存到 `build/macos/logs/run-app.stdout.log` 与 `run-app.stderr.log`，终端跟随 stderr 并等待应用退出；Ctrl+C 只结束脚本，应用继续留在托盘。已有实例时脚本提示先退出或直接使用它。应用以托盘驻留，关闭选区不会退出，退出走托盘菜单。测量彩排、真实 F1 日志与完整口径见 [脚本登记](scripts/README.md#v02-测量工具与实现策略)。无头测试不需要截图权限或可见桌面。
 
 Intel 交叉构建路径（CI 已通过编译，**Intel 实机运行待验证**，使用独立构建目录）：
 
@@ -63,6 +63,8 @@ Qt 6.11.2 的 `QSystemTrayIcon` 假定 `NSApp.currentEvent` 是鼠标事件；ma
 本轮保持 Qt **6.11.2**。升级到含官方修复的版本（≥6.12.0，或包含 qtbase 6.11 分支 [6192d9edd0](https://github.com/qt/qtbase/commit/6192d9edd00caa14ed6b67c32c0cd8cfe95cf815) 的 6.11.x）后删除绕行、安装入口及相应测试。
 
 macOS 27 起，屏幕录制授权按 TCC 的责任进程归属判定。从终端直接执行包内二进制时，应用已获授权仍可能被判未授权。需要真实截图时，通过访达、`open build/macos/bin/WaibuSnap.app` 或 `bash scripts/run-app.sh` 启动；授权或撤销后按系统要求重启应用。NF01 采集同样使用 LaunchServices，详见 [授权归属说明](scripts/README.md#macos-27-授权归属)。
+
+本机开发已支持固定自签名证书「WaibuSnap Dev」：配好证书并完成首次切换的一次性授权后，同一证书与 bundle id 下重建不再掉屏幕录制授权。未配置证书的机器仍使用 ad-hoc，二进制变化后需移除旧记录并在普通启动中重新授权；测试模式不会弹授权窗，可能静默记录码 3。创建、跳过和校验步骤见 [本机稳定签名](scripts/README.md#本机稳定签名)。CI 继续 ad-hoc，Windows 与发布策略不变。
 
 ## Windows：构建、运行与测试
 
@@ -96,6 +98,6 @@ bash scripts/lint-code.sh
 
 共享接口在 `src/interfaces/`；平台实现只在 `src/platform/macos/` 和 `src/platform/windows/`；其余模块边界见 [src/README.md](src/README.md)。产品愿景、设计和规格在本地独立工作区维护。
 
-本轮没有安装包、签名、公证或发布入口。构建树 `.app` / `.exe` 仍依赖开发机 Qt，不可直接作为完整预览包分发。开发 bundle id 默认为 `local.waibusnap.dev`，可用 CMake `-DWAIBUSNAP_BUNDLE_ID=...` 覆盖；正式标识待确认。
+本轮只有可选的本机开发自签名，没有安装包、分发签名、公证或发布入口。构建树 `.app` / `.exe` 仍依赖开发机 Qt，不可直接作为完整预览包分发。开发 bundle id 默认为 `local.waibusnap.dev`，可用 CMake `-DWAIBUSNAP_BUNDLE_ID=...` 覆盖；变更时须同步构建脚本的签名标识并重新授权屏幕录制，正式标识待确认。
 
 自有代码采用 [MIT](LICENSE)。Qt Core / Gui / Widgets 采用 LGPLv3 动态链接；Qt Test 仅用于测试，不链接到应用。自有静态模块不会把 Qt 静态链接进程序。后续发行须补齐 Qt 及传递依赖许可、对应源码、替换 / 重链接与必要重签说明；本次尚未完成发行合规验收。
