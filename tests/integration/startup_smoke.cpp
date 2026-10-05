@@ -609,6 +609,16 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(sticker->annotations().size(), qsizetype(4));
         QVERIFY(!editor->isVisible());
         QVERIFY(!sticker->isEditing());
+        sticker->setEditing(true);
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        editor->setPlainText(QStringLiteral("同值选项点击也提交"));
+        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
+        const int color = colors->currentIndex();
+        QTest::mouseClick(colors, Qt::LeftButton);
+        colors->hidePopup();
+        QCOMPARE(colors->currentIndex(), color);
+        QCOMPARE(sticker->annotations().size(), qsizetype(5));
+        QVERIFY(!editor->isVisible());
     }
     void stickerHistoryStylesOutputAndDirtyState()
     {

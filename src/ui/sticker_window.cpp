@@ -632,6 +632,7 @@ void StickerWindow::ensureEditToolbar()
     {
         auto* combo = combos[index];
         combo->setFocusPolicy(Qt::NoFocus);
+        combo->installEventFilter(this);
         combo->setToolTip(tips[index]);
         combo->setAccessibleName(tips[index]);
         options->addWidget(combo);
@@ -872,6 +873,10 @@ void StickerWindow::finishText(bool commit, bool restoreFocus)
 }
 bool StickerWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // NoFocus 选项即使选择同一档也属于点击别处，不能只依赖索引变化或 FocusOut。
+    if ((watched == colors_ || watched == widths_ || watched == sizes_) &&
+        event->type() == QEvent::MouseButtonPress)
+        finishText(true, false);
     if (watched == editToolbar_ &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease))
     {
