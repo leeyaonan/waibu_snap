@@ -6,16 +6,18 @@
 #include <QDebug>
 #include <QMessageBox>
 #include <QPainter>
+#include <QScopedValueRollback>
 #include <QScreen>
 #include <QTimer>
 namespace waibusnap
 {
-ApplicationController::ApplicationController(QApplication& application, RunOptions options)
+ApplicationController::ApplicationController(QApplication& application, RunOptions options,
+                                             StickerActions stickerActions)
     : application_(application), options_(std::move(options)), hotkey_(createGlobalHotkey()),
       hotkeySettings_(AppSettings(options_.settingsFile), *hotkey_,
                       [this] { trigger(QStringLiteral("hotkey")); }),
       displays_(createDisplayTopology()), capture_(createCaptureProvider()),
-      windows_(createWindowEnumerator())
+      windows_(createWindowEnumerator()), stickers_(nullptr, std::move(stickerActions))
 {
     application_.setQuitOnLastWindowClosed(false);
     connect(&application_, &QCoreApplication::aboutToQuit, this, &ApplicationController::cleanup);
@@ -109,7 +111,7 @@ QString ApplicationController::changeHotkey(const QKeySequence& sequence)
 }
 void ApplicationController::openSettings()
 {
-    if (active_ || quitting_ || settingsOpen_)
+    if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
         return;
     settingsOpen_ = true;
     SettingsDialog dialog(
@@ -122,7 +124,7 @@ void ApplicationController::openSettings()
 void ApplicationController::trigger(const QString& source)
 {
     const qint64 t0 = monotonicNs();
-    if (active_ || quitting_ || settingsOpen_)
+    if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
         return;
     active_ = true;
     settingsAction_->setEnabled(false);
@@ -297,6 +299,11 @@ void ApplicationController::cleanup()
 }
 void ApplicationController::quit()
 {
+    if (quitting_ || resolvingQuit_)
+        return;
+    QScopedValueRollback<bool> resolving(resolvingQuit_, true);
+    if (!stickers_.resolveUnsavedForQuit())
+        return;
     cleanup();
     application_.quit();
 }
@@ -365,7 +372,7 @@ void ApplicationController::startSmokeTest()
                             }
                             QImage image(120, 80, QImage::Format_ARGB32_Premultiplied);
                             image.fill(Qt::red);
-                            if (!stickers_.create(image, {20, 20}).success ||
+                            if (!stickers_.create(image, {20, 20}, true).success ||
                                 !stickers_.create(image, {80, 80}, true).success)
                             {
                                 application_.exit(23);
