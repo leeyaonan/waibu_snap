@@ -18,6 +18,7 @@ struct OverlayActions
 {
     std::function<ImageOutputResult(const QImage&)> copyImage;
     std::function<QString(QWidget*, const QString&)> chooseSavePath;
+    std::function<ImageOutputResult(const QImage&)> pinImage;
 };
 class SelectionOverlay final : public QWidget
 {
@@ -29,6 +30,7 @@ class SelectionOverlay final : public QWidget
     QRect hoveredWindowPixels() const { return hoveredWindowPixels_; }
     bool hasPainted() const { return painted_; }
     bool isSelectionSaved() const { return saved_; }
+    QPoint selectionGlobalPosition() const;
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
     std::optional<AnnotationType> activeTool() const { return activeTool_; }
     // 不打开对话框；路径确认由保存入口负责，供导出测试和后续输出入口复用。
@@ -58,6 +60,7 @@ class SelectionOverlay final : public QWidget
     };
     void complete(int outcome);
     void copySelection();
+    void pinSelection();
     void saveSelection();
     void setSelection(QRect pixels);
     void ensureToolbar();

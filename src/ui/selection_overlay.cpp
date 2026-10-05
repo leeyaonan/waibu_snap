@@ -156,8 +156,9 @@ void SelectionOverlay::ensureToolbar()
     redoButton_ = makeButton(QStringLiteral("重做"), QStringLiteral("redoAnnotationButton"));
     auto* copy = makeButton(QStringLiteral("复制"), QStringLiteral("copyButton"));
     auto* save = makeButton(QStringLiteral("保存"), QStringLiteral("saveButton"));
+    auto* pin = makeButton(QStringLiteral("钉到屏幕"), QStringLiteral("pinButton"));
     auto* cancel = makeButton(QStringLiteral("取消"), QStringLiteral("cancelButton"));
-    for (auto* button : {undoButton_, redoButton_, copy, save, cancel})
+    for (auto* button : {undoButton_, redoButton_, copy, save, pin, cancel})
         buttons->addWidget(button);
     layout->addLayout(buttons);
     undoShortcut_ = new QShortcut(QKeySequence::Undo, this);
@@ -180,6 +181,7 @@ void SelectionOverlay::ensureToolbar()
     layout->addWidget(status_);
     connect(copy, &QPushButton::clicked, this, &SelectionOverlay::copySelection);
     connect(save, &QPushButton::clicked, this, &SelectionOverlay::saveSelection);
+    connect(pin, &QPushButton::clicked, this, &SelectionOverlay::pinSelection);
     connect(cancel, &QPushButton::clicked, this, [this] { complete(cancelledSessionOutcome); });
     for (QWidget* widget : toolbar_->findChildren<QWidget*>())
     {
@@ -242,6 +244,25 @@ void SelectionOverlay::copySelection()
     else
         showStatus(QStringLiteral("复制失败：%1 点击「复制」重试。").arg(result.explanation),
                    false);
+}
+void SelectionOverlay::pinSelection()
+{
+    if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+        return;
+    finishText(true);
+    const ImageOutputResult result =
+        actions_.pinImage
+            ? actions_.pinImage(renderAnnotatedSelection(frame_.pixels, annotations(), selection_))
+            : ImageOutputResult{false, QStringLiteral("贴图管理器不可用。")};
+    if (result.success)
+        complete(pinnedSessionOutcome);
+    else
+        showStatus(QStringLiteral("钉图失败：%1 点击「钉到屏幕」重试。").arg(result.explanation),
+                   false);
+}
+QPoint SelectionOverlay::selectionGlobalPosition() const
+{
+    return frame_.display.logicalGeometry.topLeft() + logicalSelection().topLeft().toPoint();
 }
 void SelectionOverlay::saveSelection()
 {
@@ -597,7 +618,9 @@ void SelectionOverlay::complete(int outcome)
     hoveredWindowPixels_ = {};
     discardAnnotations();
     hide();
-    emit finished(outcome == copiedSessionOutcome ? selection() : QRect(), outcome);
+    emit finished(outcome == copiedSessionOutcome || outcome == pinnedSessionOutcome ? selection()
+                                                                                     : QRect(),
+                  outcome);
 }
 QPointF SelectionOverlay::physicalPoint(QPointF position) const
 {
