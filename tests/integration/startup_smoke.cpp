@@ -1,4 +1,5 @@
 #include "app/app_settings.h"
+#include "app/application_controller.h"
 #include "app/hotkey_rules.h"
 #include "app/sticker_manager.h"
 #include "core/sticker_geometry.h"
@@ -17,6 +18,7 @@
 #include <QInputMethodEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -65,6 +67,26 @@ void drag(waibusnap::SelectionOverlay& overlay, QPoint first, QPoint second)
     QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, first);
     QTest::mouseMove(&overlay, second);
     QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, second);
+}
+void stickerClick(waibusnap::StickerWindow& sticker, const char* name)
+{
+    auto* control = sticker.findChild<QPushButton*>(QString::fromLatin1(name));
+    QVERIFY(control);
+    QTest::mouseClick(control, Qt::LeftButton);
+}
+void stickerDrag(waibusnap::StickerWindow& sticker, QPoint first, QPoint last)
+{
+    const QPointF origin = sticker.mapToGlobal(QPoint(0, 0));
+    const QPointF positions[] = {origin + first, origin + last, origin + last};
+    const QEvent::Type types[] = {QEvent::MouseButtonPress, QEvent::MouseMove,
+                                  QEvent::MouseButtonRelease};
+    for (int index = 0; index < 3; ++index)
+    {
+        QMouseEvent event(types[index], sticker.mapFromGlobal(positions[index]), positions[index],
+                          index == 1 ? Qt::NoButton : Qt::LeftButton,
+                          index == 2 ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&sticker, &event);
+    }
 }
 // Windows 无控制台时 Qt 日志默认走调试器而不是 stderr；测试依赖子进程 stderr，
 // 显式启用官方开关（QT_FORCE_STDERR_LOGGING），双端行为一致。
@@ -193,7 +215,9 @@ class StartupSmokeTest final : public QObject
     void stickerWindowsScaleDragAndCloseIndependently()
     {
         using namespace waibusnap;
-        StickerManager manager;
+        StickerActions actions;
+        actions.confirmClose = [](QWidget*) { return StickerCloseDecision::Discard; };
+        StickerManager manager(nullptr, actions);
         QImage image(480, 360, QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::green);
         QVERIFY(!manager.create({}, {}).success);
@@ -395,7 +419,9 @@ class StartupSmokeTest final : public QObject
     void tinyStickerKeepsAllActionsAccessible()
     {
         using namespace waibusnap;
-        StickerManager manager;
+        StickerActions actions;
+        actions.confirmClose = [](QWidget*) { return StickerCloseDecision::Discard; };
+        StickerManager manager(nullptr, actions);
         QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::red);
         QVERIFY(manager.create(image, {30, 40}).success);
@@ -406,7 +432,7 @@ class StartupSmokeTest final : public QObject
         auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerMoreButton"));
         QVERIFY(more && more->isVisible());
         QVERIFY(sticker->rect().contains(more->geometry()));
-        QCOMPARE(sticker->actions().size(), qsizetype(6));
+        QCOMPARE(sticker->actions().size(), qsizetype(7));
         QCOMPARE(sticker->actions().last()->text(), QStringLiteral("关闭贴图"));
         sticker->actions().last()->trigger();
         QCOMPARE(manager.count(), 0);
@@ -415,7 +441,9 @@ class StartupSmokeTest final : public QObject
     void managerRecoversOffscreenAndDestroysPendingClose()
     {
         using namespace waibusnap;
-        StickerManager manager;
+        StickerActions actions;
+        actions.confirmClose = [](QWidget*) { return StickerCloseDecision::Discard; };
+        StickerManager manager(nullptr, actions);
         QImage image(120, 80, QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::red);
         QVERIFY(manager.create(image, {-10000, -10000}).success);
@@ -432,6 +460,560 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(manager.count(), 0);
         manager.closeAll();
         QCOMPARE(manager.count(), 0);
+    }
+    void stickerEditingEntrancesGesturesAndCompactTools()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {40, 50}, true).success);
+        auto sticker = manager.windows().first();
+        const QRect before = sticker->geometry();
+        stickerClick(*sticker, "stickerEditButton");
+        QVERIFY(sticker->isEditing());
+        QCOMPARE(sticker->geometry(), before);
+        QVERIFY(!sticker->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        QCOMPARE(sticker->contextMenuPolicy(), Qt::NoContextMenu);
+        stickerDrag(*sticker, {80, 80}, {150, 150});
+        QCOMPARE(sticker->geometry(), before);
+        QVERIFY(sticker->annotations().isEmpty());
+        QVERIFY(sticker->isSaved());
+        const char* names[] = {"stickerEditRectangleToolButton", "stickerEditEllipseToolButton",
+                               "stickerEditLineToolButton",      "stickerEditArrowToolButton",
+                               "stickerEditFreehandToolButton",  "stickerEditTextToolButton"};
+        for (int index = 0; index < 5; ++index)
+        {
+            auto* tool = sticker->findChild<QPushButton*>(QString::fromLatin1(names[index]));
+            QVERIFY(tool);
+            QCOMPARE(tool->focusPolicy(), Qt::NoFocus);
+            stickerClick(*sticker, names[index]);
+            stickerDrag(*sticker, {80, 100}, {150, 140});
+            QCOMPARE(sticker->annotations().size(), qsizetype(index + 1));
+            QCOMPARE(sticker->annotations().last().type, static_cast<AnnotationType>(index));
+            QCOMPARE(sticker->pos(), before.topLeft());
+            QVERIFY(!sticker->isSaved());
+        }
+        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
+        auto* widths = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"));
+        auto* sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
+        QCOMPARE(colors->count(), 3);
+        QCOMPARE(widths->count(), 3);
+        QCOMPARE(sizes->count(), 3);
+        QVERIFY(!sizes->isEnabled());
+        for (auto* combo : {colors, widths, sizes})
+            QCOMPARE(combo->focusPolicy(), Qt::NoFocus);
+        const QPointF anchor = sticker->mapToGlobal(QPoint(100, 100));
+        const QRect old = sticker->geometry();
+        QWheelEvent wheel({100, 100}, anchor, {}, {0, 120}, Qt::NoButton, Qt::NoModifier,
+                          Qt::NoScrollPhase, false);
+        QApplication::sendEvent(sticker, &wheel);
+        QCOMPARE(sticker->scale(), qreal(1.25));
+        QCOMPARE(
+            sticker->pos(),
+            anchoredStickerPosition(old.topLeft(), old.size(), sticker->size(), anchor).toPoint());
+        const qreal factor =
+            sticker->windowHandle()->screen()->devicePixelRatio() / sticker->scale();
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        stickerDrag(*sticker, {100, 120}, {200, 120});
+        QCOMPARE(sticker->annotations().last().first, QPointF(100, 120) * factor);
+        QCOMPARE(sticker->annotations().last().last, QPointF(200, 120) * factor);
+        const qsizetype count = sticker->annotations().size();
+        const QRect scaled = sticker->geometry();
+        stickerClick(*sticker, "stickerEditDoneButton");
+        QVERIFY(!sticker->isEditing());
+        QCOMPARE(sticker->geometry(), scaled);
+        QVERIFY(sticker->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        QVERIFY(sticker->testAttribute(Qt::WA_ShowWithoutActivating));
+        QCOMPARE(sticker->annotations().size(), count);
+        stickerDrag(*sticker, {80, 80}, {120, 110});
+        QCOMPARE(sticker->pos(), scaled.topLeft() + QPoint(40, 30));
+        QTest::mouseDClick(sticker, Qt::LeftButton, Qt::NoModifier, {80, 80});
+        QVERIFY(sticker->isEditing());
+        QTest::keyClick(sticker, Qt::Key_Escape);
+        QVERIFY(!sticker->isEditing());
+        QImage tiny(8, 8, QImage::Format_ARGB32_Premultiplied);
+        tiny.fill(Qt::white);
+        QVERIFY(manager.create(tiny, {40, 50}, true).success);
+        sticker = manager.windows().last();
+        sticker->setScale(0.25, sticker->pos());
+        sticker->setEditing(true);
+        sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
+        auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton"));
+        QVERIFY(more && more->isVisible());
+        auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
+        QCOMPARE(menu->actions().size(), qsizetype(14));
+        QVERIFY(sticker->rect().contains(more->geometry()));
+        // 折叠入口仍能启用文本、选择三字号并完成。
+        menu->actions()[5]->trigger();
+        QVERIFY(sizes->isEnabled());
+        menu->actions()[8]->menu()->actions()[2]->trigger();
+        QCOMPARE(sizes->currentIndex(), 2);
+        menu->actions().last()->trigger();
+        QVERIFY(!sticker->isEditing());
+    }
+    void stickerTextImeEscapeAndCommitBoundaries()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {40, 50}, true).success);
+        auto sticker = manager.windows().first();
+        sticker->setEditing(true);
+        stickerClick(*sticker, "stickerEditTextToolButton");
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        auto* editor =
+            sticker->findChild<AnnotationTextEdit*>(QStringLiteral("stickerEditTextEditor"));
+        QVERIFY(editor && editor->isVisible());
+        editor->setPlainText(QStringLiteral("截图说明 ABC 123\n第二行"));
+        QInputMethodEvent composing(QStringLiteral("中文候选"), {});
+        QApplication::sendEvent(editor, &composing);
+        QVERIFY(editor->isComposing());
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QVERIFY(editor->isComposing());
+        QVERIFY(sticker->annotations().isEmpty());
+        QTest::keyClick(editor, Qt::Key_Escape);
+        QVERIFY(!editor->isComposing());
+        QVERIFY(editor->isVisible());
+        QVERIFY(sticker->isEditing());
+        QTest::keyClick(editor, Qt::Key_Escape);
+        QVERIFY(!editor->isVisible());
+        QVERIFY(sticker->annotations().isEmpty());
+        QVERIFY(sticker->isSaved());
+        QTest::keyClick(sticker, Qt::Key_Escape);
+        QVERIFY(!sticker->isEditing());
+        sticker->setEditing(true);
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        editor->setPlainText(QStringLiteral("截图说明 ABC 123\n第二行"));
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QCOMPARE(sticker->annotations().size(), qsizetype(1));
+        QCOMPARE(sticker->annotations().last().text, QStringLiteral("截图说明 ABC 123\n第二行"));
+        QVERIFY(!sticker->isSaved());
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 150});
+        editor->setPlainText(QStringLiteral("   \n  "));
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        QCOMPARE(sticker->annotations().size(), qsizetype(1));
+        stickerClick(*sticker, "stickerEditTextToolButton");
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 150});
+        editor->setPlainText(QStringLiteral("切换提交"));
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        QCOMPARE(sticker->annotations().size(), qsizetype(2));
+        stickerClick(*sticker, "stickerEditTextToolButton");
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 150});
+        editor->setPlainText(QStringLiteral("点击别处提交"));
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {200, 200});
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        editor->setPlainText(QStringLiteral("完成提交"));
+        stickerClick(*sticker, "stickerEditDoneButton");
+        QCOMPARE(sticker->annotations().size(), qsizetype(4));
+        QVERIFY(!editor->isVisible());
+        QVERIFY(!sticker->isEditing());
+    }
+    void stickerHistoryStylesOutputAndDirtyState()
+    {
+        using namespace waibusnap;
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QImage copied;
+        StickerActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{true, {}};
+        };
+        StickerManager manager(nullptr, actions);
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {40, 50}, true).success);
+        auto sticker = manager.windows().first();
+        QCOMPARE(sticker->renderedImage().cacheKey(), image.cacheKey());
+        sticker->setEditing(true);
+        QTRY_VERIFY(sticker->isActiveWindow());
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
+        auto* widths = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"));
+        for (int index = 0; index < 3; ++index)
+        {
+            colors->setCurrentIndex(index);
+            widths->setCurrentIndex(index);
+            stickerDrag(*sticker, {100, 100 + index * 30}, {220, 100 + index * 30});
+            QCOMPARE(sticker->annotations().last().style.color, annotationColors()[index]);
+            QCOMPARE(sticker->annotations().last().style.lineWidth, annotationLineWidths[index]);
+        }
+        const auto expected = renderAnnotatedSelection(image, sticker->annotations(), image.rect());
+        stickerClick(*sticker, "stickerEditCopyButton");
+        QCOMPARE(copied, expected);
+        QCOMPARE(copied.size(), image.size());
+        QCOMPARE(copied.devicePixelRatio(), qreal(1));
+        QVERIFY(!sticker->isSaved());
+        const QString path = directory.filePath(QStringLiteral("中文 4b.png"));
+        QVERIFY(sticker->exportToPath(path));
+        QVERIFY(sticker->isSaved());
+        QCOMPARE(QImage(path).convertToFormat(expected.format()), expected);
+        stickerDrag(*sticker, {100, 100}, {100, 100});
+        QVERIFY(sticker->isSaved());
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        stickerClick(*sticker, "stickerEditFreehandToolButton");
+        stickerDrag(*sticker, {100, 100}, {100, 100});
+        QVERIFY(sticker->isSaved());
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        stickerClick(*sticker, "stickerEditUndoAnnotationButton");
+        QVERIFY(!sticker->isSaved());
+        QCOMPARE(sticker->annotations().size(), qsizetype(2));
+        stickerClick(*sticker, "stickerEditRedoAnnotationButton");
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        QCoreApplication::processEvents();
+        standardKey(sticker, QKeySequence::Undo);
+        QCOMPARE(sticker->annotations().size(), qsizetype(2));
+        standardKey(sticker, QKeySequence::Redo);
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        stickerClick(*sticker, "stickerEditUndoAnnotationButton");
+        stickerDrag(*sticker, {100, 200}, {220, 200});
+        QVERIFY(!sticker->findChild<QPushButton*>(QStringLiteral("stickerEditRedoAnnotationButton"))
+                     ->isEnabled());
+        stickerClick(*sticker, "stickerEditTextToolButton");
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 250});
+        auto* editor = sticker->findChild<AnnotationTextEdit*>();
+        editor->setPlainText(QStringLiteral("文本自身撤销"));
+        QTest::keyClicks(editor, "abc");
+        standardKey(editor, QKeySequence::Undo);
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        QVERIFY(editor->isVisible());
+        QTest::keyClick(editor, Qt::Key_Escape);
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        for (int index = 0; index < 22; ++index)
+            stickerDrag(*sticker, {100, 100}, {200, 100});
+        const qsizetype count = sticker->annotations().size();
+        for (int index = 0; index < 22; ++index)
+            stickerClick(*sticker, "stickerEditUndoAnnotationButton");
+        QCOMPARE(sticker->annotations().size(), count - AnnotationHistory::capacity);
+        for (int index = 0; index < 20; ++index)
+            stickerClick(*sticker, "stickerEditRedoAnnotationButton");
+        QCOMPARE(sticker->annotations().size(), count);
+        sticker->setEditing(false);
+        const auto retained = sticker->renderedImage();
+        standardKey(sticker, QKeySequence::Undo);
+        QCOMPARE(sticker->renderedImage(), retained);
+        sticker->setScale(4, sticker->pos());
+        stickerClick(*sticker, "stickerCopyButton");
+        QCOMPARE(copied, retained);
+        QVERIFY(sticker->exportToPath(path));
+        QVERIFY(sticker->isSaved());
+        sticker->setEditing(true);
+        stickerClick(*sticker, "stickerEditUndoAnnotationButton");
+        QVERIFY(!sticker->isSaved());
+    }
+    void stickerPendingTextCommitsBeforeOutputsAndNewDrawing()
+    {
+        using namespace waibusnap;
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QImage copied;
+        StickerActions actions;
+        actions.copyImage = [&](const QImage& output)
+        {
+            copied = output;
+            return ImageOutputResult{true, {}};
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        { return directory.filePath(QStringLiteral("文本.png")); };
+        StickerManager manager(nullptr, actions);
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {80, 80}, true).success);
+        auto sticker = manager.windows().first();
+        sticker->setEditing(true);
+        stickerClick(*sticker, "stickerEditTextToolButton");
+        auto* sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
+        for (int index = 0; index < 3; ++index)
+        {
+            sizes->setCurrentIndex(index);
+            QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+            auto* editor = sticker->findChild<AnnotationTextEdit*>();
+            editor->setPlainText(QStringLiteral("待提交中文\n第二行"));
+            if (index == 0)
+                stickerClick(*sticker, "stickerEditCopyButton");
+            else if (index == 1)
+                QVERIFY(sticker->saveImage());
+            else
+            {
+                stickerClick(*sticker, "stickerEditLineToolButton");
+                stickerDrag(*sticker, {100, 200}, {200, 200});
+            }
+            const auto& text = sticker->annotations()[index];
+            QCOMPARE(text.type, AnnotationType::Text);
+            QCOMPARE(text.style.textSize, annotationTextSizes[index]);
+            QCOMPARE(text.text, QStringLiteral("待提交中文\n第二行"));
+            if (index == 0)
+            {
+                QCOMPARE(copied, sticker->renderedImage());
+                QVERIFY(!sticker->isSaved());
+            }
+            if (index == 1)
+            {
+                QVERIFY(sticker->isSaved());
+                QCOMPARE(QImage(directory.filePath(QStringLiteral("文本.png")))
+                             .convertToFormat(sticker->renderedImage().format()),
+                         sticker->renderedImage());
+            }
+        }
+        QCOMPARE(sticker->annotations().size(), qsizetype(4));
+        QVERIFY(!sticker->isSaved());
+    }
+    void stickerDefaultConfirmationDialogsCancel()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        QImage image(200, 200, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {80, 80}).success);
+        auto sticker = manager.windows().first();
+        QStringList labels;
+        const auto cancelDialog = [&]
+        {
+            auto* dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            for (auto* button : dialog->buttons())
+                labels.append(button->text());
+            dialog->reject();
+        };
+        QTimer::singleShot(0, this, cancelDialog);
+        QVERIFY(!sticker->close());
+        QVERIFY(labels.contains(QStringLiteral("取消")));
+        QVERIFY(labels.contains(QStringLiteral("保存")));
+        QVERIFY(labels.contains(QStringLiteral("放弃")));
+        labels.clear();
+        QTimer::singleShot(0, this, cancelDialog);
+        QVERIFY(!manager.resolveUnsavedForQuit());
+        QVERIFY(labels.contains(QStringLiteral("取消退出")));
+        QVERIFY(labels.contains(QStringLiteral("逐张保存")));
+        QVERIFY(labels.contains(QStringLiteral("全部放弃")));
+        QVERIFY(sticker && sticker->isVisible());
+    }
+    void stickerCloseDecisionsAndSaveRetries_data()
+    {
+        QTest::addColumn<int>("decision");
+        QTest::addColumn<int>("pathKind");
+        QTest::addColumn<bool>("saved");
+        QTest::addColumn<bool>("closes");
+        QTest::newRow("cancel") << 0 << 0 << false << false;
+        QTest::newRow("discard") << 2 << 0 << false << true;
+        QTest::newRow("save") << 1 << 0 << false << true;
+        QTest::newRow("panel-cancel") << 1 << 1 << false << false;
+        QTest::newRow("write-failure") << 1 << 2 << false << false;
+        QTest::newRow("already-saved") << 0 << 0 << true << true;
+    }
+    void stickerCloseDecisionsAndSaveRetries()
+    {
+        using namespace waibusnap;
+        QFETCH(int, decision);
+        QFETCH(int, pathKind);
+        QFETCH(bool, saved);
+        QFETCH(bool, closes);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("关闭.png"));
+        int confirmations = 0;
+        int panels = 0;
+        bool nestedPreserved = false;
+        bool nestedQuit = true;
+        StickerManager* current = nullptr;
+        StickerActions actions;
+        actions.confirmClose = [&](QWidget* window)
+        {
+            ++confirmations;
+            window->close();
+            nestedPreserved = window->isVisible();
+            nestedQuit = current->resolveUnsavedForQuit();
+            return static_cast<StickerCloseDecision>(decision);
+        };
+        actions.chooseSavePath = [&](QWidget* window, const QString&)
+        {
+            ++panels;
+            window->close();
+            nestedPreserved = window->isVisible();
+            nestedQuit = current->resolveUnsavedForQuit();
+            return pathKind == 1   ? QString()
+                   : pathKind == 2 ? directory.filePath(QStringLiteral("不存在/图.png"))
+                                   : path;
+        };
+        StickerManager manager(nullptr, actions);
+        current = &manager;
+        QImage image(120, 80, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {40, 50}, saved).success);
+        auto sticker = manager.windows().first();
+        QCOMPARE(sticker->close(), closes);
+        QCOMPARE(confirmations, saved ? 0 : 1);
+        if (!saved)
+        {
+            QVERIFY(nestedPreserved);
+            QVERIFY(!nestedQuit);
+        }
+        QCOMPARE(panels, !saved && decision == 1 ? 1 : 0);
+        QCOMPARE(QFileInfo::exists(path), !saved && decision == 1 && pathKind == 0);
+        if (closes)
+        {
+            QCOMPARE(manager.count(), 0);
+            QTRY_VERIFY(!sticker);
+        }
+        else
+        {
+            QCOMPARE(manager.count(), 1);
+            QVERIFY(sticker->isVisible());
+            QVERIFY(!sticker->isSaved());
+            if (decision == 1)
+                QVERIFY(
+                    sticker->findChild<QLabel*>(QStringLiteral("stickerStatus"))
+                        ->text()
+                        .contains(pathKind == 1 ? QStringLiteral("取消") : QStringLiteral("失败")));
+            decision = 1;
+            pathKind = 0;
+            QVERIFY(sticker->close());
+            QVERIFY(QFileInfo::exists(path));
+            QTRY_VERIFY(!sticker);
+        }
+    }
+    void stickerQuitSummaryOrderFailureAndReentrancy_data()
+    {
+        QTest::addColumn<int>("decision");
+        QTest::addColumn<int>("failure");
+        QTest::newRow("cancel") << 0 << 0;
+        QTest::newRow("save-all") << 1 << 0;
+        QTest::newRow("second-cancel") << 1 << 1;
+        QTest::newRow("second-failure") << 1 << 2;
+        QTest::newRow("discard-all") << 2 << 0;
+    }
+    void stickerQuitSummaryOrderFailureAndReentrancy()
+    {
+        using namespace waibusnap;
+        QFETCH(int, decision);
+        QFETCH(int, failure);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        int summaries = 0;
+        int panels = 0;
+        int closes = 0;
+        int summaryCount = 0;
+        bool nestedResolve = true;
+        bool nestedClose = true;
+        StickerManager* current = nullptr;
+        QVector<QWidget*> order;
+        StickerActions actions;
+        actions.confirmQuit = [&](int count)
+        {
+            ++summaries;
+            summaryCount = count;
+            nestedResolve = current->resolveUnsavedForQuit();
+            nestedClose = current->windows().first()->close();
+            return static_cast<StickerQuitDecision>(decision);
+        };
+        actions.confirmClose = [&](QWidget*)
+        {
+            ++closes;
+            return StickerCloseDecision::Cancel;
+        };
+        actions.chooseSavePath = [&](QWidget* window, const QString&)
+        {
+            order.append(window);
+            ++panels;
+            nestedResolve = current->resolveUnsavedForQuit();
+            if (panels == 2 && failure)
+                return failure == 1 ? QString()
+                                    : directory.filePath(QStringLiteral("不存在/失败.png"));
+            return directory.filePath(QStringLiteral("%1.png").arg(panels));
+        };
+        StickerManager manager(nullptr, actions);
+        current = &manager;
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {40, 50}).success);
+        QVERIFY(manager.create(image, {80, 90}, true).success);
+        QVERIFY(manager.create(image, {120, 130}).success);
+        const auto windows = manager.windows();
+        windows.first()->setEditing(true);
+        stickerClick(*windows.first(), "stickerEditTextToolButton");
+        QTest::mouseClick(windows.first(), Qt::LeftButton, Qt::NoModifier, {100, 100});
+        windows.first()->findChild<AnnotationTextEdit*>()->setPlainText(
+            QStringLiteral("退出前提交"));
+        const bool result = manager.resolveUnsavedForQuit();
+        QCOMPARE(result, decision != 0 && failure == 0);
+        QCOMPARE(summaries, 1);
+        QCOMPARE(summaryCount, 2);
+        QVERIFY(!nestedResolve);
+        QVERIFY(!nestedClose);
+        QCOMPARE(closes, 0);
+        QCOMPARE(manager.count(), 3);
+        QVERIFY(!windows.first()->isEditing());
+        QCOMPARE(windows.first()->annotations().size(), qsizetype(1));
+        for (const auto& window : windows)
+            QVERIFY(window && window->isVisible());
+        if (decision == 1)
+        {
+            QCOMPARE(panels, 2);
+            QCOMPARE(order[0], windows.first().data());
+            QCOMPARE(order[1], windows.last().data());
+            QVERIFY(windows.first()->isSaved());
+            QCOMPARE(windows.last()->isSaved(), failure == 0);
+            QVERIFY(QFileInfo::exists(directory.filePath(QStringLiteral("1.png"))));
+            QCOMPARE(QFileInfo::exists(directory.filePath(QStringLiteral("2.png"))), failure == 0);
+        }
+        else
+        {
+            QCOMPARE(panels, 0);
+            QVERIFY(!windows.first()->isSaved());
+        }
+        if (!result)
+        {
+            // 中止后仍可编辑、拖动、保存，且已保存项保持已保存。
+            stickerDrag(*windows.last(), {80, 80}, {110, 100});
+            QCOMPARE(windows.last()->pos(), QPoint(150, 150));
+            windows.last()->setEditing(true);
+            QVERIFY(windows.last()->isEditing());
+        }
+        manager.closeAll();
+        QCOMPARE(closes, 0);
+        for (const auto& window : windows)
+            QVERIFY(!window);
+    }
+    void stickerQuitSavedAndControllerCancellation()
+    {
+        using namespace waibusnap;
+        QImage image(120, 80, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        int summaries = 0;
+        StickerActions actions;
+        actions.confirmQuit = [&](int)
+        {
+            ++summaries;
+            return StickerQuitDecision::Cancel;
+        };
+        StickerManager manager(nullptr, actions);
+        QVERIFY(manager.resolveUnsavedForQuit());
+        QVERIFY(manager.create(image, {40, 50}, true).success);
+        QVERIFY(manager.resolveUnsavedForQuit());
+        QCOMPARE(summaries, 0);
+        ApplicationController* current = nullptr;
+        actions.confirmQuit = [&](int)
+        {
+            ++summaries;
+            current->quit();
+            return StickerQuitDecision::Cancel;
+        };
+        ApplicationController controller(*qApp, {}, actions);
+        current = &controller;
+        QVERIFY(controller.stickers().create(image, {80, 90}).success);
+        const auto windows = controller.stickers().windows();
+        controller.quit();
+        QCOMPARE(summaries, 1);
+        QCOMPARE(controller.stickers().count(), 1);
+        QVERIFY(windows.first() && windows.first()->isVisible());
+        controller.quit();
+        QCOMPARE(summaries, 2);
+        QVERIFY(windows.first());
     }
     void annotationToolsAreDiscoverableAndGesturesTakePriority()
     {
