@@ -1,3 +1,4 @@
+#include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include <QDir>
 #include <QFile>
@@ -8,6 +9,144 @@ class ImageOutputTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void annotationPixelsAndCrop_data()
+    {
+        QTest::addColumn<qreal>("dpr");
+        QTest::newRow("normal") << qreal(1);
+        QTest::newRow("fractional") << qreal(1.5);
+        QTest::newRow("retina") << qreal(2);
+    }
+    void annotationPixelsAndCrop()
+    {
+        QFETCH(qreal, dpr);
+        using namespace waibusnap;
+        QImage source(100, 60, QImage::Format_ARGB32_Premultiplied);
+        source.fill(Qt::white);
+        source.setDevicePixelRatio(dpr);
+        Annotation rectangle{AnnotationType::Rectangle, {}, {10, 10}, {30, 30}, {}, {}};
+        rectangle.style.color = Qt::red;
+        rectangle.style.lineWidth = 2;
+        Annotation line{AnnotationType::Line, {}, {-10, 20}, {110, 20}, {}, {}};
+        line.style.color = Qt::blue;
+        line.style.lineWidth = 4;
+        Annotation outside{AnnotationType::Rectangle, {}, {70, 10}, {90, 30}, {}, {}};
+        const auto output =
+            renderAnnotatedSelection(source, {rectangle, line, outside}, {11, 5, 18, 30});
+        QCOMPARE(output.size(), QSize(18, 30));
+        QCOMPARE(output.devicePixelRatio(), qreal(1));
+        QCOMPARE(source.devicePixelRatio(), dpr);
+        // 裁剪窗避开矩形圆角；每个像素都有可独立计算的精确颜色。
+        for (int y = 0; y < output.height(); ++y)
+            for (int x = 0; x < output.width(); ++x)
+            {
+                const int sourceY = y + 5;
+                const QColor expected =
+                    sourceY == 9 || sourceY == 10 || sourceY == 29 || sourceY == 30
+                        ? QColor(Qt::red)
+                    : sourceY >= 18 && sourceY <= 21 ? QColor(Qt::blue)
+                                                     : QColor(Qt::white);
+                QCOMPARE(output.pixelColor(x, y), expected);
+            }
+        QCOMPARE(source.pixelColor(11, 10), QColor(Qt::white));
+        QVERIFY(renderAnnotatedSelection(source, {rectangle}, {-1, 0, 5, 5}).isNull());
+        // 移动裁剪窗口仅改变相对落点；源图和标注不发生缩放或平移。
+        const auto moved = renderAnnotatedSelection(source, {rectangle}, {8, 8, 30, 30});
+        QCOMPARE(moved.pixelColor(7, 1), QColor(Qt::red));
+        QCOMPARE(moved.pixelColor(7, 2), QColor(Qt::red));
+        QCOMPARE(moved.pixelColor(7, 7), QColor(Qt::white));
+    }
+    void sixTypesRenderAndUndoRedoRestoresPixels()
+    {
+        using namespace waibusnap;
+        QImage background(400, 240, QImage::Format_ARGB32_Premultiplied);
+        background.fill(Qt::white);
+        AnnotationHistory history;
+        QVector<QImage> steps{background};
+        for (int type = 0; type < 6; ++type)
+        {
+            Annotation annotation{
+                static_cast<AnnotationType>(type), {}, {qreal(10 + type * 55), 30},
+                {qreal(40 + type * 55), 60},       {}, {}};
+            annotation.points = {
+                annotation.first, {annotation.first.x() + 15, 45}, annotation.last};
+            annotation.text = QStringLiteral("截图说明 ABC 123\n第二行");
+            annotation.style.color = annotationColors()[type % 3];
+            QVERIFY(history.add(annotation));
+            const auto output =
+                renderAnnotatedSelection(background, history.annotations(), background.rect());
+            QVERIFY(output != steps.last());
+            steps.append(output);
+        }
+        for (int index = 5; index >= 0; --index)
+        {
+            QVERIFY(history.undo());
+            QCOMPARE(renderAnnotatedSelection(background, history.annotations(), background.rect()),
+                     steps[index]);
+        }
+        for (int index = 1; index <= 6; ++index)
+        {
+            QVERIFY(history.redo());
+            QCOMPARE(renderAnnotatedSelection(background, history.annotations(), background.rect()),
+                     steps[index]);
+        }
+    }
+    void sharedPainterMatchesPhysicalExport()
+    {
+        using namespace waibusnap;
+        QImage background(300, 220, QImage::Format_ARGB32_Premultiplied);
+        background.fill(Qt::white);
+        QVector<Annotation> annotations;
+        for (int type = 0; type < 6; ++type)
+        {
+            Annotation annotation{
+                static_cast<AnnotationType>(type), {}, {20, qreal(20 + type * 25)},
+                {80, qreal(35 + type * 25)},       {}, {}};
+            annotation.points = {annotation.first, annotation.last};
+            annotation.text = QStringLiteral("说明 ABC\n123");
+            annotations.append(annotation);
+        }
+        QImage preview = background;
+        preview.setDevicePixelRatio(2);
+        {
+            QPainter painter(&preview);
+            painter.scale(0.5, 0.5);
+            paintAnnotations(painter, annotations);
+        }
+        preview.setDevicePixelRatio(1);
+        QCOMPARE(renderAnnotatedSelection(background, annotations, background.rect()), preview);
+        QCOMPARE(renderAnnotatedSelection(background, annotations, {10, 10, 120, 180}),
+                 preview.copy(10, 10, 120, 180));
+    }
+    void stylesChangePhysicalResults()
+    {
+        using namespace waibusnap;
+        QImage background(220, 150, QImage::Format_ARGB32_Premultiplied);
+        background.fill(Qt::white);
+        QImage previousLine;
+        QImage previousText;
+        for (int index = 0; index < 3; ++index)
+        {
+            Annotation line{AnnotationType::Line, {}, {10, 30}, {210, 30}, {}, {}};
+            line.style.color = annotationColors()[index];
+            line.style.lineWidth = annotationLineWidths[index];
+            const auto drawn = renderAnnotatedSelection(background, {line}, background.rect());
+            QCOMPARE(drawn.pixelColor(100, 30), annotationColors()[index]);
+            int rows = 0;
+            for (int y = 0; y < drawn.height(); ++y)
+                if (drawn.pixelColor(100, y) != QColor(Qt::white))
+                    ++rows;
+            QCOMPARE(rows, annotationLineWidths[index]);
+            QVERIFY(drawn != previousLine);
+            previousLine = drawn;
+            Annotation text{
+                AnnotationType::Text, {}, {10, 10}, {}, {}, QStringLiteral("ABC 123\n第二行")};
+            text.style.textSize = annotationTextSizes[index];
+            const auto textImage = renderAnnotatedSelection(background, {text}, background.rect());
+            QVERIFY(textImage != background);
+            QVERIFY(textImage != previousText);
+            previousText = textImage;
+        }
+    }
     void cropKeepsPhysicalPixels()
     {
         QImage source(12, 10, QImage::Format_ARGB32);
@@ -101,5 +240,5 @@ class ImageOutputTest final : public QObject
         QVERIFY(waibusnap::pngFilePath({}).isEmpty());
     }
 };
-QTEST_GUILESS_MAIN(ImageOutputTest)
+QTEST_MAIN(ImageOutputTest)
 #include "image_output_test.moc"
