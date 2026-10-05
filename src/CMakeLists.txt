@@ -14,7 +14,7 @@ add_library(waibusnap_ui STATIC ui/selection_overlay.cpp ui/selection_overlay.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h
     app/application_controller.cpp app/application_controller.h
-    ui/sticker_window.cpp ui/sticker_window.h)
+    app/sticker_manager.cpp app/sticker_manager.h ui/sticker_window.cpp ui/sticker_window.h)
 target_include_directories(waibusnap_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_ui PUBLIC Qt6::Widgets waibusnap_core waibusnap_output waibusnap_settings waibusnap_platform PRIVATE waibusnap_options)
 
