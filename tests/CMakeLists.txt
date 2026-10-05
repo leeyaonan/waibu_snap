@@ -22,6 +22,11 @@ target_link_libraries(image_output_test PRIVATE waibusnap_output Qt6::Test waibu
 set_target_properties(image_output_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME image_output COMMAND image_output_test)
 
+qt_add_executable(annotation_test unit/annotation_test.cpp)
+target_link_libraries(annotation_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(annotation_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME annotation COMMAND annotation_test)
+
 qt_add_executable(window_snapping_test unit/window_snapping_test.cpp)
 target_link_libraries(window_snapping_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(window_snapping_test PROPERTIES WIN32_EXECUTABLE FALSE)
