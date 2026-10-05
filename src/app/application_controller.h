@@ -1,5 +1,6 @@
 #pragma once
 #include "app/app_settings.h"
+#include "app/sticker_manager.h"
 #include "interfaces/capture_provider.h"
 #include "interfaces/global_hotkey.h"
 #include "interfaces/presentation_observer.h"
@@ -29,13 +30,16 @@ class ApplicationController final : public QObject
     Q_OBJECT
   public:
     explicit ApplicationController(QApplication& application, RunOptions options);
+    ~ApplicationController() override;
     void start();
     void trigger(const QString& source);
     void quit();
     QMenu* menu() { return &menu_; }
     bool active() const { return active_; }
+    StickerManager& stickers() { return stickers_; }
 
   private:
+    void cleanup();
     void captureCompleted(quint64 token, CaptureResult result);
     void finish(QRect pixels, int outcome);
     void fail(int outcome, const QString& explanation);
@@ -53,6 +57,7 @@ class ApplicationController final : public QObject
     std::unique_ptr<CaptureProvider> capture_;
     std::unique_ptr<WindowEnumerator> windows_;
     std::unique_ptr<PresentationObservation> observation_;
+    StickerManager stickers_;
     QPointer<SelectionOverlay> overlay_;
     SessionMetrics metrics_;
     QTimer captureTimeout_;

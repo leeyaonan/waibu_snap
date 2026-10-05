@@ -3,7 +3,7 @@ target_include_directories(waibusnap_platform PUBLIC "${PROJECT_SOURCE_DIR}/src"
 target_link_libraries(waibusnap_platform PUBLIC Qt6::Gui PRIVATE waibusnap_options)
 if(APPLE)
     target_sources(waibusnap_platform PRIVATE macos/platform_info.mm macos/capture_services.mm
-        macos/presentation_observer.mm macos/platform_workarounds.mm)
+        macos/presentation_observer.mm macos/platform_workarounds.mm macos/sticker_window_behavior.mm)
     target_compile_options(waibusnap_platform PRIVATE -fobjc-arc)
     foreach(framework IN ITEMS AppKit Carbon ScreenCaptureKit CoreGraphics QuartzCore)
         find_library(${framework}_FRAMEWORK ${framework} REQUIRED)
@@ -11,7 +11,7 @@ if(APPLE)
     endforeach()
 elseif(WIN32)
     target_sources(waibusnap_platform PRIVATE windows/platform_info.cpp windows/capture_services.cpp
-        windows/platform_workarounds.cpp)
+        windows/platform_workarounds.cpp windows/sticker_window_behavior.cpp)
 endif()
 
 if(APPLE)

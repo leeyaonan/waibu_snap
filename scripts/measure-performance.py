@@ -208,7 +208,7 @@ def nf01_summary(rows):
               "note": "代理时间未通过外部呈现校验；不能宣布正式 NF01 达标。"}
     for cold, name in ((True, "cold"), (False, "warm")):
         samples = [row for row in rows if row.get("cold") is cold and row.get("interactive_ns")
-                   and row.get("outcome") in (1, 2, 10)]
+                   and row.get("outcome") in (1, 2, 10, 11)]
         times = [row["nf01_proxy_ms"] for row in samples]
         result[name] = {"count": len(times), "p95_proxy_ms": nearest_rank(times),
                         "maximum_proxy_ms": max(times) if times else None,
@@ -305,7 +305,7 @@ def measure_nf01(args, app, probe, output):
                 raise RuntimeError("应用退出但没有会话记录，截图未完成。")
             rows = [json.loads(line) for line in log.read_text().splitlines()]
             if len(rows) != count or any(not row.get("interactive_ns") or
-                                        row.get("outcome") not in (1, 2, 10) for row in rows):
+                                        row.get("outcome") not in (1, 2, 10, 11) for row in rows):
                 raise RuntimeError("会话记录数量、可交互终点或有效结果码缺失。")
         except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
             raise RuntimeError(f"NF01 采集失败：{error}；请查看 stderr：{stderr}") from error

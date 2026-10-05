@@ -18,6 +18,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
       windows_(createWindowEnumerator())
 {
     application_.setQuitOnLastWindowClosed(false);
+    connect(&application_, &QCoreApplication::aboutToQuit, this, &ApplicationController::cleanup);
     captureTimeout_.setSingleShot(true);
     connect(&captureTimeout_, &QTimer::timeout, this,
             [this]
@@ -70,6 +71,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                 watchScreen(screen);
             });
 }
+ApplicationController::~ApplicationController() { cleanup(); }
 void ApplicationController::start()
 {
     if (options_.smokeTest)
@@ -175,7 +177,16 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     const auto listed = windows_->visibleWindows(result.frame.display);
     const auto localWindows =
         localWindowRects(listed.windows, result.frame.display.logicalGeometry);
-    overlay_ = new SelectionOverlay(std::move(result.frame), {}, localWindows, listed.error);
+    OverlayActions actions;
+    actions.pinImage = [this](const QImage& image)
+    {
+        if (quitting_ || !overlay_)
+            return ImageOutputResult{false, QStringLiteral("截图会话已关闭。")};
+        return stickers_.create(image, overlay_->selectionGlobalPosition(),
+                                overlay_->isSelectionSaved());
+    };
+    overlay_ = new SelectionOverlay(std::move(result.frame), std::move(actions), localWindows,
+                                    listed.error);
     overlay_->winId();
     metrics_.windowCreated = monotonicNs();
     connect(overlay_, &SelectionOverlay::finished, this,
@@ -271,13 +282,22 @@ void ApplicationController::fail(int outcome, const QString& explanation)
     QMessageBox::information(nullptr, QStringLiteral("截图未完成"), explanation);
     finish({}, outcome);
 }
-void ApplicationController::quit()
+void ApplicationController::cleanup()
 {
     quitting_ = true;
+    const QPointer<SelectionOverlay> closingOverlay = overlay_;
     if (active_)
         finish({}, 9);
+    // 所有退出入口共用清理；正在面板嵌套事件循环中的窗口也会被销毁。
+    stickers_.closeAll();
+    if (closingOverlay)
+        delete closingOverlay.data();
     hotkey_->unregister();
     tray_.hide();
+}
+void ApplicationController::quit()
+{
+    cleanup();
     application_.quit();
 }
 void ApplicationController::startSmokeTest()
@@ -297,26 +317,26 @@ void ApplicationController::startSmokeTest()
             auto* transient = new QWidget;
             transient->setAttribute(Qt::WA_DeleteOnClose);
             transient->show();
-            QTimer::singleShot(50, this,
-                               [this, transient]
-                               {
-                                   if (!transient->isVisible())
-                                   {
-                                       application_.exit(21);
-                                       return;
-                                   }
-                                   transient->close();
-                                   QTimer::singleShot(
-                                       50, this,
-                                       [this]
-                                       {
-                                           if (QApplication::topLevelWidgets().size() != 1)
-                                           {
-                                               application_.exit(22);
-                                               return;
-                                           }
-                                           QTimer::singleShot(
-                                               0, this,
+            QTimer::singleShot(
+                50, this,
+                [this, transient]
+                {
+                    if (!transient->isVisible())
+                    {
+                        application_.exit(21);
+                        return;
+                    }
+                    transient->close();
+                    QTimer::singleShot(
+                        50, this,
+                        [this]
+                        {
+                            if (QApplication::topLevelWidgets().size() != 1)
+                            {
+                                application_.exit(22);
+                                return;
+                            }
+                            QTimer::singleShot(0, this,
                                                [this]
                                                {
                                                    auto* dialog = qobject_cast<SettingsDialog*>(
@@ -336,17 +356,30 @@ void ApplicationController::startSmokeTest()
                                                    }
                                                    dialog->reject();
                                                });
-                                           settingsAction_->trigger();
-                                           if (settingsOpen_ || !settingsAction_->isEnabled())
-                                           {
-                                               qCritical("设置关闭后入口状态未恢复。");
-                                               application_.exit(20);
-                                               return;
-                                           }
-                                           qInfo("托盘生命周期已验证（tray-lifecycle-verified）");
-                                           menu_.actions().last()->trigger();
-                                       });
-                               });
+                            settingsAction_->trigger();
+                            if (settingsOpen_ || !settingsAction_->isEnabled())
+                            {
+                                qCritical("设置关闭后入口状态未恢复。");
+                                application_.exit(20);
+                                return;
+                            }
+                            QImage image(120, 80, QImage::Format_ARGB32_Premultiplied);
+                            image.fill(Qt::red);
+                            if (!stickers_.create(image, {20, 20}).success ||
+                                !stickers_.create(image, {80, 80}, true).success)
+                            {
+                                application_.exit(23);
+                                return;
+                            }
+                            const auto pinned = stickers_.windows();
+                            qInfo("托盘生命周期已验证（tray-lifecycle-verified）");
+                            menu_.actions().last()->trigger();
+                            if (stickers_.count() != 0 || pinned.at(0) || pinned.at(1))
+                                application_.exit(24);
+                            else
+                                qInfo("退出贴图清理已验证（sticker-cleanup-verified）");
+                        });
+                });
         });
 }
 }
