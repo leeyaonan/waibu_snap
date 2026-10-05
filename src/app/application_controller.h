@@ -29,7 +29,8 @@ class ApplicationController final : public QObject
 {
     Q_OBJECT
   public:
-    explicit ApplicationController(QApplication& application, RunOptions options);
+    explicit ApplicationController(QApplication& application, RunOptions options,
+                                   StickerActions stickerActions = {});
     ~ApplicationController() override;
     void start();
     void trigger(const QString& source);
@@ -65,6 +66,7 @@ class ApplicationController final : public QObject
     quint64 token_ = 0;
     bool active_ = false;
     bool quitting_ = false;
+    bool resolvingQuit_ = false;
     bool settingsOpen_ = false;
 };
 }

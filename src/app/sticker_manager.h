@@ -13,6 +13,7 @@ class StickerManager final : public QObject
     ~StickerManager() override;
     ImageOutputResult create(const QImage& image, QPoint position, bool saved = false);
     void closeAll();
+    bool resolveUnsavedForQuit();
     int count() const { return int(windows_.size()); }
     QVector<QPointer<StickerWindow>> windows() const { return windows_; }
     void recoverWindows();
@@ -24,5 +25,6 @@ class StickerManager final : public QObject
     // 用户关闭后的延迟删除窗口也由管理器兜底，退出不能遗漏待删除资源。
     QVector<QPointer<StickerWindow>> ownedWindows_;
     bool closingAll_ = false;
+    bool resolvingQuit_ = false;
 };
 }
