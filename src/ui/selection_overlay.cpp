@@ -689,6 +689,7 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
         QGuiApplication::inputMethod()->commit();
     else
         QGuiApplication::inputMethod()->reset();
+    textEditor_->clearPreedit();
     textDraft_.text = textEditor_->toPlainText();
     textEditor_->hide();
     textEditor_->clear();
@@ -702,6 +703,15 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
 }
 bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
 {
+    if ((watched == toolbar_ || qobject_cast<QLabel*>(watched)) &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease))
+    {
+        // 空白 / 提示标签提交当前编辑并消化手势；按钮在 clicked 中提交，避免按下时移动工具栏。
+        if (event->type() == QEvent::MouseButtonPress)
+            finishText(true, false);
+        event->accept();
+        return true;
+    }
     if (watched != textEditor_ && event->type() == QEvent::MouseMove)
     {
         // 子工具栏保持箭头光标，同时同步其下方画布的模式状态。

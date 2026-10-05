@@ -291,6 +291,34 @@ class StartupSmokeTest final : public QObject
         QVERIFY(overlay.annotations().isEmpty());
         QCOMPARE(QImage(path), saved);
     }
+    void toolbarBackgroundCommitsAndClearsPreedit()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {300, 250});
+        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 120});
+        auto* editor = overlay.findChild<AnnotationTextEdit*>();
+        QVERIFY(editor && editor->isVisible());
+        editor->setPlainText(QStringLiteral("已确认文字"));
+        QInputMethodEvent preedit(QStringLiteral("jie tu"), {});
+        QApplication::sendEvent(editor, &preedit);
+        QVERIFY(editor->isComposing());
+        auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
+        QTest::mouseClick(toolbar, Qt::LeftButton, Qt::NoModifier, {2, 2});
+        QVERIFY(!editor->isVisible());
+        QVERIFY(!editor->isComposing());
+        QCOMPARE(overlay.annotations().size(), qsizetype(1));
+        QCOMPARE(overlay.annotations().first().text, QStringLiteral("已确认文字"));
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {150, 180});
+        editor->setPlainText(QStringLiteral("下次输入"));
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QCOMPARE(overlay.annotations().last().text, QStringLiteral("下次输入"));
+        QCOMPARE(finished.count(), 0);
+    }
     void annotationSaveCopyHasPhysicalPixelsOnly()
     {
         using namespace waibusnap;

@@ -29,6 +29,11 @@ void AnnotationTextEdit::inputMethodEvent(QInputMethodEvent* event)
     composing_ = !event->preeditString().isEmpty();
     QTextEdit::inputMethodEvent(event);
 }
+void AnnotationTextEdit::clearPreedit()
+{
+    QInputMethodEvent clear;
+    inputMethodEvent(&clear);
+}
 void AnnotationTextEdit::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Escape)
@@ -36,8 +41,7 @@ void AnnotationTextEdit::keyPressEvent(QKeyEvent* event)
         if (composing_)
         {
             QGuiApplication::inputMethod()->reset();
-            QInputMethodEvent clear;
-            inputMethodEvent(&clear);
+            clearPreedit();
         }
         else
             emit cancelRequested();

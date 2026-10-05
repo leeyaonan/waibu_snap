@@ -8,6 +8,7 @@ class AnnotationTextEdit final : public QTextEdit
   public:
     explicit AnnotationTextEdit(QWidget* parent);
     bool isComposing() const { return composing_; }
+    void clearPreedit();
 
   signals:
     void commitRequested();
