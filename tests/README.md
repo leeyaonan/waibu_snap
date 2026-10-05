@@ -6,7 +6,7 @@
 | --- | --- |
 | `startup_smoke` | 真正应用子进程加载动态库、三项托盘菜单、关闭临时窗口后仍驻留、设置打开期间忽略热键触发，再触发实际托盘「退出」；窗口悬停命中、单击吸附及 3 逻辑像素容差、有选区时悬停抑制、吸附后移动 / 调整 / 清除 / 再吸附、未命中单击、手动拖选替换与手势回到起点不误吸附、枚举错误仍可框选；设置对话框单组合输入、预填、Fn 说明、中文按钮、非法拒绝、注册失败保旧与文件不变、成功持久化、取消 / Esc 不保存；保留首帧、Retina 框选、全部移动 / 八方向调整、复制失败重试与码 10、保存失败 / 取消 / 冲突 / 原文件保护 / 面板焦点 / dirty 标记，以及无输出取消全部用例；受控参数仍需显式测试模式；选区后延迟创建工具栏、六个中文工具按钮 / 切换与取消激活、边角和选区外绘图优先、三档样式、按钮 / 系统快捷键撤销重做与 dirty 标记、分叉清除；文本预编辑保护、候选 / 编辑 / 会话 Esc 分层、中文及换行合成、空编辑不入栈、点击别处 / 工具栏空白 / ⌘或Ctrl+Enter / 复制保存前提交、编辑结束清理预编辑状态；已知直线 PNG 全图逐像素回读、复制与保存内容一致、会话结束历史清空；钉图先提交文本、合成图 / DPR=1 与码 11、失败保留重试、保存状态及负坐标放置继承；两张贴图独立、悬停 / 滚轮锚点 / 按钮缩放夹取与中心稳定、拖动、关闭销毁、编辑态无工具时停用移动；贴图原像素保存 / 复制失败重试、后缀碰撞 / 取消 / 面板期间退出；屏外找回、退出销毁包括待删除窗口 |
 | `startup_smoke`（4b 编辑） | `stickerEditingEntrancesGesturesAndCompactTools`：按钮 / 双击、绘图不拖窗、无工具不移动、滚轮锚点、完成 / Esc 后恢复拖动、编辑态无右键菜单、极小图全部编辑入口；`stickerTextImeEscapeAndCommitBoundaries`：预编辑保护 / Esc 分层、中文换行、空文本 / 点击别处 / 切工具 / 完成提交；`stickerHistoryStylesOutputAndDirtyState`：三档样式、20 步 / 标准快捷键、文本历史优先、分叉、保存再编辑、原像素 / DPR=1 和无标注隐式共享；`stickerPendingTextCommitsBeforeOutputsAndNewDrawing`：三字号、保存 / 复制 / 绘图前提交 |
-| `startup_smoke`（4b 确认） | `stickerDefaultConfirmationDialogsCancel`：真实中文三选一关闭 / 退出对话框取消；`stickerCloseDecisionsAndSaveRetries`：取消 / 放弃 / 保存成功 / 面板取消 / 失败后重试 / 已保存免确认、关闭与退出重入；`stickerQuitSummaryOrderFailureAndReentrancy`：汇总取消 / 逐张创建顺序保存 / 中途取消或失败 / 全部放弃，未提交文本先提交、已保存跳过与保留、强制清理不重复确认；`stickerQuitSavedAndControllerCancellation`：无未保存免确认、控制器取消退出及重入不销毁窗口 |
+| `startup_smoke`（4b 确认） | `stickerDefaultConfirmationDialogsCancel`：真实中文三选一关闭 / 退出对话框取消；`stickerCloseDecisionsAndSaveRetries`：取消 / 放弃 / 保存成功 / 面板取消 / 失败后重试 / 已保存免确认、关闭与退出重入；`stickerCloseSaveFailureRestoresEditingToolbar`：编辑态关闭保存失败后恢复工具条，反馈不遮挡工具并可重试成功；`stickerQuitSummaryOrderFailureAndReentrancy`：汇总取消 / 逐张创建顺序保存 / 中途取消或失败 / 全部放弃，未提交文本先提交、已保存跳过与保留、强制清理不重复确认；`stickerQuitSavedAndControllerCancellation`：无未保存免确认、控制器取消退出及重入不销毁窗口 |
 | `sticker_geometry` | 25%–400% 连续步进与夹取、100% 复位、1 / 1.5 / 2 倍 DPR 尺寸、光标 / 中心锚点数学、最小 / 非整除尺寸、非法输入与整数溢出防护；拔屏 / 负坐标 / 超大窗口找回 |
 | `startup_smoke_sticker_high_dpi` | 独立 `QT_SCALE_FACTOR=2` 子进程运行贴图窗口交互与原像素输出用例，验证 100% 为图像像素 / DPR、连续缩放中心不累计漂移，额外运行编辑手势 / 文本 IME 分层 / 历史 / 输出和待提交文本用例；不能替代不同 DPR 双屏真机 |
 | `selection_geometry` | 半开像素矩形、任意框选方向、屏内移动且尺寸不变、八方向调整、反向拖过对侧夹停、最小尺寸恢复、1.5 / 2 倍 DPR 与半像素边界取整、零面积与无效参数；未完成计时不能伪造可交互终点 |
@@ -74,7 +74,7 @@ macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release：本机构建、**11 项 CT
 
 ## 第四刀 4b 编辑与未保存确认验证（2026-10-05）
 
-macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release：本机构建、**11 项 CTest** 与 clang-format **18.1.8** 通过，`startup_smoke` **61 项**、2 倍 DPR 子集 **8 项**通过（含初始化 / 清理与数据行）。真实 Cocoa 的 4b 子集 **19 项**通过，包含默认 QMessageBox 中文三选一和取消，而非仅运行 offscreen 替身；路径保存仍以替身避免人工面板阻塞，真实 PNG 编码 / 原子提交与回读有覆盖。Cocoa 原生窗口在菜单栏边界重新显示时曾复现 8px 位移，显示后恢复精确几何后该断言通过；标准快捷键断言在事件循环完成焦点交接后执行。
+macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release：本机构建、**11 项 CTest** 与 clang-format **18.1.8** 通过，`startup_smoke` **62 项**、2 倍 DPR 子集 **9 项**通过（含初始化 / 清理与数据行）。真实 Cocoa 的 4b 子集 **20 项**通过，包含默认 QMessageBox 中文三选一和取消，而非仅运行 offscreen 替身；路径保存仍以替身避免人工面板阻塞，真实 PNG 编码 / 原子提交与回读有覆盖。Cocoa 原生窗口在菜单栏边界重新显示时曾复现 8px 位移，显示后恢复精确几何后该断言通过；标准快捷键断言在事件循环完成焦点交接后执行。编辑态关闭时保存失败后工具条未恢复的问题先在新增回归用例中失败，清除确认状态后刷新工具条并将反馈移到工具上方，复验通过。
 
 既有用例保留；4a 直接关闭未保存贴图的三个测试夹具改为显式注入「放弃」，极小图菜单数量随新增「编辑」由 6 调整到 7，其余原断言保留。子进程冒烟的两张贴图 saved=true，仍验证托盘退出实际清空窗口。单张关闭、汇总退出以及保存面板中的重入检查实际窗口存活、保存状态和回调次数；Qt close 自身的重入返回值不当作已销毁证据。
 

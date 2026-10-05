@@ -877,6 +877,51 @@ class StartupSmokeTest final : public QObject
             QTRY_VERIFY(!sticker);
         }
     }
+    void stickerCloseSaveFailureRestoresEditingToolbar()
+    {
+        using namespace waibusnap;
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        bool valid = false;
+        int confirmations = 0;
+        StickerActions actions;
+        actions.confirmClose = [&](QWidget*)
+        {
+            ++confirmations;
+            return StickerCloseDecision::Save;
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            return valid ? directory.filePath(QStringLiteral("重试.png"))
+                         : directory.filePath(QStringLiteral("不存在/失败.png"));
+        };
+        StickerManager manager(nullptr, actions);
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {80, 80}, true).success);
+        auto sticker = manager.windows().first();
+        sticker->setEditing(true);
+        stickerClick(*sticker, "stickerEditTextToolButton");
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        sticker->findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("失败后保留"));
+        QVERIFY(!sticker->close());
+        QVERIFY(sticker && sticker->isEditing());
+        QCOMPARE(sticker->annotations().size(), qsizetype(1));
+        QVERIFY(!sticker->isSaved());
+        auto* toolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+        auto* status = sticker->findChild<QLabel*>(QStringLiteral("stickerStatus"));
+        QVERIFY(toolbar->isEnabled());
+        QVERIFY(status->text().contains(QStringLiteral("失败")));
+        if (toolbar->isVisible())
+            QVERIFY(status->geometry().bottom() < toolbar->y());
+        valid = true;
+        stickerClick(*sticker, "stickerEditSaveButton");
+        QVERIFY(sticker->isSaved());
+        QVERIFY(QFileInfo::exists(directory.filePath(QStringLiteral("重试.png"))));
+        QVERIFY(sticker->close());
+        QCOMPARE(confirmations, 1);
+        QTRY_VERIFY(!sticker);
+    }
     void stickerQuitSummaryOrderFailureAndReentrancy_data()
     {
         QTest::addColumn<int>("decision");

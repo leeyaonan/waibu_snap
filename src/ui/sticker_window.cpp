@@ -147,6 +147,7 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("stickerStatus"));
     status_->setTextFormat(Qt::PlainText);
+    status_->setAttribute(Qt::WA_TransparentForMouseEvents);
     status_->setWordWrap(true);
     status_->setStyleSheet(QStringLiteral("color: white; background: #202020; padding: 3px;"));
     status_->hide();
@@ -310,7 +311,9 @@ void StickerWindow::positionControls()
     {
         status_->setFixedWidth(width());
         status_->adjustSize();
-        status_->move(0, std::max(0, height() - status_->height()));
+        const int bottom =
+            editing_ && editToolbar_ && editToolbar_->isVisible() ? editToolbar_->y() : height();
+        status_->move(0, std::max(0, bottom - status_->height()));
     }
 }
 void StickerWindow::resizeEvent(QResizeEvent*)
@@ -540,6 +543,7 @@ void StickerWindow::closeEvent(QCloseEvent* event)
                 if (!self)
                     return;
                 confirmingClose_ = false;
+                updateEditToolbar();
                 event->ignore();
                 return;
             }
@@ -749,6 +753,7 @@ void StickerWindow::updateEditToolbar()
                 action->menu()->actions()[index]->setChecked(combo->currentIndex() == index);
         }
     }
+    positionControls();
 }
 void StickerWindow::activateTool(AnnotationType type)
 {
