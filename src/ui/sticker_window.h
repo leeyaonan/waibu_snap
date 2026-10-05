@@ -1,17 +1,38 @@
 #pragma once
+#include "core/annotation.h"
+#include "interfaces/sticker_window_behavior.h"
 #include "output/image_output.h"
 #include <QTimer>
 #include <QWidget>
 #include <functional>
+#include <optional>
 class QLabel;
 class QScreen;
 class QPushButton;
+class QComboBox;
+class QMenu;
+class QShortcut;
 namespace waibusnap
 {
+class AnnotationTextEdit;
+enum class StickerCloseDecision
+{
+    Cancel,
+    Save,
+    Discard
+};
+enum class StickerQuitDecision
+{
+    Cancel,
+    SaveAll,
+    DiscardAll
+};
 struct StickerActions
 {
     std::function<ImageOutputResult(const QImage&)> copyImage;
     std::function<QString(QWidget*, const QString&)> chooseSavePath;
+    std::function<StickerCloseDecision(QWidget*)> confirmClose;
+    std::function<StickerQuitDecision(int)> confirmQuit;
 };
 class StickerWindow final : public QWidget
 {
@@ -23,12 +44,19 @@ class StickerWindow final : public QWidget
     qreal scale() const { return scale_; }
     bool isSaved() const { return saved_; }
     void setSaved(bool saved) { saved_ = saved; }
-    // 4b 编辑态入口：编辑时停用移动 / 缩放；本轮没有进入编辑的 UI。
+    // 编辑只禁用窗口移动；滚轮仍以光标为锚点缩放。
     void setEditing(bool editing);
     bool isEditing() const { return editing_; }
     void setScale(qreal scale, QPointF globalAnchor);
     void refreshScreenGeometry();
     bool exportToPath(const QString& path);
+    bool saveImage();
+    void forceClose();
+    bool hasPendingInteraction() const { return saveDialogOpen_ || confirmingClose_; }
+    void setQuitInteraction(bool busy);
+    const QVector<Annotation>& annotations() const { return history_.annotations(); }
+    std::optional<AnnotationType> activeTool() const { return activeTool_; }
+    QImage renderedImage() const;
   signals:
     void closed();
 
@@ -41,6 +69,9 @@ class StickerWindow final : public QWidget
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
+    void mouseDoubleClickEvent(QMouseEvent*) override;
+    void keyPressEvent(QKeyEvent*) override;
+    bool eventFilter(QObject*, QEvent*) override;
     void resizeEvent(QResizeEvent*) override;
     void moveEvent(QMoveEvent*) override;
     void closeEvent(QCloseEvent*) override;
@@ -49,7 +80,17 @@ class StickerWindow final : public QWidget
     void setCenteredScale(qreal scale);
     void applyGeometry(QPointF position, QSize size);
     void copyImage();
-    void saveImage();
+    void ensureEditToolbar();
+    void updateEditToolbar();
+    void activateTool(AnnotationType type);
+    void undoAnnotation();
+    void redoAnnotation();
+    void markDirty();
+    QPointF physicalPoint(QPointF point) const;
+    void updateAnnotation(QPointF point);
+    void startText(QPointF point);
+    void finishText(bool commit, bool restoreFocus = true);
+    void positionTextEditor();
     void showStatus(const QString& text, bool temporary);
     void positionControls();
     qreal screenDpr() const;
@@ -57,6 +98,24 @@ class StickerWindow final : public QWidget
     QImage image_;
     StickerActions actions_;
     QWidget* controls_ = nullptr;
+    QWidget* editToolbar_ = nullptr;
+    QMenu* editMenu_ = nullptr;
+    QPushButton* editMoreButton_ = nullptr;
+    QPushButton* undoButton_ = nullptr;
+    QPushButton* redoButton_ = nullptr;
+    QShortcut* undoShortcut_ = nullptr;
+    QShortcut* redoShortcut_ = nullptr;
+    QVector<QPushButton*> toolButtons_;
+    QComboBox* colors_ = nullptr;
+    QComboBox* widths_ = nullptr;
+    QComboBox* sizes_ = nullptr;
+    AnnotationHistory history_;
+    AnnotationStyle style_;
+    std::optional<AnnotationType> activeTool_;
+    std::optional<Annotation> draft_;
+    AnnotationTextEdit* textEditor_ = nullptr;
+    Annotation textDraft_;
+    std::unique_ptr<StickerFocusSession> focusSession_;
     QLabel* status_ = nullptr;
     QPushButton* moreButton_ = nullptr;
     QTimer statusTimeout_;
@@ -68,6 +127,9 @@ class StickerWindow final : public QWidget
     bool editing_ = false;
     bool dragging_ = false;
     bool saveDialogOpen_ = false;
+    bool confirmingClose_ = false;
+    bool forceClosing_ = false;
+    bool quitInteraction_ = false;
     bool closed_ = false;
     bool hovered_ = false;
 };
