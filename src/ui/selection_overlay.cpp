@@ -1,17 +1,24 @@
 #include "ui/selection_overlay.h"
 #include "core/window_snapping.h"
+#include "output/annotation_renderer.h"
 #include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
+#include "ui/annotation_text_edit.h"
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFocusEvent>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QInputMethod>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
 #include <QPushButton>
+#include <QShortcut>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -47,52 +54,160 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
             return QFileDialog::getSaveFileName(parent, QStringLiteral("保存截图为 PNG"),
                                                 suggestion, QStringLiteral("PNG 图片 (*.png)"));
         };
+    statusTimeout_.setSingleShot(true);
+    connect(&statusTimeout_, &QTimer::timeout, this,
+            [this]
+            {
+                if (status_)
+                    status_->hide();
+                updateToolbar();
+            });
+}
+void SelectionOverlay::ensureToolbar()
+{
+    if (toolbar_)
+        return;
+    style_.fontFamily = font().family();
+    // 选区成立后才创建工具和快捷键，未选区首帧不初始化标注控件 / 文本排版。
     toolbar_ = new QWidget(this);
     toolbar_->setObjectName(QStringLiteral("selectionToolbar"));
     toolbar_->setCursor(Qt::ArrowCursor);
-    toolbar_->setFixedWidth(260);
+    toolbar_->setFixedWidth(std::min(560, width()));
     toolbar_->setStyleSheet(QStringLiteral(
         "QWidget#selectionToolbar { background: #202020; border-radius: 6px; }"
-        "QPushButton { color: white; background: #404040; padding: 8px; border-radius: 4px; }"
+        "QPushButton { color: white; background: #404040; padding: 6px; border-radius: 4px; }"
         "QPushButton:hover { background: #705030; }"
+        "QPushButton:checked { background: #a65316; }"
+        "QPushButton:disabled { color: #888888; background: #303030; }"
+        "QComboBox { color: white; background: #404040; padding: 3px; }"
+        "QComboBox QAbstractItemView { color: white; background: #303030; }"
         "QLabel { color: white; }"));
     auto* layout = new QVBoxLayout(toolbar_);
+    auto* tools = new QGridLayout;
+    const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
+                             QStringLiteral("直线"), QStringLiteral("箭头"),
+                             QStringLiteral("画笔"), QStringLiteral("文本")};
+    const QString objects[] = {
+        QStringLiteral("rectangleToolButton"), QStringLiteral("ellipseToolButton"),
+        QStringLiteral("lineToolButton"),      QStringLiteral("arrowToolButton"),
+        QStringLiteral("freehandToolButton"),  QStringLiteral("textToolButton")};
+    const int columns = width() >= 480 ? 6 : 3;
+    for (int index = 0; index < 6; ++index)
+    {
+        auto* button = new QPushButton(names[index], toolbar_);
+        button->setObjectName(objects[index]);
+        button->setToolTip(names[index] + QStringLiteral("：点击启用，再次点击恢复选区调整"));
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        toolButtons_.append(button);
+        tools->addWidget(button, index / columns, index % columns);
+        connect(button, &QPushButton::clicked, this,
+                [this, index] { activateTool(static_cast<AnnotationType>(index)); });
+    }
+    layout->addLayout(tools);
+    auto* options = new QHBoxLayout;
+    auto* colors = new QComboBox(toolbar_);
+    colors->setObjectName(QStringLiteral("annotationColorCombo"));
+    colors->setAccessibleName(QStringLiteral("标注颜色"));
+    colors->setToolTip(QStringLiteral("标注颜色"));
+    const QString colorNames[] = {QStringLiteral("红"), QStringLiteral("黄"), QStringLiteral("蓝")};
+    for (int index = 0; index < 3; ++index)
+    {
+        QPixmap swatch(14, 14);
+        swatch.fill(annotationColors()[index]);
+        colors->addItem(QIcon(swatch), QStringLiteral("颜色：") + colorNames[index]);
+    }
+    auto* widths = new QComboBox(toolbar_);
+    widths->setObjectName(QStringLiteral("annotationWidthCombo"));
+    widths->setAccessibleName(QStringLiteral("图形线宽（物理像素）"));
+    widths->setToolTip(QStringLiteral("图形线宽（物理像素）"));
+    const QString levels[] = {QStringLiteral("细"), QStringLiteral("中"), QStringLiteral("粗")};
+    for (int index = 0; index < 3; ++index)
+        widths->addItem(
+            QStringLiteral("%1 %2px").arg(levels[index]).arg(annotationLineWidths[index]));
+    widths->setCurrentIndex(1);
+    auto* sizes = new QComboBox(toolbar_);
+    sizes->setObjectName(QStringLiteral("annotationTextSizeCombo"));
+    sizes->setAccessibleName(QStringLiteral("文本字号（物理像素）"));
+    sizes->setToolTip(QStringLiteral("文本字号（物理像素）"));
+    for (int size : annotationTextSizes)
+        sizes->addItem(QStringLiteral("字 %1px").arg(size));
+    sizes->setCurrentIndex(1);
+    sizes->setEnabled(false);
+    options->addWidget(colors);
+    options->addWidget(widths);
+    options->addWidget(sizes);
+    layout->addLayout(options);
+    connect(colors, &QComboBox::currentIndexChanged, this,
+            [this](int index) { style_.color = annotationColors()[index]; });
+    connect(widths, &QComboBox::currentIndexChanged, this,
+            [this](int index) { style_.lineWidth = annotationLineWidths[index]; });
+    connect(sizes, &QComboBox::currentIndexChanged, this,
+            [this](int index) { style_.textSize = annotationTextSizes[index]; });
+    const auto makeButton = [this](const QString& name, const QString& object)
+    {
+        auto* button = new QPushButton(name, toolbar_);
+        button->setObjectName(object);
+        button->setFocusPolicy(Qt::NoFocus);
+        return button;
+    };
     auto* buttons = new QHBoxLayout;
-    auto* copy = new QPushButton(QStringLiteral("复制"), toolbar_);
-    copy->setObjectName(QStringLiteral("copyButton"));
-    auto* save = new QPushButton(QStringLiteral("保存"), toolbar_);
-    save->setObjectName(QStringLiteral("saveButton"));
-    auto* cancel = new QPushButton(QStringLiteral("取消"), toolbar_);
-    cancel->setObjectName(QStringLiteral("cancelButton"));
-    buttons->addWidget(copy);
-    buttons->addWidget(save);
-    buttons->addWidget(cancel);
+    undoButton_ = makeButton(QStringLiteral("撤销"), QStringLiteral("undoAnnotationButton"));
+    redoButton_ = makeButton(QStringLiteral("重做"), QStringLiteral("redoAnnotationButton"));
+    auto* copy = makeButton(QStringLiteral("复制"), QStringLiteral("copyButton"));
+    auto* save = makeButton(QStringLiteral("保存"), QStringLiteral("saveButton"));
+    auto* cancel = makeButton(QStringLiteral("取消"), QStringLiteral("cancelButton"));
+    for (auto* button : {undoButton_, redoButton_, copy, save, cancel})
+        buttons->addWidget(button);
     layout->addLayout(buttons);
+    undoShortcut_ = new QShortcut(QKeySequence::Undo, this);
+    redoShortcut_ = new QShortcut(QKeySequence::Redo, this);
+    undoButton_->setToolTip(
+        QStringLiteral("撤销标注（%1）")
+            .arg(QKeySequence(QKeySequence::Undo).toString(QKeySequence::NativeText)));
+    redoButton_->setToolTip(
+        QStringLiteral("重做标注（%1）")
+            .arg(QKeySequence(QKeySequence::Redo).toString(QKeySequence::NativeText)));
+    connect(undoShortcut_, &QShortcut::activated, this, &SelectionOverlay::undoAnnotation);
+    connect(redoShortcut_, &QShortcut::activated, this, &SelectionOverlay::redoAnnotation);
+    connect(undoButton_, &QPushButton::clicked, this, &SelectionOverlay::undoAnnotation);
+    connect(redoButton_, &QPushButton::clicked, this, &SelectionOverlay::redoAnnotation);
     status_ = new QLabel(toolbar_);
     status_->setObjectName(QStringLiteral("outputStatus"));
     status_->setWordWrap(true);
     status_->setTextFormat(Qt::PlainText);
     status_->hide();
     layout->addWidget(status_);
-    toolbar_->hide();
     connect(copy, &QPushButton::clicked, this, &SelectionOverlay::copySelection);
     connect(save, &QPushButton::clicked, this, &SelectionOverlay::saveSelection);
     connect(cancel, &QPushButton::clicked, this, [this] { complete(cancelledSessionOutcome); });
-    statusTimeout_.setSingleShot(true);
-    connect(&statusTimeout_, &QTimer::timeout, this,
-            [this]
-            {
-                status_->hide();
-                updateToolbar();
-            });
+    for (QWidget* widget : toolbar_->findChildren<QWidget*>())
+    {
+        widget->setMouseTracking(true);
+        widget->installEventFilter(this);
+    }
+    toolbar_->setMouseTracking(true);
+    toolbar_->installEventFilter(this);
 }
 void SelectionOverlay::updateToolbar()
 {
     if (finished_ || selection_.isEmpty() || dragMode_ == DragMode::Create)
     {
-        toolbar_->hide();
+        if (toolbar_)
+            toolbar_->hide();
+        if (undoShortcut_)
+        {
+            undoShortcut_->setEnabled(false);
+            redoShortcut_->setEnabled(false);
+        }
         return;
     }
+    ensureToolbar();
+    const bool editingText = textEditor_ && textEditor_->isVisible();
+    undoButton_->setEnabled(history_.canUndo());
+    redoButton_->setEnabled(history_.canRedo());
+    undoShortcut_->setEnabled(!editingText && !saveDialogOpen_ && dragMode_ == DragMode::None);
+    redoShortcut_->setEnabled(!editingText && !saveDialogOpen_ && dragMode_ == DragMode::None);
     toolbar_->adjustSize();
     const QRectF region = logicalSelection();
     const int x = std::clamp(qRound(region.right()) - toolbar_->width(), 0,
@@ -107,6 +222,7 @@ void SelectionOverlay::updateToolbar()
 }
 void SelectionOverlay::showStatus(const QString& text, bool temporary)
 {
+    ensureToolbar();
     statusTimeout_.stop();
     status_->setText(text);
     status_->show();
@@ -118,8 +234,9 @@ void SelectionOverlay::copySelection()
 {
     if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None)
         return;
+    finishText(true);
     const ImageOutputResult result =
-        actions_.copyImage(cropFrozenSelection(frame_.pixels, selection_));
+        actions_.copyImage(renderAnnotatedSelection(frame_.pixels, annotations(), selection_));
     if (result.success)
         complete(copiedSessionOutcome);
     else
@@ -130,6 +247,7 @@ void SelectionOverlay::saveSelection()
 {
     if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None)
         return;
+    finishText(true);
     QString directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     if (directory.isEmpty())
         directory = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
@@ -170,9 +288,10 @@ bool SelectionOverlay::exportToPath(const QString& path)
     if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None ||
         path.isEmpty())
         return false;
+    finishText(true);
     showStatus(QStringLiteral("正在保存 PNG…"), false);
     const ImageOutputResult result =
-        exportPngToPath(cropFrozenSelection(frame_.pixels, selection_), path);
+        exportPngToPath(renderAnnotatedSelection(frame_.pixels, annotations(), selection_), path);
     if (!result.success)
     {
         showStatus(
@@ -191,9 +310,14 @@ void SelectionOverlay::setSelection(QRect pixels)
     selection_ = pixels;
     if (!pixels.isEmpty())
         hoveredWindowPixels_ = {};
+    markDirty();
+}
+void SelectionOverlay::markDirty()
+{
     saved_ = false;
     statusTimeout_.stop();
-    status_->hide();
+    if (status_)
+        status_->hide();
 }
 QRect SelectionOverlay::selection() const { return selection_; }
 QRectF SelectionOverlay::logicalSelection() const
@@ -223,6 +347,11 @@ SelectionEdges SelectionOverlay::edgesAt(QPointF position) const
 }
 void SelectionOverlay::updateCursor(QPointF position)
 {
+    if (activeTool_ && !selection_.isEmpty())
+    {
+        setCursor(*activeTool_ == AnnotationType::Text ? Qt::IBeamCursor : Qt::CrossCursor);
+        return;
+    }
     const SelectionEdges edges = dragMode_ == DragMode::Resize ? resizeEdges_ : edgesAt(position);
     const bool horizontal =
         edges.testFlag(SelectionEdge::Left) || edges.testFlag(SelectionEdge::Right);
@@ -248,7 +377,9 @@ void SelectionOverlay::dragTo(QPointF position)
 {
     maximumPressDistance_ = std::max(
         maximumPressDistance_, std::hypot(position.x() - press_.x(), position.y() - press_.y()));
-    if (dragMode_ == DragMode::Create)
+    if (dragMode_ == DragMode::Annotate)
+        updateAnnotation(position);
+    else if (dragMode_ == DragMode::Create)
     {
         if (pressedWindow_ < 0 || maximumPressDistance_ > windowClickDistance)
             setSelection(normalizedPixelSelection(press_, position, frame_.display.devicePixelRatio,
@@ -293,6 +424,12 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         // QImage 带目标屏 DPR，以原像素绘制，不生成缩放副本。
         painter.drawImage(QPointF(0, 0), frame_.pixels);
         const qreal scale = frame_.display.devicePixelRatio;
+        painter.save();
+        painter.scale(1 / scale, 1 / scale);
+        paintAnnotations(painter, annotations());
+        if (draft_)
+            paintAnnotation(painter, *draft_);
+        painter.restore();
         const QRectF region = logicalSelection();
         QPainterPath shade;
         shade.addRect(rect());
@@ -323,9 +460,12 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
                             painter.drawRect(QRectF(x[column] - 3, y[row] - 3, 6, 6));
             }
         }
-        const QString text = QStringLiteral("%1 × %2 像素   单击吸附 · 拖拽框选 · Esc 取消")
+        const QString hint = activeTool_ ? QStringLiteral("拖拽标注 · 再点工具调整选区 · Esc 取消")
+                                         : QStringLiteral("单击吸附 · 拖拽框选 · Esc 取消");
+        const QString text = QStringLiteral("%1 × %2 像素   %3")
                                  .arg(selection_.width())
-                                 .arg(selection_.height());
+                                 .arg(selection_.height())
+                                 .arg(hint);
         const QRect box(16, 16, std::max(0, std::min(width() - 32, 580)), 36);
         painter.fillRect(box, QColor(20, 20, 20, 220));
         painter.setPen(Qt::white);
@@ -347,7 +487,25 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
 {
     if (finished_ || saveDialogOpen_ || event->button() != Qt::LeftButton)
         return;
+    finishText(true);
+    setFocus(Qt::MouseFocusReason);
     press_ = event->position();
+    if (activeTool_ && !selection_.isEmpty())
+    {
+        if (*activeTool_ == AnnotationType::Text)
+            startText(press_);
+        else
+        {
+            draft_ = Annotation{*activeTool_,          style_, physicalPoint(press_),
+                                physicalPoint(press_), {},     {}};
+            if (*activeTool_ == AnnotationType::Freehand)
+                appendFreehandPoint(*draft_, draft_->first);
+            dragMode_ = DragMode::Annotate;
+            updateToolbar();
+            update();
+        }
+        return;
+    }
     initialSelection_ = selection_;
     maximumPressDistance_ = 0;
     pressedWindow_ = selection_.isEmpty() ? windowAt(windows_, press_) : -1;
@@ -388,6 +546,12 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         maximumPressDistance_ <= windowClickDistance)
         setSelection(windowPixelSelection(windows_[pressedWindow_], frame_.display.devicePixelRatio,
                                           frame_.pixels.size()));
+    if (dragMode_ == DragMode::Annotate && draft_)
+    {
+        if (history_.add(std::move(*draft_)))
+            markDirty();
+        draft_.reset();
+    }
     dragMode_ = DragMode::None;
     updateHover(event->position());
     updateCursor(event->position());
@@ -396,10 +560,21 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
 }
 void SelectionOverlay::keyPressEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_Escape && saveDialogOpen_)
+    if (finished_ || saveDialogOpen_)
         event->accept();
+    else if (textEditor_ && textEditor_->isVisible())
+    {
+        // 焦点层即使有事件泄漏到覆盖层，也不能取消会话或撤销已提交标注。
+        if (event->key() == Qt::Key_Escape && !textEditor_->isComposing())
+            finishText(false);
+        event->accept();
+    }
     else if (event->key() == Qt::Key_Escape)
         complete(cancelledSessionOutcome);
+    else if (event->matches(QKeySequence::Undo))
+        undoAnnotation();
+    else if (event->matches(QKeySequence::Redo))
+        redoAnnotation();
     else
         QWidget::keyPressEvent(event);
 }
@@ -410,6 +585,7 @@ void SelectionOverlay::closeEvent(QCloseEvent* event)
     {
         hoveredWindowPixels_ = {};
         finished_ = true;
+        discardAnnotations();
         emit finished({}, cancelledSessionOutcome);
     }
 }
@@ -419,7 +595,134 @@ void SelectionOverlay::complete(int outcome)
         return;
     finished_ = true;
     hoveredWindowPixels_ = {};
+    discardAnnotations();
     hide();
     emit finished(outcome == copiedSessionOutcome ? selection() : QRect(), outcome);
+}
+QPointF SelectionOverlay::physicalPoint(QPointF position) const
+{
+    const qreal scale = frame_.display.devicePixelRatio;
+    return {std::clamp(position.x() * scale, qreal(0), qreal(frame_.pixels.width())),
+            std::clamp(position.y() * scale, qreal(0), qreal(frame_.pixels.height()))};
+}
+void SelectionOverlay::activateTool(AnnotationType type)
+{
+    if (finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+        return;
+    finishText(true);
+    activeTool_ = activeTool_ == type ? std::nullopt : std::optional<AnnotationType>(type);
+    for (int index = 0; index < toolButtons_.size(); ++index)
+        toolButtons_[index]->setChecked(activeTool_ == static_cast<AnnotationType>(index));
+    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"))
+        ->setEnabled(activeTool_ == AnnotationType::Text);
+    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationWidthCombo"))
+        ->setEnabled(activeTool_ != AnnotationType::Text);
+    setFocus(Qt::OtherFocusReason);
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+}
+void SelectionOverlay::updateAnnotation(QPointF position)
+{
+    if (!draft_)
+        return;
+    const QPointF point = physicalPoint(position);
+    if (draft_->type == AnnotationType::Freehand)
+        appendFreehandPoint(*draft_, point);
+    else
+        draft_->last = point;
+}
+void SelectionOverlay::undoAnnotation()
+{
+    if (finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+        return;
+    finishText(true);
+    if (history_.undo())
+        markDirty();
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::redoAnnotation()
+{
+    if (finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+        return;
+    finishText(true);
+    if (history_.redo())
+        markDirty();
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::startText(QPointF position)
+{
+    if (!textEditor_)
+    {
+        textEditor_ = new AnnotationTextEdit(this);
+        textEditor_->installEventFilter(this);
+        connect(textEditor_, &AnnotationTextEdit::commitRequested, this,
+                [this] { finishText(true); });
+        connect(textEditor_, &AnnotationTextEdit::cancelRequested, this,
+                [this] { finishText(false); });
+    }
+    textDraft_ = Annotation{AnnotationType::Text, style_, physicalPoint(position), {}, {}, {}};
+    QFont editorFont = annotationFont(style_);
+    // 编辑器在逻辑坐标中排版，支持非整数 DPR；提交后的文本按物理像素统一绘制。
+    editorFont.setPointSizeF(style_.textSize * 72.0 /
+                             (logicalDpiY() * frame_.display.devicePixelRatio));
+    textEditor_->setFont(editorFont);
+    QPalette palette = textEditor_->palette();
+    palette.setColor(QPalette::Text, style_.color);
+    palette.setColor(QPalette::Base, QColor(25, 25, 25));
+    textEditor_->setPalette(palette);
+    const QPoint point = position.toPoint();
+    textEditor_->setGeometry(point.x(), point.y(), std::max(1, std::min(360, width() - point.x())),
+                             std::max(1, std::min(140, height() - point.y())));
+    textEditor_->clear();
+    textEditor_->show();
+    textEditor_->raise();
+    textEditor_->setFocus(Qt::MouseFocusReason);
+    updateToolbar();
+}
+void SelectionOverlay::finishText(bool commit, bool restoreFocus)
+{
+    if (!textEditor_ || !textEditor_->isVisible())
+        return;
+    if (commit)
+        QGuiApplication::inputMethod()->commit();
+    else
+        QGuiApplication::inputMethod()->reset();
+    textDraft_.text = textEditor_->toPlainText();
+    textEditor_->hide();
+    textEditor_->clear();
+    if (commit && history_.add(std::move(textDraft_)))
+        markDirty();
+    textDraft_ = {};
+    if (restoreFocus)
+        setFocus(Qt::OtherFocusReason);
+    updateToolbar();
+    update();
+}
+bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != textEditor_ && event->type() == QEvent::MouseMove)
+    {
+        // 子工具栏保持箭头光标，同时同步其下方画布的模式状态。
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        updateCursor(mapFromGlobal(mouse->globalPosition().toPoint()));
+    }
+    if (watched == textEditor_ && event->type() == QEvent::FocusOut)
+    {
+        const auto reason = static_cast<QFocusEvent*>(event)->reason();
+        // 候选窗口 / 系统面板的临时焦点变化不提交；点击其他控件才提交。
+        if (reason == Qt::MouseFocusReason || reason == Qt::TabFocusReason)
+            finishText(true, false);
+    }
+    return QWidget::eventFilter(watched, event);
+}
+void SelectionOverlay::discardAnnotations()
+{
+    finishText(false);
+    history_.clear();
+    draft_.reset();
+    activeTool_.reset();
+    updateToolbar();
 }
 }

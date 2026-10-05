@@ -1,11 +1,15 @@
 #include "app/app_settings.h"
 #include "app/hotkey_rules.h"
+#include "output/annotation_renderer.h"
+#include "ui/annotation_text_edit.h"
 #include "ui/selection_overlay.h"
 #include "ui/settings_dialog.h"
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QInputMethodEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QProcess>
@@ -29,6 +33,24 @@ waibusnap::CaptureFrame sampleFrame()
     frame.pixels.setDevicePixelRatio(2);
     return frame;
 }
+waibusnap::CaptureFrame annotationFrame()
+{
+    auto frame = sampleFrame();
+    frame.display.logicalGeometry.setSize({800, 600});
+    frame.pixels = QImage(1600, 1200, QImage::Format_ARGB32_Premultiplied);
+    frame.pixels.fill(Qt::white);
+    frame.pixels.setDevicePixelRatio(2);
+    return frame;
+}
+QPushButton* button(waibusnap::SelectionOverlay& overlay, const char* name)
+{
+    return overlay.findChild<QPushButton*>(QString::fromLatin1(name));
+}
+void standardKey(QWidget* widget, QKeySequence::StandardKey key)
+{
+    const auto combination = QKeySequence(key)[0];
+    QTest::keyClick(widget, combination.key(), combination.keyboardModifiers());
+}
 void drag(waibusnap::SelectionOverlay& overlay, QPoint first, QPoint second)
 {
     QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, first);
@@ -48,6 +70,267 @@ class StartupSmokeTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void annotationToolsAreDiscoverableAndGesturesTakePriority()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        QVERIFY(!overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar")));
+        QVERIFY(!overlay.findChild<AnnotationTextEdit*>());
+        drag(overlay, {100, 100}, {300, 250});
+        const QRect selection = overlay.selection();
+        const char* names[] = {"rectangleToolButton", "ellipseToolButton",  "lineToolButton",
+                               "arrowToolButton",     "freehandToolButton", "textToolButton"};
+        const QString labels[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
+                                  QStringLiteral("直线"), QStringLiteral("箭头"),
+                                  QStringLiteral("画笔"), QStringLiteral("文本")};
+        for (int index = 0; index < 6; ++index)
+        {
+            auto* tool = button(overlay, names[index]);
+            QVERIFY(tool && tool->isVisible());
+            QCOMPARE(tool->text(), labels[index]);
+            QVERIFY(tool->toolTip().contains(labels[index]));
+            QTest::mouseClick(tool, Qt::LeftButton);
+            QVERIFY(overlay.activeTool() == static_cast<AnnotationType>(index));
+            QVERIFY(tool->isChecked());
+            if (index == 5)
+            {
+                QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 140});
+                auto* editor = overlay.findChild<AnnotationTextEdit*>();
+                QVERIFY(editor && editor->isVisible());
+                editor->setPlainText(QStringLiteral("截图说明 ABC 123\n第二行"));
+                QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+                QVERIFY(!editor->isVisible());
+            }
+            else
+            {
+                // 包括选区边角、内部与选区外，均优先绘图。
+                drag(overlay, {100, 100}, {330, 280});
+            }
+            QCOMPARE(overlay.selection(), selection);
+            QCOMPARE(overlay.annotations().size(), qsizetype(index + 1));
+            QCOMPARE(overlay.annotations().last().type, static_cast<AnnotationType>(index));
+            QCOMPARE(overlay.annotations().last().first,
+                     QPointF(index == 5 ? 240 : 200, index == 5 ? 280 : 200));
+            QTest::mouseClick(tool, Qt::LeftButton);
+            QVERIFY(!overlay.activeTool());
+            QVERIFY(!tool->isChecked());
+        }
+        const auto before = overlay.annotations().first();
+        drag(overlay, {200, 180}, {220, 190});
+        QCOMPARE(overlay.selection(), QRect(240, 220, 400, 300));
+        QCOMPARE(overlay.annotations().first().first, before.first);
+        QCOMPARE(overlay.annotations().first().last, before.last);
+        drag(overlay, {320, 260}, {350, 280});
+        QCOMPARE(overlay.annotations().first().first, before.first);
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QVERIFY(overlay.annotations().isEmpty());
+    }
+    void annotationStylesUndoRedoAndDirtyState()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {300, 250});
+        auto* colors = overlay.findChild<QComboBox*>(QStringLiteral("annotationColorCombo"));
+        auto* widths = overlay.findChild<QComboBox*>(QStringLiteral("annotationWidthCombo"));
+        auto* sizes = overlay.findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"));
+        auto* undo = button(overlay, "undoAnnotationButton");
+        auto* redo = button(overlay, "redoAnnotationButton");
+        QVERIFY(colors && widths && sizes && undo && redo);
+        QCOMPARE(colors->count(), 3);
+        QCOMPARE(widths->count(), 3);
+        QCOMPARE(sizes->count(), 3);
+        QVERIFY(!undo->isEnabled());
+        QVERIFY(!redo->isEnabled());
+        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        for (int index = 0; index < 3; ++index)
+        {
+            colors->setCurrentIndex(index);
+            widths->setCurrentIndex(index);
+            drag(overlay, {120, 150 + index * 20}, {280, 150 + index * 20});
+            QCOMPARE(overlay.annotations().last().style.color, annotationColors()[index]);
+            QCOMPARE(overlay.annotations().last().style.lineWidth, annotationLineWidths[index]);
+        }
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto path = temporary.filePath(QStringLiteral("标注.png"));
+        QVERIFY(overlay.exportToPath(path));
+        const QImage saved(path);
+        QVERIFY(overlay.isSelectionSaved());
+        QTest::mouseClick(undo, Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QVERIFY(!overlay.isSelectionSaved());
+        QVERIFY(redo->isEnabled());
+        standardKey(&overlay, QKeySequence::Redo);
+        QCOMPARE(overlay.annotations().size(), qsizetype(3));
+        QVERIFY(!redo->isEnabled());
+        QVERIFY(overlay.exportToPath(path));
+        QCOMPARE(QImage(path), saved);
+        standardKey(&overlay, QKeySequence::Undo);
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QTest::mouseClick(redo, Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(3));
+        QVERIFY(!overlay.isSelectionSaved());
+        standardKey(&overlay, QKeySequence::Undo);
+        drag(overlay, {120, 210}, {280, 210});
+        QVERIFY(!redo->isEnabled());
+        standardKey(&overlay, QKeySequence::Redo);
+        QCOMPARE(overlay.annotations().size(), qsizetype(3));
+        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        QVERIFY(!widths->isEnabled());
+        QVERIFY(sizes->isEnabled());
+        sizes->setCurrentIndex(2);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 120});
+        auto* editor = overlay.findChild<AnnotationTextEdit*>();
+        editor->setPlainText(QStringLiteral("ABC"));
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QCOMPARE(overlay.annotations().last().style.textSize, annotationTextSizes[2]);
+    }
+    void textImeAndEscapeStayInCurrentLayer()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {300, 250});
+        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 140});
+        auto* editor = overlay.findChild<AnnotationTextEdit*>();
+        QVERIFY(editor && editor->isVisible());
+        QInputMethodEvent preedit(QStringLiteral("jie tu"), {});
+        QApplication::sendEvent(editor, &preedit);
+        QVERIFY(editor->isComposing());
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QVERIFY(editor->isVisible());
+        QVERIFY(editor->toPlainText().isEmpty());
+        QCOMPARE(finished.count(), 0);
+        QVERIFY(overlay.annotations().isEmpty());
+        QTest::keyClick(editor, Qt::Key_Escape);
+        QVERIFY(editor->isVisible());
+        QVERIFY(!editor->isComposing());
+        QCOMPARE(finished.count(), 0);
+        QInputMethodEvent commit;
+        commit.setCommitString(QStringLiteral("截图说明 ABC 123"));
+        QApplication::sendEvent(editor, &commit);
+        QTest::keyClick(editor, Qt::Key_Return);
+        QInputMethodEvent second;
+        second.setCommitString(QStringLiteral("第二行"));
+        QApplication::sendEvent(editor, &second);
+        QVERIFY(editor->toPlainText().contains(QStringLiteral("截图说明 ABC 123\n第二行")));
+        QTest::keyClick(editor, Qt::Key_Escape);
+        QVERIFY(!editor->isVisible());
+        QCOMPARE(finished.count(), 0);
+        QVERIFY(overlay.annotations().isEmpty());
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(1).toInt(), 2);
+    }
+    void textCommitsBeforeSaveCopyAndOutsideClick()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto path = temporary.filePath(QStringLiteral("文本.png"));
+        QImage copied;
+        OverlayActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{true, {}};
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&) { return path; };
+        const auto frame = annotationFrame();
+        SelectionOverlay overlay(frame, actions);
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {300, 250});
+        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 120});
+        auto* editor = overlay.findChild<AnnotationTextEdit*>();
+        editor->setPlainText(QStringLiteral("截图说明 ABC 123\n第二行"));
+        QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(1));
+        QCOMPARE(overlay.annotations().last().text, QStringLiteral("截图说明 ABC 123\n第二行"));
+        const QImage saved(path);
+        QCOMPARE(saved,
+                 renderAnnotatedSelection(frame.pixels, overlay.annotations(), overlay.selection())
+                     .convertToFormat(saved.format()));
+        QVERIFY(
+            saved !=
+            cropFrozenSelection(frame.pixels, overlay.selection()).convertToFormat(saved.format()));
+        QVERIFY(overlay.isSelectionSaved());
+        QVERIFY(overlay.isVisible());
+        QCOMPARE(finished.count(), 0);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {130, 180});
+        editor->setPlainText(QStringLiteral("第三条"));
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {150, 200});
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QVERIFY(!overlay.isSelectionSaved());
+        // 空编辑切换工具时不产生额外步骤。
+        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        drag(overlay, {120, 160}, {280, 160});
+        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {160, 200});
+        editor->setPlainText(QStringLiteral("复制前确认"));
+        auto expectedAnnotations = overlay.annotations();
+        Annotation expected{
+            AnnotationType::Text,        expectedAnnotations.first().style, {320, 400}, {}, {},
+            QStringLiteral("复制前确认")};
+        expectedAnnotations.append(expected);
+        const auto expectedImage =
+            renderAnnotatedSelection(frame.pixels, expectedAnnotations, overlay.selection());
+        QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
+        QCOMPARE(copied, expectedImage);
+        QCOMPARE(copied.devicePixelRatio(), qreal(1));
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(1).toInt(), 10);
+        QVERIFY(overlay.annotations().isEmpty());
+        QCOMPARE(QImage(path), saved);
+    }
+    void annotationSaveCopyHasPhysicalPixelsOnly()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto path = temporary.filePath(QStringLiteral("物理像素.png"));
+        QImage copied;
+        OverlayActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{true, {}};
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&) { return path; };
+        SelectionOverlay overlay(annotationFrame(), actions);
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {300, 250});
+        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        drag(overlay, {90, 150}, {310, 150});
+        QCOMPARE(overlay.selection(), QRect(200, 200, 400, 300));
+        QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+        const QImage saved(path);
+        QCOMPARE(saved.size(), QSize(400, 300));
+        QCOMPARE(saved.devicePixelRatio(), qreal(1));
+        for (int y = 0; y < saved.height(); ++y)
+            for (int x = 0; x < saved.width(); ++x)
+                QCOMPARE(saved.pixelColor(x, y),
+                         y >= 98 && y <= 101 ? annotationColors()[0] : QColor(Qt::white));
+        QCOMPARE(finished.count(), 0);
+        QVERIFY(overlay.isSelectionSaved());
+        QTest::mouseClick(button(overlay, "undoAnnotationButton"), Qt::LeftButton);
+        QVERIFY(!overlay.isSelectionSaved());
+        QTest::mouseClick(button(overlay, "redoAnnotationButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
+        QCOMPARE(copied.convertToFormat(saved.format()), saved);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(1).toInt(), 10);
+        QVERIFY(overlay.annotations().isEmpty());
+    }
     void settingsMetadataValidationFailureAndPersistence()
     {
         QTemporaryDir temporary;
@@ -284,6 +567,9 @@ class StartupSmokeTest final : public QObject
         QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
         overlay.show();
         drag(overlay, {20, 10}, {80, 60});
+        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        drag(overlay, {30, 35}, {70, 35});
+        QCOMPARE(overlay.annotations().size(), qsizetype(1));
         if (action == 0)
             QTest::keyClick(&overlay, Qt::Key_Escape);
         else if (action == 1)
