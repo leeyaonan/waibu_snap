@@ -17,7 +17,10 @@ class CocoaStickerFocusSession final : public StickerFocusSession
                 NSRunningApplication.currentApplication.processIdentifier &&
             [NSWorkspace sharedWorkspace].frontmostApplication.processIdentifier ==
                 NSRunningApplication.currentApplication.processIdentifier)
+        {
+            [NSApp yieldActivationToApplication:previous_];
             [previous_ activateWithOptions:0];
+        }
     }
 
   private:
@@ -45,7 +48,8 @@ std::unique_ptr<StickerFocusSession> activateStickerEditing(QWindow* window)
     if (!window || QGuiApplication::platformName() != QStringLiteral("cocoa"))
         return {};
     auto session = std::make_unique<CocoaStickerFocusSession>();
-    [NSApp activate];
+    // 编辑入口是明确的用户动作，允许从前台应用取得输入，而非仅请求协作激活。
+    [NSApp activateIgnoringOtherApps:YES];
     NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
     [view.window makeKeyAndOrderFront:nil];
     return session;
