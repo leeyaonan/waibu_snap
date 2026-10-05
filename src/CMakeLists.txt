@@ -1,16 +1,17 @@
 add_subdirectory(platform)
 
-add_library(waibusnap_core STATIC core/selection_geometry.cpp core/window_snapping.cpp
+add_library(waibusnap_core STATIC core/annotation.cpp core/selection_geometry.cpp core/window_snapping.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(waibusnap_core PUBLIC Qt6::Core PRIVATE waibusnap_options)
-add_library(waibusnap_output STATIC output/image_output.cpp)
+target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options)
+add_library(waibusnap_output STATIC output/image_output.cpp output/annotation_renderer.cpp)
 target_include_directories(waibusnap_output PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(waibusnap_output PUBLIC Qt6::Gui PRIVATE waibusnap_options)
+target_link_libraries(waibusnap_output PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp)
 target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC ui/selection_overlay.cpp ui/selection_overlay.h
+    ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h
     app/application_controller.cpp app/application_controller.h)
 target_include_directories(waibusnap_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

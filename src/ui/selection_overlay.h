@@ -1,4 +1,5 @@
 #pragma once
+#include "core/annotation.h"
 #include "core/selection_geometry.h"
 #include "interfaces/capture_provider.h"
 #include "output/image_output.h"
@@ -7,8 +8,12 @@
 #include <QVector>
 #include <QWidget>
 #include <functional>
+#include <optional>
+class QPushButton;
+class QShortcut;
 namespace waibusnap
 {
+class AnnotationTextEdit;
 struct OverlayActions
 {
     std::function<ImageOutputResult(const QImage&)> copyImage;
@@ -24,6 +29,8 @@ class SelectionOverlay final : public QWidget
     QRect hoveredWindowPixels() const { return hoveredWindowPixels_; }
     bool hasPainted() const { return painted_; }
     bool isSelectionSaved() const { return saved_; }
+    const QVector<Annotation>& annotations() const { return history_.annotations(); }
+    std::optional<AnnotationType> activeTool() const { return activeTool_; }
     // 不打开对话框；路径确认由保存入口负责，供导出测试和后续输出入口复用。
     bool exportToPath(const QString& path);
   signals:
@@ -38,6 +45,7 @@ class SelectionOverlay final : public QWidget
     void keyPressEvent(QKeyEvent*) override;
     void closeEvent(QCloseEvent*) override;
     void leaveEvent(QEvent*) override;
+    bool eventFilter(QObject*, QEvent*) override;
 
   private:
     enum class DragMode
@@ -45,13 +53,24 @@ class SelectionOverlay final : public QWidget
         None,
         Create,
         Move,
-        Resize
+        Resize,
+        Annotate
     };
     void complete(int outcome);
     void copySelection();
     void saveSelection();
     void setSelection(QRect pixels);
+    void ensureToolbar();
     void updateToolbar();
+    void markDirty();
+    void activateTool(AnnotationType type);
+    void updateAnnotation(QPointF position);
+    void undoAnnotation();
+    void redoAnnotation();
+    void startText(QPointF position);
+    void finishText(bool commit, bool restoreFocus = true);
+    void discardAnnotations();
+    QPointF physicalPoint(QPointF position) const;
     void showStatus(const QString& text, bool temporary);
     QRectF logicalSelection() const;
     SelectionEdges edgesAt(QPointF position) const;
@@ -63,6 +82,17 @@ class SelectionOverlay final : public QWidget
     QWidget* toolbar_ = nullptr;
     QLabel* status_ = nullptr;
     QTimer statusTimeout_;
+    AnnotationHistory history_;
+    AnnotationStyle style_;
+    std::optional<AnnotationType> activeTool_;
+    std::optional<Annotation> draft_;
+    AnnotationTextEdit* textEditor_ = nullptr;
+    Annotation textDraft_;
+    QVector<QPushButton*> toolButtons_;
+    QPushButton* undoButton_ = nullptr;
+    QPushButton* redoButton_ = nullptr;
+    QShortcut* undoShortcut_ = nullptr;
+    QShortcut* redoShortcut_ = nullptr;
     QRect selection_;
     QRect initialSelection_;
     QVector<QRect> windows_;
