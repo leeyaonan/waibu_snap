@@ -54,3 +54,16 @@ if(APPLE)
     add_test(NAME probe_cpu_calibration COMMAND waibusnap_measure_probe --self-test)
     set_tests_properties(probe_cpu_calibration PROPERTIES TIMEOUT 10)
 endif()
+
+qt_add_executable(sticker_geometry_test unit/sticker_geometry_test.cpp)
+target_link_libraries(sticker_geometry_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(sticker_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME sticker_geometry COMMAND sticker_geometry_test)
+
+add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
+    stickerWindowsScaleDragAndCloseIndependently stickerOutputsKeepOriginalPixelsAndRetryFailures
+    -o "${CMAKE_CURRENT_BINARY_DIR}/startup_smoke-sticker-high-dpi-output.txt,txt")
+set_tests_properties(startup_smoke_sticker_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2"
+    TIMEOUT 30
+)

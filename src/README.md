@@ -2,18 +2,18 @@
 
 | 目录 | 职责 | 初始化状态 |
 | --- | --- | --- |
-| `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验 |
-| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口 |
-| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行 |
-| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现 |
-| `core/` | 图像与标注核心 | `annotation` 的六类标注、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
+| `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验 |
+| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约 |
+| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏 |
+| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用共享 Qt 属性 |
+| `core/` | 图像与标注核心 | `annotation` 的六类标注、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点与屏外找回纯函数；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
 | `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
-| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；六工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 取消工具栏；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、中文反馈和保存 / 取消；无默认主窗口 |
+| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；六工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、中文反馈和保存 / 取消；无默认主窗口 |
 | `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG 原子提交、文件名补后缀和冲突避让；无自动保存 |
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
 
-`OverlayActions` 提供复制与路径选择的行为缝，默认走真实 QClipboard 和原生 QFileDialog；`exportToPath` 分离路径导出与面板。输出由 `renderAnnotatedSelection(frame_.pixels, annotations, selection)` 合成后裁剪，不捕获 QWidget 显示层；保存成功保留会话，复制成功以结果码 10 结束。工具栏在选区成立后创建，文本编辑器仅在使用文本工具时创建；标注、撤销历史、工具栏和短暂反馈计时器归会话所有，空闲无隐藏预建选区或轮询。
+`OverlayActions` 提供复制、钉图与路径选择的行为缝，默认走真实 QClipboard 和原生 QFileDialog；`exportToPath` 分离路径导出与面板。输出由 `renderAnnotatedSelection(frame_.pixels, annotations, selection)` 合成后裁剪，不捕获 QWidget 显示层；保存成功保留会话，复制成功以结果码 10、钉图成功以结果码 11 结束。工具栏在选区成立后创建，文本编辑器仅在使用文本工具时创建；标注、撤销历史、工具栏和短暂反馈计时器归会话所有，空闲无隐藏预建选区或轮询。
 
 窗口列表在 `captureCompleted` 成功后查询一次，经 `localWindowRects` 裁剪再注入覆盖层；悬停像素矩形同时用于绘制与只读断言。手势最大位移不超过 3 个逻辑像素才确认按下处窗口，手动拖选开始即清除高亮；已有选区外部单击只清除，下一次单击才能重新吸附。高亮、选区手柄与工具栏均不进入合成输出。
 
@@ -23,4 +23,12 @@
 
 覆盖层按源屏 DPR 将物理坐标映射到逻辑画布，再调用 `paintAnnotations` 绘制已提交标注与 `paintAnnotation` 绘制当前手势草稿。导出缓冲只分配选区大小，复制冻结像素并用整数平移将相同绘制例程映射到裁剪窗口；文本用 Qt 纯文本排版和物理像素字体，不从输入框截取。添加、撤销、重做及裁剪窗口改变均标记未保存；保存成功保留会话并标记已保存。所有编辑快捷键都局限于覆盖层，文本输入期间不触发标注撤销 / 重做，候选 / 系统面板的临时焦点变化不提交文本。
 
-图像坐标、色彩、输出与换栈条件沿用工作区技术选型第 7 节；贴图、标注对象再编辑与完整双端实机验收留待后续。Windows 原生窗口枚举、热键及捕获保持桩，混合 DPI / 负坐标专项仍待实机验证。
+图像坐标、色彩、输出与换栈条件沿用工作区技术选型第 7 节；贴图内编辑、未保存确认（4b）、标注对象再编辑与完整双端实机验收留待后续。Windows 原生窗口枚举、热键及捕获保持桩，混合 DPI / 负坐标专项仍待实机验证。
+
+`ApplicationController` 注入 `pinImage`，通过覆盖层只读的选区全局逻辑位置与 `isSelectionSaved()` 调用 `StickerManager::create`。合成图 DPR=1；正常输入保持 QImage 隐式共享，不额外复制整图。管理器区分活跃窗口与尚待延迟销毁的窗口，提供 `count()` / `windows()` / `closeAll()`；控制器托盘退出、`aboutToQuit` 与析构共用清理。无常驻贴图历史、抓屏或屏幕轮询；布局找回只响应屏幕通知。
+
+`StickerWindow` 使用 Frameless / StaysOnTop / Tool / DoesNotAcceptFocus 与 ShowWithoutActivating，子控件 NoFocus。Qt Tool 的失活隐藏通过 `WA_MacAlwaysShowToolWindow` 禁用；macOS 在显示前为 Qt 创建的 NSPanel 加 `NSWindowStyleMaskNonactivatingPanel` 并保持可见。Qt 的拒绝 key window 处理与 NSPanel 样式取舍依据 [Qt 6.11.2 Cocoa 窗口实现](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qcocoawindow.mm) 与 [QNSWindow](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qnswindow.mm)。处理集中在 `platform/macos/sticker_window_behavior.mm`，沿用已有呈现观察器的 NSView 桥接方式；Windows 无额外原生行为。offscreen 不转换原生句柄，真实浏览器 / 编辑器键盘焦点仍须人工核对。
+
+缩放范围 25%–400%，每档 25 个百分点；纯几何无 QWidget 依赖。窗口逻辑尺寸为图像物理尺寸 × 缩放 ÷ 当前屏 DPR，向上取整至整数（最小 1）；100% 不平滑、不重采样原像素，非整除尺寸留不足 1 逻辑像素边缘。拖动跨屏按光标下屏幕切换，保持鼠标下图像位置；亚像素窗口位置避免连续缩放累计漂移。悬停控制条不影响图像窗口尺寸，极小图使用操作菜单与右键入口。
+
+`StickerActions` 提供路径与复制替身，PNG 编码 / 原子提交仍复用 `image_output`；面板补后缀碰撞重新确认最终路径，保存取消 / 失败保留原图，面板期间关闭 / 退出不继续导出。每张贴图的 `isSaved()` / `setSaved()` 与 `isEditing()` / `setEditing()` 是 4b 接口；进入编辑态会停用拖动、缩放和输出入口，本轮没有进入编辑的 UI，也不实现关闭 / 退出确认。
