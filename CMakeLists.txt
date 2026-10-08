@@ -28,7 +28,9 @@ include(CTest)
 
 add_library(waibusnap_options INTERFACE)
 if(MSVC)
-    target_compile_options(waibusnap_options INTERFACE /W4 /permissive- /utf-8)
+    # C++ 选项不得传给 Windows 的 RC 资源编译器。
+    target_compile_options(waibusnap_options INTERFACE
+        "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive-;/utf-8>")
 else()
     target_compile_options(waibusnap_options INTERFACE -Wall -Wextra -Wpedantic)
 endif()
