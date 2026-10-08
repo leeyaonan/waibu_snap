@@ -3,6 +3,7 @@
 #include "app/hotkey_rules.h"
 #include "app/sticker_manager.h"
 #include "core/sticker_geometry.h"
+#include "interfaces/tray_icon.h"
 #include "output/annotation_renderer.h"
 #include "session/session_metrics.h"
 #include "ui/annotation_text_edit.h"
@@ -102,6 +103,34 @@ class StartupSmokeTest final : public QObject
     Q_OBJECT
   private slots:
     void initTestCase() { qApp->setQuitOnLastWindowClosed(false); }
+    void trayIconUsesEmbeddedPlatformAssets()
+    {
+        const auto icon = waibusnap::createTrayIcon();
+        QVERIFY(!icon.isNull());
+        constexpr int extent = WAIBUSNAP_TEST_TRAY_SIZE;
+        constexpr bool mask = WAIBUSNAP_TEST_TRAY_MASK != 0;
+        QCOMPARE(icon.isMask(), mask);
+        const QSize logicalSize(extent, extent);
+        const auto sizes = icon.availableSizes();
+        QVERIFY(sizes.contains(logicalSize));
+        QVERIFY(sizes.contains(logicalSize * 2));
+        for (const auto& size : sizes)
+            QVERIFY(size == logicalSize || size == logicalSize * 2);
+        const QString basename = mask ? QStringLiteral(":/icons/tray/waibusnap-tray-mask")
+                                      : QStringLiteral(":/icons/tray/waibusnap-tray-color");
+        for (int scale : {1, 2})
+        {
+            const QString suffix = scale == 1 ? QStringLiteral(".png") : QStringLiteral("@2x.png");
+            const QImage resource(basename + suffix);
+            QVERIFY(!resource.isNull());
+            QVERIFY(resource.hasAlphaChannel());
+            QCOMPARE(resource.size(), logicalSize * scale);
+            const auto pixmap = icon.pixmap(logicalSize, qreal(scale));
+            QVERIFY(!pixmap.isNull());
+            QCOMPARE(pixmap.size(), logicalSize * scale);
+            QCOMPARE(pixmap.devicePixelRatio(), qreal(scale));
+        }
+    }
     void pinCommitsTextAndEndsWithEleven()
     {
         using namespace waibusnap;
@@ -1887,6 +1916,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY2(!executable.isEmpty(), "请通过 CTest 设置应用路径后运行。");
         QProcess process;
         process.setProgram(executable);
+        process.setWorkingDirectory(temporary.path());
         process.setArguments({QStringLiteral("--smoke-test"), QStringLiteral("--settings-file"),
                               temporary.filePath(QStringLiteral("settings.ini"))});
         process.setProcessEnvironment(childProcessEnvironment());

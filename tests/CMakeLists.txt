@@ -1,5 +1,12 @@
 qt_add_executable(startup_smoke integration/startup_smoke.cpp)
 target_link_libraries(startup_smoke PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+if(APPLE)
+    target_compile_definitions(startup_smoke PRIVATE
+        WAIBUSNAP_TEST_TRAY_SIZE=18 WAIBUSNAP_TEST_TRAY_MASK=1)
+elseif(WIN32)
+    target_compile_definitions(startup_smoke PRIVATE
+        WAIBUSNAP_TEST_TRAY_SIZE=16 WAIBUSNAP_TEST_TRAY_MASK=0)
+endif()
 add_dependencies(startup_smoke WaibuSnap)
 # 测试保持控制台子系统：Windows 上 GUI 子系统的 Qt Test 输出不会进入 ctest 捕获。
 set_target_properties(startup_smoke PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -61,6 +68,7 @@ set_target_properties(sticker_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME sticker_geometry COMMAND sticker_geometry_test)
 
 add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
+    trayIconUsesEmbeddedPlatformAssets
     stickerWindowsScaleDragAndCloseIndependently stickerOutputsKeepOriginalPixelsAndRetryFailures
     stickerEditingEntrancesGesturesAndCompactTools stickerTextImeEscapeAndCommitBoundaries
     stickerHistoryStylesOutputAndDirtyState stickerPendingTextCommitsBeforeOutputsAndNewDrawing

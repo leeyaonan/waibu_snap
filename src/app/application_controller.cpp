@@ -307,7 +307,8 @@ void ApplicationController::startSmokeTest()
         0, this,
         [this]
         {
-            if (application_.quitOnLastWindowClosed() || menu_.actions().size() != 3 ||
+            if (tray_.icon().isNull() || tray_.icon().availableSizes().isEmpty() ||
+                application_.quitOnLastWindowClosed() || menu_.actions().size() != 3 ||
                 menu_.actions().at(1)->text() != QStringLiteral("设置…") ||
                 !QApplication::topLevelWidgets().contains(&menu_))
             {
