@@ -94,3 +94,11 @@ codesign --verify --verbose=2 "$app"
 codesign -d -r- "$app"
 ```
 
+## 本机接入验证（2026-10-08）
+
+- macOS / arm64、Qt 6.11.2 Release 构建、11 项 CTest、clang-format 18.1.8 通过。
+- bundle Resources 内的 ICNS 与入库文件逐字节一致，plist 的 `CFBundleIconFile` 为 `waibusnap.icns`，`LSUIElement` 保持 true。签名验证通过，仍为 WaibuSnap Dev 与原 bundle id / 证书叶 requirement。
+- ICNS 往返展开具备全部十个 iconset 文件，1024 档解码像素与确认主图完全一致；ICO 七个目录项均含与目录尺寸一致的 PNG 载荷。
+- 访达「WaibuSnap.app 简介」的顶部图标与展开预览已通过界面目测，显示确认的 01 构图；未移动应用或重启访达。
+- 通过 `open -W -n` 启动独立受控进程，临时 INI / JSONL 隔离；两条注入均码 2、冷 / 热顺序正确、冻结帧 3024×1964、选区尺寸 0、可见代理与交互终点非零。原有普通实例保持运行；未修改屏幕录制授权或测量协议。首轮鼠标所在外显捕获为 1920×1080，两条同样码 2；内置屏补验满足本轮指定帧尺寸。
+- Windows 11 实机图标显示仍待核对；双端 CI 的最终状态见本次 PR。原始受控日志与一次性工具仅保留本机临时目录，不入库。
