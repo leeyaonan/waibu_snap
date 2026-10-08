@@ -1,4 +1,4 @@
-# 应用图标资源
+# 应用与菜单栏 / 托盘图标资源
 
 最终图标为用户确认的候选 01「正面按快门」暖底主图。这里只做等比例缩放与容器格式转换，主图原样入库，不重新绘制、配色、裁剪或添加平台底衬。
 
@@ -8,6 +8,10 @@
 | `waibusnap.icns` | macOS bundle 图标；iconset 含 16 / 32 / 128 / 256 / 512 pt 及全部 @2x 档位，最大 1024 px |
 | `waibusnap.ico` | Windows 可执行文件图标；16 / 24 / 32 / 48 / 64 / 128 / 256 px，全部为无损 PNG 载荷（包括 256 px） |
 | `waibusnap.rc` | Windows RC 图标声明，文件名相对本目录；仅在 WIN32 构建中加入应用目标 |
+| `tray/waibusnap-tray-mask.png` | macOS 菜单栏黑色模板，18×18 px，纯黑 RGB + alpha |
+| `tray/waibusnap-tray-mask@2x.png` | 同一确认稿的 Retina 模板，36×36 px，18 pt @2x |
+| `tray/waibusnap-tray-color.png` | Windows 托盘彩色版，16×16 px，透明底 |
+| `tray/waibusnap-tray-color@2x.png` | 同一确认稿的彩色版，32×32 px，16 pt @2x |
 
 基准主图 SHA-256：
 
@@ -15,7 +19,26 @@
 f867192750400ac745bbe6a99c8910c50f02eddb33a4183f25f45d7294b78bf0
 ```
 
-macOS 的 `CFBundleIconFile` 指向 bundle Resources 内的 `waibusnap.icns`。应用保持 `LSUIElement`：图标用于访达和信息窗，Dock 不显示。托盘 / 菜单栏仍使用代码绘制的简化图形，另行设计。Windows 图标进入 EXE 的资源段；Windows 11 实机显示仍须核对，CI 的 MSVC 资源编译不能替代实机验收。
+macOS 的 `CFBundleIconFile` 指向 bundle Resources 内的 `waibusnap.icns`。应用保持 `LSUIElement`：图标用于访达和信息窗，Dock 不显示。Windows 应用图标进入 EXE 的资源段；Windows 11 实机显示仍须核对，CI 的 MSVC 资源编译不能替代实机验收。
+
+## 菜单栏 / 托盘确认稿与再生成
+
+用户于 2026-10-08 明确选择托盘候选 03「猫头＋取景框」。四个规格化 PNG 从该候选的 macOS 18 / 36px、Windows 16 / 32px 导出文件逐字节复制，仅改为工程文件名；本轮没有重绘、重新配色或重采样。App 图标的候选 01 主图、ICNS、ICO 与 RC 保持原样。
+
+确认稿 SHA-256：
+
+```text
+f9a99b93a1d4eef6f64464e83fee70aa55950a8e2118813438a1a12fe657fac1  tray/waibusnap-tray-color.png
+6c2ecc805dc07ca5210ba84431b9e548d15e8aac13fe94da703579f2a50d54e8  tray/waibusnap-tray-color@2x.png
+3ca7ac13d5271fb69f622f25d6de20d60bd25340a04adbf9e453dab1be0b38a5  tray/waibusnap-tray-mask.png
+0d80588f86c9849307349c83affc89c0a310d4d364193763c6b430058d92d46c  tray/waibusnap-tray-mask@2x.png
+```
+
+这四个 PNG 是托盘资源的入库基准；恢复资源时直接复制对应档位的确认稿并核对上述摘要，不从 App 主图、模拟条或缩略预览重新提取。本轮档位齐全，无需补图。以后个别档位缺失时，仅从同一确认候选的黑 / 彩放大母版按原比例导出相应方形 PNG，保存 alpha；不描摹、不重新量化颜色、不串行缩放，也不使用 AI 重新生成。现有齐全档位不覆盖。
+
+`src/platform/CMakeLists.txt` 使用 `qt_add_resources` 将四个 PNG 嵌入平台库，资源路径为 `:/icons/tray/<文件名>`，静态库的资源对象随链接进入应用与测试，不依赖工作目录或开发机路径。macOS 的 `createTrayIcon()` 返回黑版并设置 `QIcon::setIsMask(true)`；Windows 返回彩色版、保持非模板。两端均显式加入 @2x 文件，使初始屏幕为 1x 时也保留完整档位。机制依据 [Qt 的资源嵌入](https://doc.qt.io/qt-6/qt-add-resources.html) 与 [Qt 6.11.2 的 QIcon 高 DPI 加载](https://github.com/qt/qtbase/blob/v6.11.2/src/gui/image/qicon.cpp)。
+
+自动测试验证资源能解码、平台尺寸、模板标记与 1x / 2x 输出的像素尺寸和 DPR；实际菜单栏浅色 / 深色 / 打开菜单高亮、Retina 清晰度与 Windows 11 托盘显示按 [人工核对清单](../../tests/README.md#人工核对清单待用户真机操作) 验收。
 
 ## 再生成（一次性 macOS 本地工具）
 
