@@ -27,12 +27,16 @@ set_target_properties(WaibuSnap PROPERTIES
 )
 
 if(APPLE)
+    set(waibusnap_icon "${PROJECT_SOURCE_DIR}/assets/icons/waibusnap.icns")
+    set_source_files_properties("${waibusnap_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(WaibuSnap PRIVATE "${waibusnap_icon}")
     # 仅为开发占位，可在配置时覆盖；正式 bundle id 仍待用户确认。
     set(WAIBUSNAP_BUNDLE_ID "local.waibusnap.dev" CACHE STRING "开发用 bundle id")
     set_target_properties(WaibuSnap PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/Info.plist.in"
         MACOSX_BUNDLE_GUI_IDENTIFIER "${WAIBUSNAP_BUNDLE_ID}"
         MACOSX_BUNDLE_BUNDLE_NAME "WaibuSnap"
+        MACOSX_BUNDLE_ICON_FILE "waibusnap.icns"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     )
