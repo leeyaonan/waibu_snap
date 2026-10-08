@@ -1,11 +1,11 @@
 #include "app/application_controller.h"
 #include "core/window_snapping.h"
+#include "interfaces/tray_icon.h"
 #include "session/monotonic_clock.h"
 #include "ui/settings_dialog.h"
 #include <QAction>
 #include <QDebug>
 #include <QMessageBox>
-#include <QPainter>
 #include <QScopedValueRollback>
 #include <QScreen>
 #include <QTimer>
@@ -32,14 +32,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     settingsAction_ =
         menu_.addAction(QStringLiteral("设置…"), this, &ApplicationController::openSettings);
     menu_.addAction(QStringLiteral("退出"), this, &ApplicationController::quit);
-    QPixmap icon(32, 32);
-    icon.fill(Qt::transparent);
-    QPainter painter(&icon);
-    painter.setPen(QPen(QColor(245, 130, 35), 3));
-    painter.drawRoundedRect(QRectF(5, 8, 22, 18), 3, 3);
-    painter.drawEllipse(QPointF(16, 17), 5, 5);
-    painter.end();
-    tray_.setIcon(QIcon(icon));
+    tray_.setIcon(createTrayIcon());
     tray_.setContextMenu(&menu_);
     // 热插拔或屏幕参数变更只响应通知，立即取消当前会话。
     connect(&application_, &QGuiApplication::screenRemoved, this,
