@@ -42,6 +42,12 @@ if(APPLE)
     )
 endif()
 
+if(WIN32)
+    enable_language(RC)
+    target_sources(WaibuSnap PRIVATE "${PROJECT_SOURCE_DIR}/assets/icons/waibusnap.rc")
+    target_include_directories(WaibuSnap PRIVATE "${PROJECT_SOURCE_DIR}/assets/icons")
+endif()
+
 if(BUILD_TESTING)
     # 只在测试构建中提供自动关闭入口；发布构建关闭 BUILD_TESTING。
     target_compile_definitions(WaibuSnap PRIVATE WAIBUSNAP_ENABLE_SMOKE_TEST)
