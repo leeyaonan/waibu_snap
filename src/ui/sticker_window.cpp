@@ -5,8 +5,6 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QComboBox>
-#include <QFileDialog>
-#include <QFileInfo>
 #include <QFocusEvent>
 #include <QGridLayout>
 #include <QGuiApplication>
@@ -23,7 +21,6 @@
 #include <QScopedValueRollback>
 #include <QScreen>
 #include <QShortcut>
-#include <QStandardPaths>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWindow>
@@ -51,12 +48,6 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
         image_.setDevicePixelRatio(1);
     if (!actions_.copyImage)
         actions_.copyImage = copyImageToClipboard;
-    if (!actions_.chooseSavePath)
-        actions_.chooseSavePath = [](QWidget* parent, const QString& suggestion)
-        {
-            return QFileDialog::getSaveFileName(parent, QStringLiteral("保存贴图为 PNG"),
-                                                suggestion, QStringLiteral("PNG 图片 (*.png)"));
-        };
     if (!actions_.confirmClose)
         actions_.confirmClose = [](QWidget* parent)
         {
@@ -425,6 +416,7 @@ void StickerWindow::showStatus(const QString& text, bool temporary)
 {
     statusTimeout_.stop();
     status_->setText(text);
+    status_->setToolTip(text);
     setToolTip(text);
     status_->show();
     positionControls();
@@ -451,60 +443,53 @@ bool StickerWindow::saveImage()
     if (closed_ || saveDialogOpen_ || draft_)
         return false;
     finishText(true);
-    QString directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    if (directory.isEmpty())
-        directory = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString suggestion = suggestedPngPath(directory);
     saveDialogOpen_ = true;
     dragging_ = false;
     controls_->setEnabled(false);
     moreButton_->setEnabled(false);
     updateEditToolbar();
     QPointer<StickerWindow> self(this);
-    const auto choose = actions_.chooseSavePath;
-    QString path;
-    while (true)
-    {
-        const QString chosen = choose(this, suggestion);
-        if (!self)
-            return false;
-        if (closed_ || chosen.isEmpty())
-            break;
-        path = pngFilePath(chosen);
-        if (path == chosen || !QFileInfo::exists(path))
-            break;
-        suggestion = path;
-        path.clear();
-        showStatus(QStringLiteral("补全后缀后文件已存在，请在保存面板确认覆盖。"), false);
-    }
+    const ImageSaveActions actions = actions_;
+    const auto target = chooseImageSaveTarget(
+        this, actions, [self] { return self && !self->closed_; },
+        [self](const QString& text)
+        {
+            if (self)
+                self->showStatus(text, false);
+        });
+    if (!self)
+        return false;
     saveDialogOpen_ = false;
     if (closed_)
         return false;
     controls_->setEnabled(!quitInteraction_);
     moreButton_->setEnabled(!quitInteraction_);
     updateEditToolbar();
-    if (path.isEmpty())
+    if (target.path.isEmpty())
     {
         showStatus(QStringLiteral("保存已取消，贴图仍保留，可再次保存。"), true);
         return false;
     }
-    return exportToPath(path);
+    return finishSave(saveImageToTarget(renderedImage(), target));
 }
 bool StickerWindow::exportToPath(const QString& path)
 {
     if (closed_ || saveDialogOpen_ || draft_ || path.isEmpty())
         return false;
     finishText(true);
-    const auto result = exportPngToPath(renderedImage(), path);
-    if (!result.success)
+    return finishSave(exportImageToPath(renderedImage(), path));
+}
+bool StickerWindow::finishSave(const ImageFileResult& output)
+{
+    if (!output.result.success)
     {
-        showStatus(
-            QStringLiteral("保存失败：%1 点击「保存」选择路径并重试。").arg(result.explanation),
-            false);
+        showStatus(QStringLiteral("保存失败：%1 点击「保存」选择路径并重试。")
+                       .arg(output.result.explanation),
+                   false);
         return false;
     }
     saved_ = true;
-    showStatus(QStringLiteral("已保存：%1").arg(QFileInfo(pngFilePath(path)).fileName()), true);
+    showStatus(QStringLiteral("已保存：%1").arg(output.path), true);
     return true;
 }
 void StickerWindow::forceClose()

@@ -12,6 +12,129 @@ class ImageOutputTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void jpegRoundTripSuffixAndAnnotations_data()
+    {
+        QTest::addColumn<QString>("name");
+        QTest::newRow("jpg") << QStringLiteral("图片.jpg");
+        QTest::newRow("jpeg") << QStringLiteral("图片.jpeg");
+        QTest::newRow("uppercase") << QStringLiteral("图片.JPEG");
+        QTest::newRow("bare") << QStringLiteral("图片");
+    }
+    void jpegRoundTripSuffixAndAnnotations()
+    {
+        using namespace waibusnap;
+        QFETCH(QString, name);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString directory = temporary.filePath(QStringLiteral("中文 空格"));
+        QVERIFY(QDir().mkpath(directory));
+        QImage source(160, 120, QImage::Format_RGB32);
+        source.fill(Qt::white);
+        source.setColorSpace(QColorSpace::SRgb);
+        source.setDevicePixelRatio(2);
+        Annotation cover;
+        cover.type = AnnotationType::Cover;
+        cover.first = {30, 30};
+        cover.last = {100, 80};
+        cover.style.color = Qt::red;
+        const QImage rendered = renderAnnotatedSelection(source, {cover}, source.rect());
+        const QString path = QDir(directory).filePath(name);
+        const auto result = exportJpegToPath(rendered, path);
+        QVERIFY2(result.success, qPrintable(result.explanation));
+        QImageReader reader(imageFilePath(path, ImageFormat::Jpeg));
+        QCOMPARE(reader.format(), QByteArray("jpeg"));
+        QCOMPARE(reader.size(), source.size());
+        const QImage loaded = reader.read();
+        QVERIFY(!loaded.isNull());
+        QCOMPARE(loaded.devicePixelRatio(), qreal(1));
+        QVERIFY(!loaded.hasAlphaChannel());
+        QCOMPARE(loaded.colorSpace(), QColorSpace(QColorSpace::SRgb));
+        int redPixels = 0;
+        for (int y = 35; y < 75; ++y)
+            for (int x = 35; x < 95; ++x)
+            {
+                const auto color = loaded.pixelColor(x, y);
+                if (color.red() > 220 && color.green() < 30 && color.blue() < 30)
+                    ++redPixels;
+            }
+        QVERIFY(redPixels > 2200);
+        QVERIFY(loaded.pixelColor(10, 10).red() > 245);
+        QVERIFY(loaded.pixelColor(10, 10).green() > 245);
+        QCOMPARE(source.devicePixelRatio(), qreal(2));
+        QCOMPARE(imageFilePath(QStringLiteral("图.jpg"), ImageFormat::Jpeg),
+                 QStringLiteral("图.jpg"));
+        QCOMPARE(imageFilePath(QStringLiteral("图.jpeg"), ImageFormat::Jpeg),
+                 QStringLiteral("图.jpeg"));
+        QCOMPARE(imageFilePath(QStringLiteral("图"), ImageFormat::Jpeg), QStringLiteral("图.jpg"));
+        QVERIFY(imageFilePath({}, ImageFormat::Jpeg).isEmpty());
+    }
+    void jpegAtomicFailuresPreserveExistingFile()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QImage image(8, 6, QImage::Format_RGB32);
+        image.fill(Qt::blue);
+        const QString missing = temporary.filePath(QStringLiteral("不存在/图.jpg"));
+        const auto absent = exportJpegToPath(image, missing);
+        QVERIFY(!absent.success);
+        QVERIFY(!absent.explanation.isEmpty());
+        QVERIFY(!QFileInfo::exists(missing));
+        const QString path = temporary.filePath(QStringLiteral("只读.jpeg"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray original("原文件内容");
+        QCOMPARE(file.write(original), qint64(original.size()));
+        file.close();
+        QVERIFY(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::ReadUser |
+                                                QFileDevice::ReadGroup | QFileDevice::ReadOther));
+        const auto denied = exportJpegToPath(image, path);
+        const bool restored =
+            QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                            QFileDevice::ReadUser | QFileDevice::WriteUser);
+        QVERIFY(restored);
+        QVERIFY(!denied.success);
+        QVERIFY(!denied.explanation.isEmpty());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), original);
+        file.close();
+        QVERIFY(!exportJpegToPath({}, path).success);
+        QVERIFY(!exportJpegToPath(image, {}).success);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), original);
+        QCOMPARE(QDir(temporary.path()).entryList(QDir::Files | QDir::Hidden).size(), 1);
+    }
+    void newImageFilesNeverOverwriteAndCleanFailures()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QImage image(40, 30, QImage::Format_RGB32);
+        image.fill(Qt::green);
+        const QDateTime timestamp(QDate(2026, 10, 9), QTime(12, 0));
+        for (const auto format : {ImageFormat::Png, ImageFormat::Jpeg})
+        {
+            const QString originalPath = suggestedImagePath(temporary.path(), format, timestamp);
+            QFile file(originalPath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write("original"), qint64(8));
+            file.close();
+            const auto first = exportImageToNewPath(image, temporary.path(), format, timestamp);
+            const auto second = exportImageToNewPath(image, temporary.path(), format, timestamp);
+            QVERIFY2(first.result.success, qPrintable(first.result.explanation));
+            QVERIFY2(second.result.success, qPrintable(second.result.explanation));
+            QVERIFY(first.path != originalPath && second.path != first.path);
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            QCOMPARE(file.readAll(), QByteArray("original"));
+            file.close();
+            QCOMPARE(QImage(first.path).size(), image.size());
+            QVERIFY(!exportImageToNewPath({}, temporary.path(), format, timestamp).result.success);
+            QVERIFY(!exportImageToNewPath(image, temporary.filePath(QStringLiteral("missing")),
+                                          format, timestamp)
+                         .result.success);
+        }
+        QCOMPARE(QDir(temporary.path()).entryList(QDir::Files | QDir::Hidden).size(), 6);
+    }
     void mosaicBlockFormulaAndAreaAverage()
     {
         using namespace waibusnap;

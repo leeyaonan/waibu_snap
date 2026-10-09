@@ -16,9 +16,11 @@
 #include <QEnterEvent>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QInputMethodEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QProcess>
@@ -28,6 +30,7 @@
 #include <QSignalSpy>
 #include <QString>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QTest>
 #include <QWheelEvent>
 #include <QWindow>
@@ -2323,6 +2326,508 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(finished.count(), 1);
         QCOMPARE(finished.first().at(1).toInt(), 10);
         QVERIFY(overlay.annotations().isEmpty());
+    }
+    void quickSaveDirectoryCollisionAndFormat_data()
+    {
+        QTest::addColumn<bool>("sticker");
+        QTest::addColumn<bool>("jpeg");
+        QTest::newRow("overlay-png") << false << false;
+        QTest::newRow("overlay-jpeg") << false << true;
+        QTest::newRow("sticker-png") << true << false;
+        QTest::newRow("sticker-jpeg") << true << true;
+    }
+    void quickSaveDirectoryCollisionAndFormat()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, sticker);
+        QFETCH(bool, jpeg);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString directory = temporary.filePath(QStringLiteral("中文 快速保存"));
+        QVERIFY(QDir().mkpath(directory));
+        const auto format = jpeg ? ImageFormat::Jpeg : ImageFormat::Png;
+        const QDateTime timestamp(QDate(2026, 10, 9), QTime(12, 0, 0, 123));
+        const QString originalPath = suggestedImagePath(directory, format, timestamp);
+        QFile original(originalPath);
+        QVERIFY(original.open(QIODevice::WriteOnly));
+        QCOMPARE(original.write("original"), qint64(8));
+        original.close();
+        int panels = 0, reads = 0;
+        ImageSaveActions saveActions;
+        saveActions.loadSavePreferences = [&]
+        {
+            ++reads;
+            return SavePreferences{directory, format};
+        };
+        saveActions.saveTimestamp = [=] { return timestamp; };
+        saveActions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            ++panels;
+            return QString();
+        };
+        QImage expected;
+        QString statusPath;
+        if (sticker)
+        {
+            StickerActions actions;
+            static_cast<ImageSaveActions&>(actions) = saveActions;
+            StickerManager manager(nullptr, actions);
+            QVERIFY(manager.create(sampleFrame().pixels, {30, 40}).success);
+            const auto window = manager.windows().first();
+            expected = window->renderedImage();
+            QVERIFY(window->saveImage());
+            QVERIFY(window->saveImage());
+            QVERIFY(window->isSaved());
+            QCOMPARE(manager.count(), 1);
+            auto* status = window->findChild<QLabel*>(QStringLiteral("stickerStatus"));
+            QVERIFY(status && status->isVisible());
+            statusPath = QDir(directory).filePath(
+                QFileInfo(originalPath).completeBaseName() +
+                (jpeg ? QStringLiteral("_3.jpg") : QStringLiteral("_3.png")));
+            QCOMPARE(status->text(), QStringLiteral("已保存：%1").arg(statusPath));
+            QCOMPARE(status->toolTip(), status->text());
+        }
+        else
+        {
+            OverlayActions actions;
+            static_cast<ImageSaveActions&>(actions) = saveActions;
+            SelectionOverlay overlay(sampleFrame(), actions);
+            QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+            overlay.show();
+            drag(overlay, {20, 10}, {80, 60});
+            expected = renderAnnotatedSelection(sampleFrame().pixels, {}, overlay.selection());
+            QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+            QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+            QVERIFY(overlay.isSelectionSaved());
+            QVERIFY(overlay.isVisible());
+            QCOMPARE(finished.count(), 0);
+            auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
+            QVERIFY(status && status->isVisible());
+            statusPath = QDir(directory).filePath(
+                QFileInfo(originalPath).completeBaseName() +
+                (jpeg ? QStringLiteral("_3.jpg") : QStringLiteral("_3.png")));
+            QCOMPARE(status->text(), QStringLiteral("已保存：%1").arg(statusPath));
+            QCOMPARE(status->toolTip(), status->text());
+        }
+        QCOMPARE(reads, 2);
+        QCOMPARE(panels, 0);
+        QCOMPARE(QDir(directory).entryList(QDir::Files | QDir::Hidden).size(), 3);
+        QVERIFY(original.open(QIODevice::ReadOnly));
+        QCOMPARE(original.readAll(), QByteArray("original"));
+        const QStringList files = QDir(directory).entryList(QDir::Files);
+        for (const auto& name : files)
+        {
+            const QString path = QDir(directory).filePath(name);
+            if (path == originalPath)
+                continue;
+            QImageReader reader(path);
+            QCOMPARE(reader.format(), jpeg ? QByteArray("jpeg") : QByteArray("png"));
+            QCOMPARE(reader.size(), expected.size());
+            const QImage loaded = reader.read();
+            QCOMPARE(loaded.devicePixelRatio(), qreal(1));
+            if (!jpeg)
+                QCOMPARE(loaded, expected.convertToFormat(loaded.format()));
+        }
+    }
+    void quickDirectoryAvailabilityAndCancelKeepsImage_data()
+    {
+        QTest::addColumn<bool>("sticker");
+        QTest::addColumn<int>("kind");
+        for (bool sticker : {false, true})
+            for (int kind : {0, 1, 2, 3, 4})
+                QTest::newRow(qPrintable(
+                    QStringLiteral("%1-%2").arg(sticker ? "sticker" : "overlay").arg(kind)))
+                    << sticker << kind;
+    }
+    void quickDirectoryAvailabilityAndCancelKeepsImage()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, sticker);
+        QFETCH(int, kind);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QString directory = temporary.filePath(QStringLiteral("失效目录"));
+        if (kind == 1)
+        {
+            QFile file(directory);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("original");
+        }
+        bool directlyWritable = false;
+        if (kind == 2 || kind == 4)
+        {
+            QVERIFY(QDir().mkpath(directory));
+            if (kind == 2)
+                QVERIFY(QFile::setPermissions(directory,
+                                              QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+            // Windows 的目录只读属性不限制创建文件，不能冒充拒绝写入的夹具。
+            // 用真实文件探针建立预期，避免照抄保存决策的 QFileInfo 判断。
+            QTemporaryFile probe(QDir(directory).filePath(QStringLiteral("权限探针_XXXXXX")));
+            directlyWritable = probe.open();
+            if (kind == 4)
+                QVERIFY(directlyWritable);
+        }
+        if (kind == 3)
+            directory.clear();
+        int panels = 0;
+        ImageSaveActions saveActions;
+        saveActions.loadSavePreferences = [=]
+        { return SavePreferences{directory, ImageFormat::Jpeg}; };
+        saveActions.chooseSavePath = [&](QWidget*, const QString& suggestion)
+        {
+            ++panels;
+            if (!suggestion.endsWith(QStringLiteral(".jpg")))
+                return temporary.filePath(QStringLiteral("错误.png"));
+            return QString();
+        };
+        if (sticker)
+        {
+            StickerActions actions;
+            static_cast<ImageSaveActions&>(actions) = saveActions;
+            StickerManager manager(nullptr, actions);
+            QVERIFY(manager.create(sampleFrame().pixels, {30, 40}).success);
+            const auto window = manager.windows().first();
+            const QImage image = window->image();
+            QCOMPARE(window->saveImage(), directlyWritable);
+            QCOMPARE(window->isSaved(), directlyWritable);
+            QVERIFY(window->isVisible());
+            QCOMPARE(window->image(), image);
+            QCOMPARE(manager.count(), 1);
+        }
+        else
+        {
+            OverlayActions actions;
+            static_cast<ImageSaveActions&>(actions) = saveActions;
+            SelectionOverlay overlay(sampleFrame(), actions);
+            QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+            overlay.show();
+            drag(overlay, {20, 10}, {80, 60});
+            const QRect selection = overlay.selection();
+            QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+            QCOMPARE(overlay.isSelectionSaved(), directlyWritable);
+            QVERIFY(overlay.isVisible());
+            QCOMPARE(overlay.selection(), selection);
+            QCOMPARE(finished.count(), 0);
+        }
+        if (kind == 2)
+            QVERIFY(QFile::setPermissions(directory, QFileDevice::ReadOwner |
+                                                         QFileDevice::WriteOwner |
+                                                         QFileDevice::ExeOwner));
+        QCOMPARE(panels, directlyWritable ? 0 : 1);
+        if (directlyWritable)
+        {
+            const QStringList files = QDir(directory).entryList(QDir::Files | QDir::Hidden);
+            QCOMPARE(files.size(), 1);
+            QImageReader reader(QDir(directory).filePath(files.first()));
+            QCOMPARE(reader.format(), QByteArray("jpeg"));
+            QCOMPARE(reader.size(), sticker ? sampleFrame().pixels.size() : QSize(120, 100));
+        }
+        QVERIFY(!QFileInfo::exists(temporary.filePath(QStringLiteral("错误.png"))));
+    }
+    void quitSaveAllUsesQuickDirectoryWithoutCollisions_data()
+    {
+        QTest::addColumn<bool>("jpeg");
+        QTest::newRow("png") << false;
+        QTest::newRow("jpeg") << true;
+    }
+    void quitSaveAllUsesQuickDirectoryWithoutCollisions()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, jpeg);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto format = jpeg ? ImageFormat::Jpeg : ImageFormat::Png;
+        const QDateTime timestamp(QDate(2026, 10, 9), QTime(12, 0));
+        int panels = 0, reads = 0, confirms = 0;
+        StickerActions actions;
+        actions.loadSavePreferences = [&]
+        {
+            ++reads;
+            return SavePreferences{temporary.path(), format};
+        };
+        actions.saveTimestamp = [=] { return timestamp; };
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            ++panels;
+            return QString();
+        };
+        actions.confirmQuit = [&](int count)
+        {
+            ++confirms;
+            if (count != 3)
+                return StickerQuitDecision::Cancel;
+            return StickerQuitDecision::SaveAll;
+        };
+        StickerManager manager(nullptr, actions);
+        QImage image(120, 80, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        for (int i = 0; i < 3; ++i)
+            QVERIFY(manager.create(image, {30 + i * 20, 40}).success);
+        manager.hideAll();
+        QVERIFY(manager.resolveUnsavedForQuit());
+        QCOMPARE(panels, 0);
+        QCOMPARE(reads, 3);
+        QCOMPARE(confirms, 1);
+        const QStringList files = QDir(temporary.path()).entryList(QDir::Files | QDir::Hidden);
+        QCOMPARE(files.size(), 3);
+        for (const auto& name : files)
+        {
+            QImageReader reader(temporary.filePath(name));
+            QCOMPARE(reader.format(), jpeg ? QByteArray("jpeg") : QByteArray("png"));
+            QCOMPARE(reader.size(), image.size());
+        }
+        for (const auto& window : manager.windows())
+            QVERIFY(window->isSaved());
+    }
+    void savePanelFormatsNormalizeSuffixAndDispatch()
+    {
+        using namespace waibusnap;
+        QCOMPARE(savePanelFilePath(QStringLiteral("图.jpg"), ImageFormat::Png),
+                 QStringLiteral("图.png"));
+        QCOMPARE(savePanelFilePath(QStringLiteral("图.png"), ImageFormat::Jpeg),
+                 QStringLiteral("图.jpg"));
+        QCOMPARE(savePanelFilePath(QStringLiteral("图.jpeg"), ImageFormat::Jpeg),
+                 QStringLiteral("图.jpeg"));
+        QCOMPARE(savePanelFilePath(QStringLiteral("图.JPG"), ImageFormat::Jpeg),
+                 QStringLiteral("图.JPG"));
+        QCOMPARE(savePanelFilePath(QStringLiteral("图"), ImageFormat::Jpeg),
+                 QStringLiteral("图.jpg"));
+        QCOMPARE(savePanelFilePath(QStringLiteral("图.txt"), ImageFormat::Png),
+                 QStringLiteral("图.png"));
+        QVERIFY(savePanelFilePath({}, ImageFormat::Jpeg).isEmpty());
+        QVERIFY(imageSaveFilters().contains(QStringLiteral("有损")));
+        QVERIFY(imageSaveFilters().contains(QStringLiteral("*.jpg *.jpeg")));
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QString path = temporary.filePath(QStringLiteral("选择.jpeg"));
+        int panels = 0;
+        OverlayActions actions;
+        actions.chooseSavePath = [&](QWidget*, const QString& suggestion)
+        {
+            ++panels;
+            if (panels == 1 && !suggestion.endsWith(QStringLiteral(".png")))
+                return QString();
+            return path;
+        };
+        SelectionOverlay overlay(sampleFrame(), actions);
+        overlay.show();
+        drag(overlay, {20, 10}, {80, 60});
+        QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+        QImageReader jpeg(path);
+        QCOMPARE(jpeg.format(), QByteArray("jpeg"));
+        QCOMPARE(jpeg.size(), QSize(120, 100));
+        QVERIFY(!QFileInfo::exists(path + QStringLiteral(".png")));
+        path = temporary.filePath(QStringLiteral("其他.txt"));
+        QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+        QImageReader png(path + QStringLiteral(".png"));
+        QCOMPARE(png.format(), QByteArray("png"));
+        QCOMPARE(panels, 2);
+    }
+    void quickSaveWriteFailureDoesNotSwitchToPanel()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString directory = temporary.filePath(QStringLiteral("保存中失效"));
+        QVERIFY(QDir().mkpath(directory));
+        int panels = 0;
+        ImageSaveActions actions;
+        actions.loadSavePreferences = [=] { return SavePreferences{directory, ImageFormat::Jpeg}; };
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            ++panels;
+            return QString();
+        };
+        const auto target =
+            chooseImageSaveTarget(nullptr, actions, [] { return true; }, [](const QString&) {});
+        QCOMPARE(target.quickDirectory, directory);
+        QVERIFY(QDir().rmdir(directory));
+        const QImage image = sampleFrame().pixels;
+        const auto output = saveImageToTarget(image, target);
+        QVERIFY(!output.result.success);
+        QVERIFY(!output.result.explanation.isEmpty());
+        QVERIFY(output.path.isEmpty());
+        QCOMPARE(image, sampleFrame().pixels);
+        QCOMPARE(panels, 0);
+        QVERIFY(QDir(temporary.path()).entryList(QDir::Files | QDir::Hidden).isEmpty());
+    }
+    void saveSettingsWriteFailureKeepsDialogAndCanRetry()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        int writes = 0;
+        AppSettings settings(temporary.filePath(QStringLiteral("settings.ini")));
+        SaveSettingsActions actions;
+        actions.preferences = {temporary.path(), ImageFormat::Jpeg};
+        actions.savePreferences = [&](const SavePreferences& preferences)
+        {
+            ++writes;
+            return writes == 1 ? QStringLiteral("测试设置写入失败")
+                               : settings.saveSavePreferences(preferences);
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions);
+        dialog.show();
+        auto* save = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
+        QTest::mouseClick(save, Qt::LeftButton);
+        QVERIFY(dialog.isVisible());
+        QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"))
+                    ->text()
+                    .contains(QStringLiteral("写入失败")));
+        QVERIFY(settings.loadSavePreferences().quickDirectory.isEmpty());
+        QTest::mouseClick(save, Qt::LeftButton);
+        QCOMPARE(writes, 2);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QCOMPARE(settings.loadSavePreferences().quickDirectory, temporary.path());
+        QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
+    }
+    void saveSettingsEditCancelAndDirectoryInjection_data()
+    {
+        QTest::addColumn<int>("decision");
+        QTest::newRow("save") << 0;
+        QTest::newRow("cancel") << 1;
+        QTest::newRow("escape") << 2;
+    }
+    void saveSettingsEditCancelAndDirectoryInjection()
+    {
+        using namespace waibusnap;
+        QFETCH(int, decision);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        AppSettings settings(temporary.filePath(QStringLiteral("settings.ini")));
+        int choices = 0, writes = 0, registrations = 0;
+        SaveSettingsActions actions;
+        actions.savePreferences = [&](const SavePreferences& preferences)
+        {
+            ++writes;
+            return settings.saveSavePreferences(preferences);
+        };
+        actions.chooseDirectory = [&](QWidget* parent, const QString& current)
+        {
+            ++choices;
+            if (!parent || !current.isEmpty())
+                return QString();
+            return choices == 1 ? QString() : temporary.path();
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(),
+            [&](const QKeySequence&)
+            {
+                ++registrations;
+                return QString();
+            },
+            {}, nullptr, actions);
+        dialog.show();
+        auto* directory = dialog.findChild<QLineEdit*>(QStringLiteral("quickDirectory"));
+        auto* format = dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"));
+        auto* notice = dialog.findChild<QLabel*>(QStringLiteral("jpegLossNotice"));
+        auto* choose = dialog.findChild<QPushButton*>(QStringLiteral("chooseDirectoryButton"));
+        QVERIFY(directory && format && notice && choose);
+        QVERIFY(directory->isReadOnly());
+        QVERIFY(directory->text().isEmpty());
+        QCOMPARE(format->currentText(), QStringLiteral("PNG"));
+        QVERIFY(!notice->isVisible());
+        QTest::mouseClick(choose, Qt::LeftButton);
+        QVERIFY(directory->text().isEmpty());
+        QTest::mouseClick(choose, Qt::LeftButton);
+        QCOMPARE(directory->text(), temporary.path());
+        QCOMPARE(directory->toolTip(), temporary.path());
+        format->setCurrentIndex(1);
+        QVERIFY(notice->isVisible());
+        QVERIFY(notice->text().contains(QStringLiteral("有损")));
+        if (decision == 0)
+            QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                              Qt::LeftButton);
+        else if (decision == 1)
+            QTest::mouseClick(
+                dialog.findChild<QPushButton*>(QStringLiteral("cancelSettingsButton")),
+                Qt::LeftButton);
+        else
+            QTest::keyClick(directory, Qt::Key_Escape);
+        QCOMPARE(choices, 2);
+        QCOMPARE(writes, decision == 0 ? 1 : 0);
+        QCOMPARE(registrations, 0);
+        QCOMPARE(dialog.result(), decision == 0 ? int(QDialog::Accepted) : int(QDialog::Rejected));
+        QCOMPARE(settings.loadSavePreferences().quickDirectory,
+                 decision == 0 ? temporary.path() : QString());
+        QCOMPARE(settings.loadSavePreferences().format,
+                 decision == 0 ? ImageFormat::Jpeg : ImageFormat::Png);
+    }
+    void controllerSavePreferencesApplyImmediatelyAndClearDirectory()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        RunOptions options;
+        options.settingsFile = temporary.filePath(QStringLiteral("settings.ini"));
+        const QString directory = temporary.filePath(QStringLiteral("快速目录"));
+        QVERIFY(QDir().mkpath(directory));
+        int panels = 0;
+        StickerActions actions;
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            ++panels;
+            return QString();
+        };
+        ApplicationController controller(*qApp, options, actions);
+        QVERIFY(controller.stickers().create(sampleFrame().pixels, {30, 40}).success);
+        const auto window = controller.stickers().windows().first();
+        QVERIFY(!window->saveImage());
+        QCOMPARE(panels, 1);
+        bool handled = false;
+        QTimer::singleShot(
+            0,
+            [&]
+            {
+                auto* dialog = qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                dialog->findChild<QLineEdit*>(QStringLiteral("quickDirectory"))->setText(directory);
+                dialog->findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
+                QTest::mouseClick(
+                    dialog->findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                    Qt::LeftButton);
+                handled = true;
+            });
+        controller.menu()->actions().at(1)->trigger();
+        QVERIFY(handled);
+        QVERIFY(window->saveImage());
+        QCOMPARE(panels, 1);
+        const auto files = QDir(directory).entryList(QDir::Files);
+        QCOMPARE(files.size(), 1);
+        QImageReader reader(QDir(directory).filePath(files.first()));
+        QCOMPARE(reader.format(), QByteArray("jpeg"));
+        QCOMPARE(reader.size(), sampleFrame().pixels.size());
+        handled = false;
+        QTimer::singleShot(
+            0,
+            [&]
+            {
+                auto* dialog = qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                QCOMPARE(dialog->findChild<QLineEdit*>(QStringLiteral("quickDirectory"))->text(),
+                         directory);
+                QTest::mouseClick(
+                    dialog->findChild<QPushButton*>(QStringLiteral("clearDirectoryButton")),
+                    Qt::LeftButton);
+                QVERIFY(dialog->findChild<QLineEdit*>(QStringLiteral("quickDirectory"))
+                            ->text()
+                            .isEmpty());
+                QVERIFY(dialog->findChild<QLineEdit*>(QStringLiteral("quickDirectory"))
+                            ->toolTip()
+                            .isEmpty());
+                QTest::mouseClick(
+                    dialog->findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                    Qt::LeftButton);
+                handled = true;
+            });
+        controller.menu()->actions().at(1)->trigger();
+        QVERIFY(handled);
+        QVERIFY(!window->saveImage());
+        QCOMPARE(panels, 2);
+        QVERIFY(window->isSaved());
+        QVERIFY(AppSettings(options.settingsFile).loadSavePreferences().quickDirectory.isEmpty());
     }
     void settingsMetadataValidationFailureAndPersistence()
     {

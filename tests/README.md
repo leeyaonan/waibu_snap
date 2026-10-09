@@ -28,7 +28,7 @@ S01 马赛克新增用例：`annotation::eightTypesAndStyles` 守卫八类枚举
 
 `startup_smoke::mosaicOverlayGesturesHistoryAndOutput` 与 `mosaicStickerGesturesHistoryAndOutput` 分别覆盖 1 / 1.5 / 2 倍源 DPR 和 75% / 100% / 200% 贴图缩放：第八按钮、文案 / tooltip / 可访问名、激活取消、颜色 / 线宽 / 字号禁用、首次提示可见且再次激活不重发、零面积不改变保存状态、松开入栈、dirty、撤销重做、正反拖画、真实 PNG 保存与注入复制的块结构及区域外像素不变；两者纳入独立 2 倍屏幕 DPR 子集。必要数量调整：工具枚举 / 覆盖层按钮七→八，贴图编辑折叠菜单 15→16，颜色 / 线宽 / 字号菜单索引后移一位；原普通贴图七项操作不变。覆盖层八列阈值改为 640、宽度上界 720，窄屏仍三列；窄屏用例同步布局断言并核对第八按钮。原 Cover 及六工具用例完整保留。
 
-`startup_smoke` 使用 `QT_QPA_PLATFORM=offscreen`，验证 QWidget / 菜单动作与生命周期；无头环境不显示系统托盘，也不注册真实热键或申请屏幕录制权限。复制测试注入 `OverlayActions::copyImage`，仅验证动作次数、物理像素 / DPR 及终态，不读写或断言系统剪贴板。面板测试注入 `chooseSavePath`，路径导出调用真实 PNG 编码与原子提交，不能代替原生面板实机验收。
+`startup_smoke` 使用 `QT_QPA_PLATFORM=offscreen`，验证 QWidget / 菜单动作与生命周期；无头环境不显示系统托盘，也不注册真实热键或申请屏幕录制权限。复制测试注入 `OverlayActions::copyImage`，仅验证动作次数、物理像素 / DPR 及终态，不读写或断言系统剪贴板。面板测试注入 `chooseSavePath`，路径导出调用真实 PNG / JPEG 编码与原子提交，不能代替原生面板实机验收。
 
 所有设置用例使用 `QTemporaryDir` 下 INI；实际应用子进程显式传入 `--settings-file` 临时路径。`hotkey_settings` 使用热键替身验证共享协调顺序，窗口吸附用例注入局部逻辑窗口矩形，不能替代 Carbon 硬件按键或 CGWindowList 像素边界验收。高亮与吸附输出测试回读冻结帧的已知彩色像素，显示层不参与输出。`image_output` 使用 offscreen 的 QGuiApplication 提供字体排版环境；文本内容 / 换行和合成像素自动测试不能证明真实中文输入法候选或系统查看器显示已通过。
 
@@ -126,7 +126,27 @@ macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release 本机构建与 WaibuSnap De
 
 独立 `open -W -n` LaunchServices 进程用临时 INI / JSONL 完成两条注入，依次冷 / 热且均 **码 2**；冻结帧 **3024×1964**、选区 **0×0**，可见代理 / 可交互终点均非零。稳定签名保持 `local.waibusnap.dev` 与原证书叶 requirement，未改屏幕录制权限；原普通实例仍存活，F1 被其占用时如实记录 -9878，受控实例已退出。原始日志仅留本机临时目录，不提交图片 / 设置 / 凭据；工作区 docs/ 未修改。双端 CI 状态见本次 PR；原位置输入穿透、后续真实截图不含贴图与跨应用焦点仍按下列清单人工验收。
 
+## S03 快速保存与 JPEG 验证（2026-10-09）
+
+`hotkey_settings` 增加保存键缺省、中文 / 空格绝对目录及两格式往返、清除回默认、非法格式 / 相对目录独立回退、损坏 INI 原字节不变、写入失败与热键键双向隔离。`startup_smoke::saveSettingsEditCancelAndDirectoryInjection` 验证目录选择取消 / 注入、只读路径与 tooltip、JPEG 有损提示、保存 / 取消 / Esc；`controllerSavePreferencesApplyImmediatelyAndClearDirectory` 验证已有贴图保存后立即使用新目录 / JPEG，清除后下次回到面板，不重新注册未修改的快捷键。
+
+`image_output` 增加 JPEG 按 JPEG 解码、`.jpg` / `.jpeg` / 大写后缀 / 无后缀、原像素尺寸 / DPR=1 / 无 alpha / sRGB、合成标注区域允许有损容差；缺失目录 / 只读原文件原子失败且原字节不变、连续同时间戳新文件不覆盖及临时文件清理。既有 PNG 用例逐字保留，PNG 专用工具作为兼容入口继续验证原契约。
+
+`quickSaveDirectoryCollisionAndFormat` 在覆盖层 / 贴图的 PNG / JPEG 四组数据中验证面板零调用、每次读取偏好、预置同时间戳旧文件不变、连续输出不重名、完整绝对路径与 tooltip、真实编码回读尺寸 / DPR；`quickDirectoryAvailabilityAndCancelKeepsImage` 验证不存在 / 文件冒充 / 实际不可写 / 空目录回退面板，取消后选区或贴图及保存状态保留；目录只读属性夹具先用真实临时文件探针确认能否创建文件，可写时应快速保存；`quitSaveAllUsesQuickDirectoryWithoutCollisions` 验证隐藏的三张未保存贴图共用快速目录，同时间戳两格式均不重名。
+
+`savePanelFormatsNormalizeSuffixAndDispatch` 验证过滤器有损文案、按过滤器规范化后缀、默认 PNG 偏好下面板显式选 `.jpeg` 后真实输出 JPEG，以及未知后缀仍按原 PNG 规则追加。原「其他后缀均追加 `.png`、不会输出 JPEG」说明调整为「未知后缀追加 `.png`，`.jpg` / `.jpeg` 输出 JPEG」；既有默认 PNG 流程与断言不变。原生面板及系统查看器由下方人工清单核对，注入测试不冒充真机验收。工作区 docs/ 不修改，结果码 / 测量协议及剪贴板行为不变。`quickSaveWriteFailureDoesNotSwitchToPanel` 复现决策后目录消失的写入失败，确保不静默转到面板；`saveSettingsWriteFailureKeepsDialogAndCanRetry` 验证偏好写入失败对话框保持打开、重试成功。
+
+本机 Qt 6.11.2 / arm64 Release 构建、WaibuSnap Dev 稳定签名及 requirement 校验通过；全部 **11 项 CTest**、clang-format **18.1.8** 与 `git diff --check` 通过。主 `startup_smoke` **115 项**、独立 2 倍屏幕 DPR 子集 **38 项**通过，均零失败 / 零跳过。既有 PNG 用例逐字保留。
+
+独立 `open -W -n` LaunchServices 进程使用临时 INI / JSONL 完成两条注入，依次冷 / 热且均 **码 2**，冻结帧 **1920×1080**、选区 **0×0**，可见代理与可交互终点均非零。原有普通实例不退出；受控进程因 F1 占用如实记录系统错误 -9878，测试注入正常完成并自行退出。没有改屏幕录制权限；原始日志留本机临时目录，不提交图片或设置。双端 CI 链接与状态登记在本次 PR。
+
+首轮 Windows CI 在新增目录只读属性的两组夹具失败：Windows 的目录只读属性不等于不可创建文件，实际快速保存成功符合目录可写语义。夹具改用真实临时文件探针建立预期：不可写则回退面板，可写则直接输出 JPEG；不跳过用例、不放宽缺失目录 / 文件冒充目录的断言，导出到只读文件的原子失败断言也保持不变。另加可写目录对照组，在 macOS / Windows 都实际验证探针初始化及快速保存成功；此修正仅影响测试夹具，产品保存逻辑无需变更。
+
 ## 人工核对清单（待用户真机操作）
+
+- 设置中选择中文 / 空格快速目录并切换 PNG / JPEG，保存后核对覆盖层、已有 / 新贴图和退出逐张保存立即生效；取消或 Esc 不落盘，JPEG 有损提示可见。清除目录后下次打开原生面板。
+- 删除 / 改名快速目录（或让它变成文件、不可写），下次点保存弹原生面板；取消后图像和标注仍保留。快速目录可用时连续保存、退出逐张保存均不重名，旧文件不变，成功反馈可找到完整路径；写入失败保留图像并提示重试。
+- 原生面板核对 PNG / JPEG（有损）过滤器、切换过滤器后后缀匹配、JPEG 的 `.jpg` / `.jpeg` 和缺省 `.jpg`、同名覆盖拒绝 / 确认及规范化后已有目标确认；JPEG 在 macOS 预览 / Windows 系统图片查看器打开，像素尺寸与八类标注 / 中文文本正确，JPEG 压缩细节允许变化。复制仍为图像剪贴板，无自动落盘或质量调节 UI。
 
 - 同时保留多张贴图（含正在输入的中文文本），点「隐藏全部贴图」后全部消失、文本提交且无未保存确认；在原贴图位置点击下方应用输入框并打字，确认输入穿透。随后截图应不含隐藏贴图；隐藏 / 恢复操作不取消已有选区。
 - 点「恢复全部贴图」，核对内容、位置、缩放一致、处于非编辑态且不抢前台应用焦点。隐藏后新钉一张时两项均可用，分别只处理可见 / 隐藏贴图；重复菜单操作状态正确。隐藏期间拔屏 / 改布局后恢复，贴图位于有效屏幕区域。

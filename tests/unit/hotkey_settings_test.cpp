@@ -1,5 +1,6 @@
 #include "app/app_settings.h"
 #include "app/hotkey_rules.h"
+#include <QDir>
 #include <QFile>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -40,6 +41,101 @@ class HotkeySettingsTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void savePreferencesDefaultsRoundTripAndHotkeyIsolation()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("设置 空格/settings.ini"));
+        AppSettings settings(path);
+        QVERIFY(settings.loadSavePreferences().quickDirectory.isEmpty());
+        QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Png);
+        QVERIFY(!QFile::exists(path));
+        const auto sequence = QKeySequence::fromString(QStringLiteral("Ctrl+Shift+2"));
+        QVERIFY(settings.saveHotkey(sequence).isEmpty());
+        const QString directory = temporary.filePath(QStringLiteral("中文 图片"));
+        QVERIFY(settings.saveSavePreferences({directory, ImageFormat::Jpeg}).isEmpty());
+        const auto loaded = AppSettings(path).loadSavePreferences();
+        QCOMPARE(loaded.quickDirectory, directory);
+        QCOMPARE(loaded.format, ImageFormat::Jpeg);
+        QCOMPARE(settings.loadHotkey().sequence, sequence);
+        QVERIFY(settings.saveHotkey(defaultScreenshotHotkey()).isEmpty());
+        QCOMPARE(settings.loadSavePreferences().quickDirectory, directory);
+        QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
+        {
+            QSettings ini(path, QSettings::IniFormat);
+            QCOMPARE(ini.value(QStringLiteral("save/quickDirectory")).toString(), directory);
+            QCOMPARE(ini.value(QStringLiteral("save/format")).toString(), QStringLiteral("jpeg"));
+            QCOMPARE(ini.allKeys().size(), 3);
+        }
+        QVERIFY(settings.saveSavePreferences({}).isEmpty());
+        QVERIFY(settings.loadSavePreferences().quickDirectory.isEmpty());
+        QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Png);
+        QCOMPARE(settings.loadHotkey().sequence, defaultScreenshotHotkey());
+        QVERIFY(!settings.saveSavePreferences({QStringLiteral("relative"), ImageFormat::Jpeg})
+                     .isEmpty());
+        QVERIFY(!settings.saveSavePreferences({{}, static_cast<ImageFormat>(99)}).isEmpty());
+        QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Png);
+    }
+    void invalidSaveValuesFallBackWithoutRewriting_data()
+    {
+        QTest::addColumn<QString>("directory");
+        QTest::addColumn<QString>("format");
+        QTest::addColumn<bool>("jpeg");
+        QTest::newRow("invalid-format") << QDir::tempPath() << QStringLiteral("webp") << false;
+        QTest::newRow("empty-format") << QDir::tempPath() << QString() << false;
+        QTest::newRow("uppercase-format") << QDir::tempPath() << QStringLiteral("JPEG") << false;
+        QTest::newRow("relative-directory")
+            << QStringLiteral("relative/path") << QStringLiteral("jpeg") << true;
+    }
+    void invalidSaveValuesFallBackWithoutRewriting()
+    {
+        using namespace waibusnap;
+        QFETCH(QString, directory);
+        QFETCH(QString, format);
+        QFETCH(bool, jpeg);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        {
+            QSettings ini(path, QSettings::IniFormat);
+            ini.setValue(QStringLiteral("save/quickDirectory"), directory);
+            ini.setValue(QStringLiteral("save/format"), format);
+            ini.setValue(QStringLiteral("hotkey/sequence"), QStringLiteral("F2"));
+            ini.sync();
+        }
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray before = file.readAll();
+        file.close();
+        AppSettings settings(path);
+        const auto loaded = settings.loadSavePreferences();
+        QCOMPARE(loaded.quickDirectory, QDir::isAbsolutePath(directory) ? directory : QString());
+        QCOMPARE(loaded.format, jpeg ? ImageFormat::Jpeg : ImageFormat::Png);
+        QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), before);
+    }
+    void malformedSaveIniPreservesBytesAndWriteFailure()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray malformed("[save\nformat=jpeg\nquickDirectory=/tmp\n");
+        QCOMPARE(file.write(malformed), qint64(malformed.size()));
+        file.close();
+        const auto loaded = AppSettings(path).loadSavePreferences();
+        QVERIFY(loaded.quickDirectory.isEmpty());
+        QCOMPARE(loaded.format, ImageFormat::Png);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), malformed);
+        file.close();
+        QVERIFY(
+            !AppSettings(path + QStringLiteral("/settings.ini")).saveSavePreferences({}).isEmpty());
+    }
     void legalMatrix_data()
     {
         QTest::addColumn<QString>("text");

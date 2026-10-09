@@ -6,8 +6,6 @@
 #include "ui/annotation_text_edit.h"
 #include <QCloseEvent>
 #include <QComboBox>
-#include <QFileDialog>
-#include <QFileInfo>
 #include <QFocusEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -19,7 +17,6 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QShortcut>
-#include <QStandardPaths>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -48,12 +45,6 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
     setWindowTitle(QStringLiteral("WaibuSnap 选区"));
     if (!actions_.copyImage)
         actions_.copyImage = copyImageToClipboard;
-    if (!actions_.chooseSavePath)
-        actions_.chooseSavePath = [](QWidget* parent, const QString& suggestion)
-        {
-            return QFileDialog::getSaveFileName(parent, QStringLiteral("保存截图为 PNG"),
-                                                suggestion, QStringLiteral("PNG 图片 (*.png)"));
-        };
     statusTimeout_.setSingleShot(true);
     connect(&statusTimeout_, &QTimer::timeout, this,
             [this]
@@ -235,6 +226,7 @@ void SelectionOverlay::showStatus(const QString& text, bool temporary)
     ensureToolbar();
     statusTimeout_.stop();
     status_->setText(text);
+    status_->setToolTip(text);
     status_->show();
     updateToolbar();
     if (temporary)
@@ -277,31 +269,19 @@ void SelectionOverlay::saveSelection()
     if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None)
         return;
     finishText(true);
-    QString directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    if (directory.isEmpty())
-        directory = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString suggestion = suggestedPngPath(directory);
     saveDialogOpen_ = true;
     toolbar_->setEnabled(false);
     QPointer<SelectionOverlay> self(this);
-    const auto chooseSavePath = actions_.chooseSavePath;
-    QString path;
-    while (true)
-    {
-        const QString chosen = chooseSavePath(this, suggestion);
-        // 原生面板的嵌套事件循环可能遇到显示器变更或应用退出，不能访问已销毁会话。
-        if (!self)
-            return;
-        if (finished_ || chosen.isEmpty())
-            break;
-        path = pngFilePath(chosen);
-        if (path == chosen || !QFileInfo::exists(path))
-            break;
-        // 补后缀可能指向另一个已有文件，必须让原生面板确认最终 PNG 路径。
-        suggestion = path;
-        path.clear();
-        showStatus(QStringLiteral("补全后缀后文件已存在，请在保存面板确认覆盖。"), false);
-    }
+    const ImageSaveActions actions = actions_;
+    const auto target = chooseImageSaveTarget(
+        this, actions, [self] { return self && !self->finished_; },
+        [self](const QString& text)
+        {
+            if (self)
+                self->showStatus(text, false);
+        });
+    if (!self)
+        return;
     saveDialogOpen_ = false;
     if (finished_)
         return;
@@ -309,8 +289,9 @@ void SelectionOverlay::saveSelection()
     raise();
     activateWindow();
     setFocus(Qt::OtherFocusReason);
-    if (!path.isEmpty())
-        exportToPath(path);
+    if (!target.path.isEmpty())
+        finishSave(saveImageToTarget(
+            renderAnnotatedSelection(frame_.pixels, annotations(), selection_), target));
 }
 bool SelectionOverlay::exportToPath(const QString& path)
 {
@@ -318,18 +299,20 @@ bool SelectionOverlay::exportToPath(const QString& path)
         path.isEmpty())
         return false;
     finishText(true);
-    showStatus(QStringLiteral("正在保存 PNG…"), false);
-    const ImageOutputResult result =
-        exportPngToPath(renderAnnotatedSelection(frame_.pixels, annotations(), selection_), path);
-    if (!result.success)
+    return finishSave(exportImageToPath(
+        renderAnnotatedSelection(frame_.pixels, annotations(), selection_), path));
+}
+bool SelectionOverlay::finishSave(const ImageFileResult& output)
+{
+    if (!output.result.success)
     {
-        showStatus(
-            QStringLiteral("保存失败：%1 点击「保存」选择路径并重试。").arg(result.explanation),
-            false);
+        showStatus(QStringLiteral("保存失败：%1 点击「保存」选择路径并重试。")
+                       .arg(output.result.explanation),
+                   false);
         return false;
     }
     saved_ = true;
-    showStatus(QStringLiteral("已保存：%1").arg(QFileInfo(pngFilePath(path)).fileName()), true);
+    showStatus(QStringLiteral("已保存：%1").arg(output.path), true);
     return true;
 }
 void SelectionOverlay::setSelection(QRect pixels)
