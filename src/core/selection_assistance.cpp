@@ -55,7 +55,7 @@ QRect magnifierSamplingRect(QPoint anchor, QSize pixels)
     return {std::clamp(anchor.x() - width / 2, 0, pixels.width() - width),
             std::clamp(anchor.y() - height / 2, 0, pixels.height() - height), width, height};
 }
-QRect placedMagnifier(QPointF anchor, QSize panel, QRect bounds)
+QRect placedMagnifier(QPointF anchor, QSize panel, QRect bounds, QRect obstacle)
 {
     if (panel.isEmpty() || bounds.isEmpty())
         return {};
@@ -65,10 +65,27 @@ QRect placedMagnifier(QPointF anchor, QSize panel, QRect bounds)
         x = qRound(anchor.x()) - 16 - panel.width();
     if (y + panel.height() > bounds.y() + bounds.height())
         y = qRound(anchor.y()) - 18 - panel.height();
-    return {std::clamp(x, bounds.x(),
-                       std::max(bounds.x(), bounds.x() + bounds.width() - panel.width())),
-            std::clamp(y, bounds.y(),
-                       std::max(bounds.y(), bounds.y() + bounds.height() - panel.height())),
-            panel.width(), panel.height()};
+    const QRect result(
+        std::clamp(x, bounds.x(),
+                   std::max(bounds.x(), bounds.x() + bounds.width() - panel.width())),
+        std::clamp(y, bounds.y(),
+                   std::max(bounds.y(), bounds.y() + bounds.height() - panel.height())),
+        panel.width(), panel.height());
+    if (!result.intersects(obstacle))
+        return result;
+    // 自绘层避开子工具栏；小选区无法在锚点另一侧放下时尝试工具栏上下。
+    const QPoint candidates[] = {{result.x(), qRound(anchor.y()) - panel.height() - 18},
+                                 {qRound(anchor.x()) - panel.width() - 16, result.y()},
+                                 {qRound(anchor.x()) + 16, result.y()},
+                                 {result.x(), obstacle.top() - panel.height() - 4},
+                                 {result.x(), obstacle.bottom() + 5}};
+    for (QPoint position : candidates)
+    {
+        const QRect alternate(position, panel);
+        if (bounds.contains(alternate) && !alternate.contains(anchor.toPoint()) &&
+            !alternate.intersects(obstacle))
+            return alternate;
+    }
+    return result;
 }
 }

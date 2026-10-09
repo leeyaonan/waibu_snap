@@ -101,6 +101,11 @@ class SelectionGeometryTest final : public QObject
         QVERIFY(waibusnap::magnifierSamplingRect({100, 0}, {100, 80}).isEmpty());
         QVERIFY(waibusnap::magnifierSamplingRect({}, {}).isEmpty());
         QVERIFY(waibusnap::placedMagnifier({}, {}, {0, 0, 800, 600}).isEmpty());
+        const QRect obstacle(0, 210, 720, 140);
+        const QRect panel =
+            waibusnap::placedMagnifier({100, 100}, {128, 152}, {0, 0, 800, 600}, obstacle);
+        QVERIFY(!panel.intersects(obstacle));
+        QVERIFY(!panel.contains(QPoint(100, 100)));
         using namespace waibusnap;
         QCOMPARE(selectionNudgeAnchor({20, 30, 40, 50}, SelectionEdge::Right, SelectionNudge::Move),
                  QPoint(20, 30));

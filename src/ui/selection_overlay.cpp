@@ -691,25 +691,8 @@ QRect SelectionOverlay::magnifierRect() const
     const QSize panel(magnifierSample_.width() * magnifierCellSize + 8,
                       magnifierSample_.height() * magnifierCellSize + 32);
     const QPointF anchor = QPointF(magnifierAnchor_) / frame_.display.devicePixelRatio;
-    QRect result = placedMagnifier(anchor, panel, rect());
-    // 自绘必须避开其上方的子工具栏，优先尝试另一侧，仍保持锚点可见。
-    if (toolbar_ && toolbar_->isVisible() && result.intersects(toolbar_->geometry()))
-    {
-        const QPoint candidates[] = {{result.x(), qRound(anchor.y()) - panel.height() - 18},
-                                     {qRound(anchor.x()) - panel.width() - 16, result.y()},
-                                     {qRound(anchor.x()) + 16, result.y()}};
-        for (QPoint position : candidates)
-        {
-            const QRect alternate(position, panel);
-            if (rect().contains(alternate) && !alternate.contains(anchor.toPoint()) &&
-                !alternate.intersects(toolbar_->geometry()))
-            {
-                result = alternate;
-                break;
-            }
-        }
-    }
-    return result;
+    return placedMagnifier(anchor, panel, rect(),
+                           toolbar_ && toolbar_->isVisible() ? toolbar_->geometry() : QRect());
 }
 void SelectionOverlay::paintMagnifier(QPainter& painter)
 {

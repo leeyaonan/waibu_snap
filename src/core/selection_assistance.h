@@ -16,5 +16,5 @@ inline constexpr int magnifierCellSize = 8;
 // 贴边时平移采样窗；不足 15 像素的小屏才缩小窗口，锚点始终在窗内。
 QRect magnifierSamplingRect(QPoint anchor, QSize pixels);
 // 逻辑坐标放置，右下优先，越界分别向左 / 上翻转，最后夹取到覆盖层内。
-QRect placedMagnifier(QPointF anchor, QSize panel, QRect bounds);
+QRect placedMagnifier(QPointF anchor, QSize panel, QRect bounds, QRect obstacle = {});
 }
