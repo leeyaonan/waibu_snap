@@ -1,4 +1,5 @@
 #include "ui/selection_overlay.h"
+#include "core/selection_assistance.h"
 #include "core/window_snapping.h"
 #include "output/annotation_renderer.h"
 #include "session/monotonic_clock.h"
@@ -474,10 +475,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         }
         const QString hint = activeTool_ ? QStringLiteral("拖拽标注 · 再点工具调整选区 · Esc 取消")
                                          : QStringLiteral("单击吸附 · 拖拽框选 · Esc 取消");
-        const QString text = QStringLiteral("%1 × %2 像素   %3")
-                                 .arg(selection_.width())
-                                 .arg(selection_.height())
-                                 .arg(hint);
+        const QString text = selectionSizeText() + QStringLiteral("   ") + hint;
         const QRect box(16, 16, std::max(0, std::min(width() - 32, 580)), 36);
         painter.fillRect(box, QColor(20, 20, 20, 220));
         painter.setPen(Qt::white);
@@ -587,8 +585,49 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
         undoAnnotation();
     else if (event->matches(QKeySequence::Redo))
         redoAnnotation();
+    else if (nudgeSelection(event))
+        event->accept();
     else
         QWidget::keyPressEvent(event);
+}
+QString SelectionOverlay::selectionSizeText() const
+{
+    return QStringLiteral("%1 × %2 像素").arg(selection_.width()).arg(selection_.height());
+}
+bool SelectionOverlay::nudgeSelection(QKeyEvent* event)
+{
+    if (!hasFocus() || activeTool_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+        return false;
+    const auto modifiers = event->modifiers();
+    if (modifiers & ~(Qt::ShiftModifier | Qt::AltModifier) ||
+        modifiers == (Qt::ShiftModifier | Qt::AltModifier))
+        return false;
+    SelectionEdge edge;
+    switch (event->key())
+    {
+    case Qt::Key_Left:
+        edge = SelectionEdge::Left;
+        break;
+    case Qt::Key_Up:
+        edge = SelectionEdge::Top;
+        break;
+    case Qt::Key_Right:
+        edge = SelectionEdge::Right;
+        break;
+    case Qt::Key_Down:
+        edge = SelectionEdge::Bottom;
+        break;
+    default:
+        return false;
+    }
+    const auto mode = modifiers == Qt::ShiftModifier ? SelectionNudge::Expand
+                      : modifiers == Qt::AltModifier ? SelectionNudge::Shrink
+                                                     : SelectionNudge::Move;
+    setSelection(nudgedPixelSelection(selection_, edge, mode, frame_.pixels.size()));
+    updateToolbar();
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+    return true;
 }
 void SelectionOverlay::closeEvent(QCloseEvent* event)
 {

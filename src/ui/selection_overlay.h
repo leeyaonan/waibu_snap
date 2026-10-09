@@ -31,6 +31,7 @@ class SelectionOverlay final : public QWidget
     QRect hoveredWindowPixels() const { return hoveredWindowPixels_; }
     bool hasPainted() const { return painted_; }
     bool isSelectionSaved() const { return saved_; }
+    QString selectionSizeText() const;
     QPoint selectionGlobalPosition() const;
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
     std::optional<AnnotationType> activeTool() const { return activeTool_; }
@@ -74,6 +75,7 @@ class SelectionOverlay final : public QWidget
     void startText(QPointF position);
     void finishText(bool commit, bool restoreFocus = true);
     void discardAnnotations();
+    bool nudgeSelection(QKeyEvent* event);
     QPointF physicalPoint(QPointF position) const;
     void showStatus(const QString& text, bool temporary);
     bool finishSave(const ImageFileResult& output);
