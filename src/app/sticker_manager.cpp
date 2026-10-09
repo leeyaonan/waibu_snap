@@ -86,6 +86,29 @@ ImageOutputResult StickerManager::create(const QImage& image, QPoint position, b
     }
     return {true, {}};
 }
+void StickerManager::hideAll()
+{
+    if (closingAll_ || resolvingQuit_)
+        return;
+    const auto windows = windows_;
+    for (const auto& window : windows)
+        if (window && window->isVisible())
+        {
+            // 与保存前相同地提交文本；隐藏不关闭，也不修改保存状态。
+            window->setEditing(false);
+            if (window)
+                window->hide();
+        }
+}
+void StickerManager::restoreAll()
+{
+    if (closingAll_ || resolvingQuit_)
+        return;
+    const auto windows = windows_;
+    for (const auto& window : windows)
+        if (window && !window->isVisible())
+            window->show();
+}
 void StickerManager::closeAll()
 {
     if (closingAll_)
