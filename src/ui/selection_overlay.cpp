@@ -72,7 +72,7 @@ void SelectionOverlay::ensureToolbar()
     toolbar_ = new QWidget(this);
     toolbar_->setObjectName(QStringLiteral("selectionToolbar"));
     toolbar_->setCursor(Qt::ArrowCursor);
-    toolbar_->setFixedWidth(std::min(560, width()));
+    toolbar_->setFixedWidth(std::min(640, width()));
     toolbar_->setStyleSheet(QStringLiteral(
         "QWidget#selectionToolbar { background: #202020; border-radius: 6px; }"
         "QPushButton { color: white; background: #404040; padding: 6px; border-radius: 4px; }"
@@ -84,15 +84,16 @@ void SelectionOverlay::ensureToolbar()
         "QLabel { color: white; }"));
     auto* layout = new QVBoxLayout(toolbar_);
     auto* tools = new QGridLayout;
-    const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
-                             QStringLiteral("直线"), QStringLiteral("箭头"),
-                             QStringLiteral("画笔"), QStringLiteral("文本")};
+    const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"), QStringLiteral("直线"),
+                             QStringLiteral("箭头"), QStringLiteral("画笔"), QStringLiteral("文本"),
+                             QStringLiteral("遮盖")};
     const QString objects[] = {
         QStringLiteral("rectangleToolButton"), QStringLiteral("ellipseToolButton"),
         QStringLiteral("lineToolButton"),      QStringLiteral("arrowToolButton"),
-        QStringLiteral("freehandToolButton"),  QStringLiteral("textToolButton")};
-    const int columns = width() >= 480 ? 6 : 3;
-    for (int index = 0; index < 6; ++index)
+        QStringLiteral("freehandToolButton"),  QStringLiteral("textToolButton"),
+        QStringLiteral("coverToolButton")};
+    const int columns = width() >= 560 ? 7 : 3;
+    for (int index = 0; index < 7; ++index)
     {
         auto* button = new QPushButton(names[index], toolbar_);
         button->setObjectName(objects[index]);
@@ -639,7 +640,7 @@ void SelectionOverlay::activateTool(AnnotationType type)
     toolbar_->findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"))
         ->setEnabled(activeTool_ == AnnotationType::Text);
     toolbar_->findChild<QComboBox*>(QStringLiteral("annotationWidthCombo"))
-        ->setEnabled(activeTool_ != AnnotationType::Text);
+        ->setEnabled(activeTool_ != AnnotationType::Text && activeTool_ != AnnotationType::Cover);
     setFocus(Qt::OtherFocusReason);
     updateCursor(mapFromGlobal(QCursor::pos()));
     update();
