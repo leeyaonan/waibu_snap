@@ -9,9 +9,10 @@
 | `startup_smoke`（4b 编辑） | `stickerEditingEntrancesGesturesAndCompactTools`：按钮 / 双击、绘图不拖窗、无工具不移动、滚轮锚点、完成 / Esc 后恢复拖动、编辑态无右键菜单、极小图全部编辑入口；`stickerTextImeEscapeAndCommitBoundaries`：预编辑保护 / Esc 分层、中文换行、空文本 / 点击别处（含同值 NoFocus 选项）/ 切工具 / 完成提交；`stickerHistoryStylesOutputAndDirtyState`：三档样式、20 步 / 标准快捷键、文本历史优先、分叉、保存再编辑、原像素 / DPR=1 和无标注隐式共享；`stickerPendingTextCommitsBeforeOutputsAndNewDrawing`：三字号、保存 / 复制 / 绘图前提交 |
 | `startup_smoke`（4b 确认） | `stickerDefaultConfirmationDialogsCancel`：真实中文三选一关闭 / 退出对话框取消；`stickerCloseDecisionsAndSaveRetries`：取消 / 放弃 / 保存成功 / 面板取消 / 失败后重试 / 已保存免确认、关闭与退出重入；`stickerCloseSaveFailureRestoresEditingToolbar`：编辑态关闭保存失败后恢复工具条，反馈不遮挡工具并可重试成功；`stickerQuitSummaryOrderFailureAndReentrancy`：汇总取消 / 逐张创建顺序保存 / 中途取消或失败 / 全部放弃，未提交文本先提交、已保存跳过与保留、强制清理不重复确认；`stickerQuitSavedAndControllerCancellation`：无未保存免确认、控制器取消退出及重入不销毁窗口 |
 | `startup_smoke`（S02） | `stickerHideRestorePreservesStateAndHistory`：三张、多档缩放、八类标注、重复操作幂等，几何 / scale / 基图 / 全像素合成图 / 每个标注全部字段 / 保存状态不变，撤销与重做历史保留；`stickerHideCommitsPendingTextWithoutConfirmation`：中文换行文本先提交、退出编辑、不确认 / 不保存；`stickerHiddenCloseAndCleanupDoNotResurrect`：隐藏中 forceClose、延迟销毁前不复活、计数与退出清理及重入保护；`stickerHiddenQuitDecisionsAndReentrancy`：隐藏未保存汇总、取消 / 保存 / 放弃和解析期间 API 空操作；`stickerHiddenQuitDefaultDialogStillConfirms`：默认真实汇总对话框仍弹出；`stickerHiddenRecoveryPreservesVisibility`：直接找回与模拟 screenRemoved 后隐藏保持、恢复位置有效；`stickerMenuAvailabilityAndOverlayIsolation`：两项文案 / objectName / 顺序，四态弹出前和操作后刷新、混合状态、覆盖层选区与 finished 信号不变。全部纳入独立 2 倍屏幕 DPR 子集 |
+| `startup_smoke`（S04） | `selectionNudgeKeys`：1 / 1.5 / 2 源屏 DPR × 三模式 × 四方向、真实重复事件恒 1 源像素、尺寸文本同步、键盘锚点 / 采样与工具栏避让；`selectionNudgeLimits`：四边夹取 / 最小尺寸不翻转、极限按键消费但不标脏；`selectionNudgeIgnoresModifiersAndControlFocus`：混合修饰 / 子控件焦点 / 无选区 / 拖动隔离；`selectionNudgeToolAndTextIsolation`：八工具与 IME 编辑器分层；`selectionNudgeHistoryDirtyAndOutput`：已保存变更标脏、保留重做、撤销仍只作用标注、放大镜可见时 PNG / 复制逐像素合成一致；`selectionNudgeSavePanelAndFinishedIsolation`：面板 / 结束会话隔离；`magnifierMouseSampling`：三种源 DPR 下四角四边 / 中心逐像素原帧采样、负屏坐标、按下显示 / 松开清空；`magnifierFollowsSelectionGestures`：移动与四边调整跟随光标；`magnifierPaintUsesNearestPixels`：画布截图逐设备像素最近邻与黑白双线标记；`magnifierKeyboardTimeoutAndCleanup`：重复重启单计时器、停止后留裕量超时、工具激活 / 关闭清理。全部加入独立 2 倍 DPR 子集 |
 | `sticker_geometry` | 25%–400% 连续步进与夹取、100% 复位、1 / 1.5 / 2 倍 DPR 尺寸、光标 / 中心锚点数学、最小 / 非整除尺寸、非法输入与整数溢出防护；拔屏 / 负坐标 / 超大窗口找回 |
-| `startup_smoke_sticker_high_dpi` | 独立 `QT_SCALE_FACTOR=2` 子进程运行托盘图标资源 / 档位断言、贴图窗口交互与原像素输出用例，验证 100% 为图像像素 / DPR、连续缩放中心不累计漂移，额外运行编辑手势 / 文本 IME 分层 / 历史 / 输出和待提交文本用例；不能替代不同 DPR 双屏真机 |
-| `selection_geometry` | 半开像素矩形、任意框选方向、屏内移动且尺寸不变、八方向调整、反向拖过对侧夹停、最小尺寸恢复、1.5 / 2 倍 DPR 与半像素边界取整、零面积与无效参数；未完成计时不能伪造可交互终点 |
+| `startup_smoke_sticker_high_dpi` | 独立 `QT_SCALE_FACTOR=2` 子进程运行托盘图标资源 / 档位断言、贴图窗口交互与原像素输出用例，验证 100% 为图像像素 / DPR、连续缩放中心不累计漂移，额外运行编辑手势 / 文本 IME 分层 / 历史 / 输出和待提交文本用例及全部 S04 新用例；不能替代不同 DPR 双屏真机 |
+| `selection_geometry` | 半开像素矩形、任意框选方向、屏内移动且尺寸不变、八方向调整、反向拖过对侧夹停、最小尺寸恢复、1.5 / 2 倍 DPR 与半像素边界取整、零面积与无效参数；S04 微调四方向 ±1、四边四角全屏夹取矩阵、最小 1×1、采样四角四边平移、放置四象限翻转 / 工具栏避让；未完成计时不能伪造可交互终点 |
 | `annotation` | 八类形状 / 样式 / 中文换行内容；箭头随线宽缩放、旋转和短线几何；画笔按物理距离抽稀；20 步容量及超限保留早期标注、撤销重做序列一致、空栈 / 无效标注边界、分叉清除、会话清空；裁剪窗口移动 / 调整不改变标注坐标 |
 | `image_output` | 冻结帧逐像素裁剪与 DPR=1；已知矩形 / 直线逐像素颜色断言、选区外裁剪、1 / 1.5 / 2 倍 DPR 无缩放；七类渲染可见、撤销重做逐步恢复同一画面、共享预览绘制与物理合成全图一致、线宽 / 颜色 / 字号三档结果可区分；临时中文 / 空格路径 PNG 写出、格式 / 尺寸 / 全图像素回读一致；缺失目录与只读文件失败、原文件不变；无效图像 / 路径拒绝；补后缀与建议文件名冲突避让 |
 | `window_snapping` | 全局转屏内坐标与越屏裁剪、屏外丢弃且前后序不变；重叠取最前、缝隙 / 空列表未命中、半开命中边界；1.5× / 2×、半像素取整、按两端边缘求宽高、物理范围夹取与无效输入 |
@@ -142,7 +143,20 @@ macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release 本机构建与 WaibuSnap De
 
 首轮 Windows CI 在新增目录只读属性的两组夹具失败：Windows 的目录只读属性不等于不可创建文件，实际快速保存成功符合目录可写语义。夹具改用真实临时文件探针建立预期：不可写则回退面板，可写则直接输出 JPEG；不跳过用例、不放宽缺失目录 / 文件冒充目录的断言，导出到只读文件的原子失败断言也保持不变。另加可写目录对照组，在 macOS / Windows 都实际验证探针初始化及快速保存成功；此修正仅影响测试夹具，产品保存逻辑无需变更。
 
+## S04 精确选区辅助验证（2026-10-09）
+
+macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release：本机构建、WaibuSnap Dev 稳定签名 / 原证书叶 requirement、全部 **11 项 CTest**、clang-format **18.1.8** 与 `git diff --check` 通过。主 `startup_smoke` 从 **115 → 197 项**，独立 `QT_SCALE_FACTOR=2` 子集从 **38 → 120 项**，均零失败 / 零跳过；纯几何单元共 **79 项**。全部 S04 新子集在真实 **Cocoa 后端 84 项**通过（均含初始化 / 清理），仍不能代替系统 Option 快捷键、混合 DPI 设备与真实 IME 候选的人工验收。额外 `QT_SCALE_FACTOR=1.5` 绘制子集 **3 项**通过，逐设备像素核对 12px 最近邻铺格及黑白双线；1× / 2× 同断言已在主 / 高 DPI 流程通过。
+
+首轮布局断言复现小选区下自绘放大镜被子工具栏遮挡；避让改为 core 纯几何，优先翻转、空间不足时尝试工具栏上下，补单元与冒烟断言后复验通过。采样图逐源像素等于冻结帧，不采样遮罩 / 高亮 / 标注；画布截图逐设备像素核对最近邻，内部锚点中心保留原色，双线格含黑 / 白像素。边界采样窗整体平移，因此贴边锚点格由相对偏移定位，不错误地把采样窗中心当作锚点。
+
+独立 `open -W -n` LaunchServices 受控进程以临时 INI / JSONL 完成 **两条注入码 2**，依次冷 / 热，冻结帧 **1920×1080**、选区 **0×0**、`visible_proxy_ns` / `interactive_ns` 均非零。原普通实例 PID 保持，受控实例已退出；F1 占用时如实记录 -9878。未改屏幕录制授权、结果码 / 测量协议或正式性能测量；工作区 docs/ 保持不动。原始日志仅留本机临时目录，双端 CI 链接与结果见本次 PR。
+
 ## 人工核对清单（待用户真机操作）
+
+- S04：macOS 真机用像素网格，在 Retina 与外接 1× 屏分别拖选 / 移动 / 四边四角调整，核对 15×15 放大镜原像素与 8 逻辑点铺格清晰度、黑白双线锚点格、四角 / 四边翻转及不遮挡锚点；松开隐藏，连续微调停下约 700 ms 隐藏。
+- S04：画布持焦无工具时核对四方向移动、Shift 扩张、Option 收缩都恰 1 源屏物理像素，长按不加速；屏边 / 1×1 夹停、尺寸文本和工具栏同步。Cmd / Control / Meta、Shift+Option 忽略，Option+方向键不与系统操作冲突；工具激活与中文预编辑 / 候选时方向键保持原层。
+- S04：混合 DPI（含左侧 / 上方负坐标屏）每屏分别核对微调手感与源像素边界，按 M08 以像素网格核对输出。微调后 PNG / JPEG 保存、复制及钉图与最终选区一致，无放大镜 / 标记 / 提示；保存后微调重新标记未保存，撤销 / 重做仍只操作标注。
+- S04：Windows 原生适配补齐后，在 Windows 11 x64 真机复核上述全部项目（特别是 Alt / Shift+Alt 无系统冲突、100% / 150% / 200% 与混合 DPI）；当前共享逻辑 / Qt::AltModifier 的双端 CI 不能替代 Windows 原生截图验收。
 
 - 设置中选择中文 / 空格快速目录并切换 PNG / JPEG，保存后核对覆盖层、已有 / 新贴图和退出逐张保存立即生效；取消或 Esc 不落盘，JPEG 有损提示可见。清除目录后下次打开原生面板。
 - 删除 / 改名快速目录（或让它变成文件、不可写），下次点保存弹原生面板；取消后图像和标注仍保留。快速目录可用时连续保存、退出逐张保存均不重名，旧文件不变，成功反馈可找到完整路径；写入失败保留图像并提示重试。

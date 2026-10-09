@@ -17,6 +17,14 @@
 
 `OverlayActions` 提供复制、钉图与路径选择的行为缝，默认走真实 QClipboard 和原生 QFileDialog；`exportToPath` 分离路径导出与面板。输出由 `renderAnnotatedSelection(frame_.pixels, annotations, selection)` 合成后裁剪，不捕获 QWidget 显示层；保存成功保留会话，复制成功以结果码 10、钉图成功以结果码 11 结束。工具栏在选区成立后创建，文本编辑器仅在使用文本工具时创建；标注、撤销历史、工具栏和短暂反馈计时器归会话所有，空闲无隐藏预建选区或轮询。
 
+`core/selection_assistance` 沿用 `sticker_geometry` / `window_snapping` 的纯几何测试缝：`nudgedPixelSelection` 直接在源屏半开物理像素矩形上移动 / 扩张 / 收缩 1 像素，复用现有几何夹取；`selectionNudgeAnchor` 取移动左上角或对应边内最后像素的中点；`magnifierSamplingRect` 给出 15×15 贴边平移矩形；`placedMagnifier` 负责逻辑坐标四象限翻转、屏内夹取及工具栏避让。不依赖 QWidget 或平台接口。
+
+`SelectionOverlay` 按键分层为 **文本编辑 > 工具态 > 微调**：已结束 / 保存面板先拦截，文本编辑器继续负责 IME 与方向键；无工具、非拖动且覆盖层自身 `hasFocus()` 才接收无修饰 / Shift / `Qt::AltModifier` 方向键。Control / Meta 或 Shift+Alt 不处理，双端共享 Alt（macOS Option）路径。`setSelection` 仅在矩形真的改变时标脏，历史仍只包含标注；尺寸提示通过只读 `selectionSizeText()` 与绘制共用文本，工具栏沿用现有位置更新。
+
+放大镜在覆盖层 `paintEvent` 内自绘，不创建窗口 / 子控件。鼠标位置沿用 `physicalPoint` 后最近像素取整，并夹到 `[0, width-1] / [0, height-1]`；键盘直接给整数锚点，不通过逻辑坐标累计。仅复制冻结帧采样窗并将采样 DPR 归一为 1，目标按实际画布 DPR 整数铺格、关闭平滑，双线标记 `anchor - sampleRect.topLeft()`，贴边仍能辨认实际锚点格。绘制位于遮罩之后；若有子工具栏则由纯几何避让。`magnifierVisible()`、`magnifierAnchor()`、`magnifierSampleRect()`、`magnifierSample()`、`magnifierPositionText()` 和 `magnifierRect()` 均只读；采样图为源分辨率，内部锚点在中心格，贴边平移后由相对偏移定位。
+
+鼠标按下 / 拖动显示并停止隐藏计时，释放即清空；键盘每次重启同一个 700 ms 单次精确计时器，超时清空锚点 / 采样。工具激活、打开保存面板、关闭 / 完成 / 取消会话也停止计时并清空。输出继续只用冻结帧与标注合成，放大镜没有导出路径；结果码、测量协议、保存和退出语义不变。
+
 `ApplicationController` 持有 `AppSettings`，覆盖层与 `StickerManager` 的 `loadSavePreferences` 回调每次读取同一 INI：`save/quickDirectory` 为空或绝对路径，`save/format` 严格接受 `png` / `jpeg`、默认 `png`。非法键各自回退，读取损坏 INI 整体回退且不改写；保存只更新自己的键，不影响 `hotkey/sequence`。`SettingsDialog` 目录选择默认走 `QFileDialog::getExistingDirectory`，可用 `SaveSettingsActions::chooseDirectory` 注入；目录控件只读，清除恢复每次面板。取消 / Esc 不调用保存回调；快捷键未改变时不重新注册，保存偏好无需被当前平台的快捷键能力阻断。
 
 `output/image_save` 编入 Widgets 层目标，统一 `chooseImageSaveTarget` / `saveImageToTarget`，覆盖层、贴图与退出逐张保存复用。`ImageSaveActions` 保持 `chooseSavePath(QWidget*, const QString&)` 签名，增加实时偏好读取和测试时刻缝。快速目录按存在 / 目录 / 可写检测，否则回退默认图片目录的原生面板；面板使用所选过滤器规范化后缀，再按最终后缀决定编码。面板嵌套循环用调用者的 `canContinue` / QPointer 保持既有关闭语义；规范化或补后缀碰到另一个已有目标时重新确认，取消不导出。写入错误不转移目标，UI 保留图像、已保存状态与重试提示。

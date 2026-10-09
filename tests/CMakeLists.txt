@@ -79,6 +79,10 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     stickerMenuAvailabilityAndOverlayIsolation
     coverOverlayGesturesHistoryAndOutput coverStickerGesturesHistoryAndOutput
     mosaicOverlayGesturesHistoryAndOutput mosaicStickerGesturesHistoryAndOutput
+    selectionNudgeKeys selectionNudgeLimits selectionNudgeIgnoresModifiersAndControlFocus
+    selectionNudgeToolAndTextIsolation selectionNudgeHistoryDirtyAndOutput
+    selectionNudgeSavePanelAndFinishedIsolation magnifierMouseSampling
+    magnifierFollowsSelectionGestures magnifierPaintUsesNearestPixels magnifierKeyboardTimeoutAndCleanup
     quickSaveDirectoryCollisionAndFormat quitSaveAllUsesQuickDirectoryWithoutCollisions
     savePanelFormatsNormalizeSuffixAndDispatch
     -o "${CMAKE_CURRENT_BINARY_DIR}/startup_smoke-sticker-high-dpi-output.txt,txt")
