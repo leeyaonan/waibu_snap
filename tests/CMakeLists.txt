@@ -73,6 +73,10 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     stickerEditingEntrancesGesturesAndCompactTools stickerTextImeEscapeAndCommitBoundaries
     stickerHistoryStylesOutputAndDirtyState stickerPendingTextCommitsBeforeOutputsAndNewDrawing
     stickerCloseSaveFailureRestoresEditingToolbar
+    stickerHideRestorePreservesStateAndHistory stickerHideCommitsPendingTextWithoutConfirmation
+    stickerHiddenCloseAndCleanupDoNotResurrect stickerHiddenQuitDecisionsAndReentrancy
+    stickerHiddenQuitDefaultDialogStillConfirms stickerHiddenRecoveryPreservesVisibility
+    stickerMenuAvailabilityAndOverlayIsolation
     coverOverlayGesturesHistoryAndOutput coverStickerGesturesHistoryAndOutput
     mosaicOverlayGesturesHistoryAndOutput mosaicStickerGesturesHistoryAndOutput
     -o "${CMAKE_CURRENT_BINARY_DIR}/startup_smoke-sticker-high-dpi-output.txt,txt")
