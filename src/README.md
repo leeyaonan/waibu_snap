@@ -8,14 +8,20 @@
 | `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口 |
 | `core/` | 图像与标注核心 | `annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点与屏外找回纯函数；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
 | `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
-| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；八工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、中文反馈和保存 / 取消；无默认主窗口 |
-| `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG 原子提交、文件名补后缀和冲突避让；无自动保存 |
+| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；八工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、保存 / 取消；无默认主窗口 |
+| `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG / JPEG 原子提交；`image_save` 共享保存决策，格式感知命名与冲突避让；无自动保存 |
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
 
 `createTrayIcon()` 在 macOS 返回 18 / 36px 黑版并设置模板标记，Windows 返回 16 / 32px 彩色版。四个确认 PNG 由平台 CMake 的 `qt_add_resources` 嵌入，显式加入 @2x 档位；`ApplicationController` 只装配返回的 QIcon，菜单与点击路径不变。资源与再生成说明见 [图标资源](../assets/icons/README.md)。
 
 `OverlayActions` 提供复制、钉图与路径选择的行为缝，默认走真实 QClipboard 和原生 QFileDialog；`exportToPath` 分离路径导出与面板。输出由 `renderAnnotatedSelection(frame_.pixels, annotations, selection)` 合成后裁剪，不捕获 QWidget 显示层；保存成功保留会话，复制成功以结果码 10、钉图成功以结果码 11 结束。工具栏在选区成立后创建，文本编辑器仅在使用文本工具时创建；标注、撤销历史、工具栏和短暂反馈计时器归会话所有，空闲无隐藏预建选区或轮询。
+
+`ApplicationController` 持有 `AppSettings`，覆盖层与 `StickerManager` 的 `loadSavePreferences` 回调每次读取同一 INI：`save/quickDirectory` 为空或绝对路径，`save/format` 严格接受 `png` / `jpeg`、默认 `png`。非法键各自回退，读取损坏 INI 整体回退且不改写；保存只更新自己的键，不影响 `hotkey/sequence`。`SettingsDialog` 目录选择默认走 `QFileDialog::getExistingDirectory`，可用 `SaveSettingsActions::chooseDirectory` 注入；目录控件只读，清除恢复每次面板。取消 / Esc 不调用保存回调；快捷键未改变时不重新注册，保存偏好无需被当前平台的快捷键能力阻断。
+
+`output/image_save` 编入 Widgets 层目标，统一 `chooseImageSaveTarget` / `saveImageToTarget`，覆盖层、贴图与退出逐张保存复用。`ImageSaveActions` 保持 `chooseSavePath(QWidget*, const QString&)` 签名，增加实时偏好读取和测试时刻缝。快速目录按存在 / 目录 / 可写检测，否则回退默认图片目录的原生面板；面板使用所选过滤器规范化后缀，再按最终后缀决定编码。面板嵌套循环用调用者的 `canContinue` / QPointer 保持既有关闭语义；规范化或补后缀碰到另一个已有目标时重新确认，取消不导出。写入错误不转移目标，UI 保留图像、已保存状态与重试提示。
+
+`image_output` 的 `imageFilePath` / `suggestedImagePath` 接收 `ImageFormat`，PNG 的补后缀、时间戳和从 `_2` 起避让规则保持不变；`imageFormatForPath` 识别 `.jpg` / `.jpeg`，其余路径按原 PNG 规则补 `.png`。原 PNG 专用函数仅保留为既有测试的兼容入口，产品调用已迁移。`exportJpegToPath` 与 PNG 一样用 `QSaveFile` 且禁用直接写回退，JPEG 质量固定 90；`exportImageToNewPath` 在同目录用 `QTemporaryFile` 编码 / flush 后原子 `rename`，拒绝覆盖已有目标，竞争冲突循环换名，失败清理临时文件。该接口的原子与不覆盖契约见 [Qt 6.11.2 文档](https://doc.qt.io/qt-6.11/qtemporaryfile.html#rename)。成功返回实际绝对路径，两个 UI 的状态区及 tooltip 显示完整路径；输出副本 DPR=1，复制行为及结果码 / 测量日志不变。
 
 窗口列表在 `captureCompleted` 成功后查询一次，经 `localWindowRects` 裁剪再注入覆盖层；悬停像素矩形同时用于绘制与只读断言。手势最大位移不超过 3 个逻辑像素才确认按下处窗口，手动拖选开始即清除高亮；已有选区外部单击只清除，下一次单击才能重新吸附。高亮、选区手柄与工具栏均不进入合成输出。
 
@@ -49,6 +55,6 @@
 
 焦点取舍：保持 Qt Tool / 无边框 / 置顶，切换编辑时隐藏并重建原生窗口，编辑态移除 DoesNotAcceptFocus，退出时恢复；不在同一个 NSPanel 上运行中切换非激活样式，以免遗留 AppKit 的激活状态。保存目标屏、精确位置与尺寸，原生行为重新配置后显示，再恢复一次位置，处理 Cocoa 在菜单栏边界显示时调整位置的行为；重新连接 screenChanged，内容与历史属于 QWidget，不随原生窗口重建丢失。进入编辑通过 `activateStickerEditing` 持有 `StickerFocusSession`：macOS 记录原前台应用，在明确编辑入口用 activateIgnoringOtherApps 激活本应用并成为 key；退出时先 yieldActivation 再恢复原应用；Windows 记录原前台 HWND、允许前台输入。退出编辑 / 关闭时析构会话，仅在本应用仍处于前台时恢复原应用，用户已自行切换应用时不再抢焦点。平台句柄只出现在平台文件中，offscreen 跳过原生操作。依据 [Qt windowFlags 的隐藏行为](https://doc.qt.io/qt-6/qwidget.html#windowFlags-prop) 与 [Qt 6.11.2 Cocoa 键盘 / 输入法路径](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qnsview_keys.mm)；真实输入法和外部应用验证口径见 tests/README。
 
-`StickerActions` 提供复制、路径选择、`confirmClose(QWidget*)` 与 `confirmQuit(count)` 行为缝，默认使用真实剪贴板、原生保存面板与中文三选一 QMessageBox；路径导出仍用 `image_output` 的 PNG 原子提交及命名工具。单张关闭先提交文本，已保存直接关闭，未保存选择取消 / 保存 / 放弃；面板取消或写入失败返回 false、提示并保留窗口。窗口以 confirmingClose / saveDialogOpen 保护嵌套循环，Qt 自身的 close 重入也以实际窗口生命周期与回调次数验证。
+`StickerActions` 提供复制、路径选择、`confirmClose(QWidget*)` 与 `confirmQuit(count)` 行为缝，默认使用真实剪贴板、原生保存面板与中文三选一 QMessageBox；路径导出使用 `image_output` 的 PNG / JPEG 原子提交及格式感知命名工具。单张关闭先提交文本，已保存直接关闭，未保存选择取消 / 保存 / 放弃；面板取消或写入失败返回 false、提示并保留窗口。窗口以 confirmingClose / saveDialogOpen 保护嵌套循环，Qt 自身的 close 重入也以实际窗口生命周期与回调次数验证。
 
 `StickerManager::resolveUnsavedForQuit()` 在清理前结束编辑并提交文本，按创建顺序收集未保存项；汇总取消或任一逐张保存取消 / 失败返回 false，已保存项保持已保存。汇总期间禁用贴图交互与新增，保存 / 关闭确认期间再退出直接返回 false。控制器单独用 resolvingQuit 保护托盘重入，只有返回 true 才进入既有 cleanup，故中止不销毁选区、不释放热键；期间不接受新的截图或设置。`closeAll()` 使用 forceClose，aboutToQuit 与析构仍兜底清理，不二次确认；管理器保留待删除窗口的所有权，面板嵌套循环中的删除用 QPointer 防护。应用冒烟的两张贴图显式 saved=true，确认决策由进程内用例覆盖。选区退出码 9、受控模式码 2、结果码 1–11 与测量协议不变。
