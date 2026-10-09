@@ -3,6 +3,7 @@
 #include <QAbstractTextDocumentLayout>
 #include <QPainterPath>
 #include <QTextDocument>
+#include <cmath>
 namespace waibusnap
 {
 void paintAnnotation(QPainter& painter, const Annotation& annotation)
@@ -57,6 +58,22 @@ void paintAnnotation(QPainter& painter, const Annotation& annotation)
         context.palette.setColor(QPalette::Text, annotation.style.color);
         painter.translate(annotation.first);
         document.documentLayout()->draw(&painter, context);
+        break;
+    }
+    case AnnotationType::Cover:
+    {
+        const QRectF bounds = QRectF(annotation.first, annotation.last).normalized();
+        // 物理像素半开边界向外取整，所有触及像素均由不透明纯色替换。
+        const qreal left = std::floor(bounds.left());
+        const qreal top = std::floor(bounds.top());
+        const QRectF pixels(left, top, std::ceil(bounds.right()) - left,
+                            std::ceil(bounds.bottom()) - top);
+        QColor color = annotation.style.color;
+        color.setAlpha(255);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setOpacity(1);
+        painter.setPen(Qt::NoPen);
+        painter.fillRect(pixels, color);
         break;
     }
     }

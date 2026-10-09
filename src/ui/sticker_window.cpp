@@ -583,14 +583,16 @@ void StickerWindow::ensureEditToolbar()
     editMenu_->setObjectName(QStringLiteral("stickerEditMenu"));
     const QString labels[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
                               QStringLiteral("直线"), QStringLiteral("箭头"),
-                              QStringLiteral("画笔"), QStringLiteral("文本")};
+                              QStringLiteral("画笔"), QStringLiteral("文本"),
+                              QStringLiteral("遮盖")};
     const QString names[] = {QStringLiteral("stickerEditRectangleToolButton"),
                              QStringLiteral("stickerEditEllipseToolButton"),
                              QStringLiteral("stickerEditLineToolButton"),
                              QStringLiteral("stickerEditArrowToolButton"),
                              QStringLiteral("stickerEditFreehandToolButton"),
-                             QStringLiteral("stickerEditTextToolButton")};
-    for (int index = 0; index < 6; ++index)
+                             QStringLiteral("stickerEditTextToolButton"),
+                             QStringLiteral("stickerEditCoverToolButton")};
+    for (int index = 0; index < 7; ++index)
     {
         auto* button = new QPushButton(labels[index], editToolbar_);
         button->setObjectName(names[index]);
@@ -700,7 +702,7 @@ void StickerWindow::ensureEditToolbar()
     editMoreButton_->setObjectName(QStringLiteral("stickerEditMoreButton"));
     editMoreButton_->setFocusPolicy(Qt::NoFocus);
     editMoreButton_->setToolTip(
-        QStringLiteral("编辑工具：图形、文本、样式、撤销、重做、保存、复制、完成"));
+        QStringLiteral("编辑工具：图形、文本、遮盖、样式、撤销、重做、保存、复制、完成"));
     connect(editMoreButton_, &QPushButton::clicked, this,
             [this]
             {
@@ -723,11 +725,12 @@ void StickerWindow::updateEditToolbar()
     // AnnotationTextEdit 的 ShortcutOverride 保证输入期间优先使用文本自身的历史。
     undoShortcut_->setEnabled(available);
     redoShortcut_->setEnabled(available);
-    widths_->setEnabled(activeTool_ != AnnotationType::Text);
+    widths_->setEnabled(activeTool_ != AnnotationType::Text &&
+                        activeTool_ != AnnotationType::Cover);
     sizes_->setEnabled(activeTool_ == AnnotationType::Text);
     auto* grid = static_cast<QGridLayout*>(
         static_cast<QVBoxLayout*>(editToolbar_->layout())->itemAt(0)->layout());
-    const int columns = std::clamp(width() / 44, 1, 6);
+    const int columns = std::clamp(width() / 44, 1, 7);
     for (int index = 0; index < toolButtons_.size(); ++index)
     {
         toolButtons_[index]->setChecked(activeTool_ == static_cast<AnnotationType>(index));

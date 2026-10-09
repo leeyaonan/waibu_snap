@@ -20,6 +20,7 @@ bool Annotation::isVisible() const
     {
     case AnnotationType::Rectangle:
     case AnnotationType::Ellipse:
+    case AnnotationType::Cover:
         return first.x() != last.x() && first.y() != last.y();
     case AnnotationType::Line:
     case AnnotationType::Arrow:
