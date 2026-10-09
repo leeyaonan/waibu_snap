@@ -584,19 +584,26 @@ void StickerWindow::ensureEditToolbar()
     const QString labels[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
                               QStringLiteral("直线"), QStringLiteral("箭头"),
                               QStringLiteral("画笔"), QStringLiteral("文本"),
-                              QStringLiteral("遮盖")};
+                              QStringLiteral("遮盖"), QStringLiteral("马赛克")};
     const QString names[] = {QStringLiteral("stickerEditRectangleToolButton"),
                              QStringLiteral("stickerEditEllipseToolButton"),
                              QStringLiteral("stickerEditLineToolButton"),
                              QStringLiteral("stickerEditArrowToolButton"),
                              QStringLiteral("stickerEditFreehandToolButton"),
                              QStringLiteral("stickerEditTextToolButton"),
-                             QStringLiteral("stickerEditCoverToolButton")};
-    for (int index = 0; index < 7; ++index)
+                             QStringLiteral("stickerEditCoverToolButton"),
+                             QStringLiteral("stickerEditMosaicToolButton")};
+    for (int index = 0; index < 8; ++index)
     {
         auto* button = new QPushButton(labels[index], editToolbar_);
         button->setObjectName(names[index]);
         button->setToolTip(labels[index] + QStringLiteral("：点击启用，再点取消工具"));
+        if (index == static_cast<int>(AnnotationType::Mosaic))
+        {
+            const auto notice = QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖");
+            button->setToolTip(notice);
+            button->setAccessibleName(notice);
+        }
         button->setFocusPolicy(Qt::NoFocus);
         button->setCheckable(true);
         toolButtons_.append(button);
@@ -605,6 +612,7 @@ void StickerWindow::ensureEditToolbar()
                 [this, index] { activateTool(static_cast<AnnotationType>(index)); });
         auto* action = editMenu_->addAction(labels[index]);
         action->setData(names[index]);
+        action->setToolTip(button->toolTip());
         action->setCheckable(true);
         connect(action, &QAction::triggered, button, &QPushButton::click);
     }
@@ -702,7 +710,7 @@ void StickerWindow::ensureEditToolbar()
     editMoreButton_->setObjectName(QStringLiteral("stickerEditMoreButton"));
     editMoreButton_->setFocusPolicy(Qt::NoFocus);
     editMoreButton_->setToolTip(
-        QStringLiteral("编辑工具：图形、文本、遮盖、样式、撤销、重做、保存、复制、完成"));
+        QStringLiteral("编辑工具：图形、文本、遮盖、马赛克、样式、撤销、重做、保存、复制、完成"));
     connect(editMoreButton_, &QPushButton::clicked, this,
             [this]
             {
@@ -726,11 +734,13 @@ void StickerWindow::updateEditToolbar()
     undoShortcut_->setEnabled(available);
     redoShortcut_->setEnabled(available);
     widths_->setEnabled(activeTool_ != AnnotationType::Text &&
-                        activeTool_ != AnnotationType::Cover);
+                        activeTool_ != AnnotationType::Cover &&
+                        activeTool_ != AnnotationType::Mosaic);
+    colors_->setEnabled(activeTool_ != AnnotationType::Mosaic);
     sizes_->setEnabled(activeTool_ == AnnotationType::Text);
     auto* grid = static_cast<QGridLayout*>(
         static_cast<QVBoxLayout*>(editToolbar_->layout())->itemAt(0)->layout());
-    const int columns = std::clamp(width() / 44, 1, 7);
+    const int columns = std::clamp(width() / 44, 1, 8);
     for (int index = 0; index < toolButtons_.size(); ++index)
     {
         toolButtons_[index]->setChecked(activeTool_ == static_cast<AnnotationType>(index));
@@ -770,6 +780,11 @@ void StickerWindow::activateTool(AnnotationType type)
                                                      : Qt::CrossCursor);
     setFocus(Qt::OtherFocusReason);
     updateEditToolbar();
+    if (activeTool_ == AnnotationType::Mosaic && !mosaicNoticeShown_)
+    {
+        mosaicNoticeShown_ = true;
+        showStatus(QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖"), true);
+    }
 }
 void StickerWindow::markDirty()
 {

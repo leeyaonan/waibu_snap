@@ -126,6 +126,7 @@ class StickerWindow final : public QWidget
     qreal wheelRemainder_ = 0;
     qreal scale_ = 1;
     bool saved_ = false;
+    bool mosaicNoticeShown_ = false;
     bool editing_ = false;
     bool dragging_ = false;
     bool saveDialogOpen_ = false;
