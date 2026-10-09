@@ -72,7 +72,7 @@ void SelectionOverlay::ensureToolbar()
     toolbar_ = new QWidget(this);
     toolbar_->setObjectName(QStringLiteral("selectionToolbar"));
     toolbar_->setCursor(Qt::ArrowCursor);
-    toolbar_->setFixedWidth(std::min(640, width()));
+    toolbar_->setFixedWidth(std::min(720, width()));
     toolbar_->setStyleSheet(QStringLiteral(
         "QWidget#selectionToolbar { background: #202020; border-radius: 6px; }"
         "QPushButton { color: white; background: #404040; padding: 6px; border-radius: 4px; }"
@@ -84,20 +84,27 @@ void SelectionOverlay::ensureToolbar()
         "QLabel { color: white; }"));
     auto* layout = new QVBoxLayout(toolbar_);
     auto* tools = new QGridLayout;
-    const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"), QStringLiteral("直线"),
-                             QStringLiteral("箭头"), QStringLiteral("画笔"), QStringLiteral("文本"),
-                             QStringLiteral("遮盖")};
+    const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
+                             QStringLiteral("直线"), QStringLiteral("箭头"),
+                             QStringLiteral("画笔"), QStringLiteral("文本"),
+                             QStringLiteral("遮盖"), QStringLiteral("马赛克")};
     const QString objects[] = {
         QStringLiteral("rectangleToolButton"), QStringLiteral("ellipseToolButton"),
         QStringLiteral("lineToolButton"),      QStringLiteral("arrowToolButton"),
         QStringLiteral("freehandToolButton"),  QStringLiteral("textToolButton"),
-        QStringLiteral("coverToolButton")};
-    const int columns = width() >= 560 ? 7 : 3;
-    for (int index = 0; index < 7; ++index)
+        QStringLiteral("coverToolButton"),     QStringLiteral("mosaicToolButton")};
+    const int columns = width() >= 640 ? 8 : 3;
+    for (int index = 0; index < 8; ++index)
     {
         auto* button = new QPushButton(names[index], toolbar_);
         button->setObjectName(objects[index]);
         button->setToolTip(names[index] + QStringLiteral("：点击启用，再次点击恢复选区调整"));
+        if (index == static_cast<int>(AnnotationType::Mosaic))
+        {
+            const auto notice = QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖");
+            button->setToolTip(notice);
+            button->setAccessibleName(notice);
+        }
         button->setCheckable(true);
         button->setFocusPolicy(Qt::NoFocus);
         toolButtons_.append(button);
@@ -640,7 +647,15 @@ void SelectionOverlay::activateTool(AnnotationType type)
     toolbar_->findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"))
         ->setEnabled(activeTool_ == AnnotationType::Text);
     toolbar_->findChild<QComboBox*>(QStringLiteral("annotationWidthCombo"))
-        ->setEnabled(activeTool_ != AnnotationType::Text && activeTool_ != AnnotationType::Cover);
+        ->setEnabled(activeTool_ != AnnotationType::Text && activeTool_ != AnnotationType::Cover &&
+                     activeTool_ != AnnotationType::Mosaic);
+    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationColorCombo"))
+        ->setEnabled(activeTool_ != AnnotationType::Mosaic);
+    if (activeTool_ == AnnotationType::Mosaic && !mosaicNoticeShown_)
+    {
+        mosaicNoticeShown_ = true;
+        showStatus(QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖"), true);
+    }
     setFocus(Qt::OtherFocusReason);
     updateCursor(mapFromGlobal(QCursor::pos()));
     update();

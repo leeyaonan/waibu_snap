@@ -111,6 +111,7 @@ class SelectionOverlay final : public QWidget
     bool painted_ = false;
     bool finished_ = false;
     bool saved_ = false;
+    bool mosaicNoticeShown_ = false;
     bool saveDialogOpen_ = false;
 };
 }
