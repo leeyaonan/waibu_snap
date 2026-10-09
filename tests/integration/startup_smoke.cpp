@@ -18,6 +18,7 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QInputMethodEvent>
+#include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
@@ -3312,6 +3313,476 @@ class StartupSmokeTest final : public QObject
         drag(overlay, {80, 60}, {200, 140});
         drag(overlay, {80, 60}, {300, 190});
         QCOMPARE(overlay.selection(), QRect(399, 279, 1, 1));
+    }
+    void selectionNudgeKeys_data()
+    {
+        QTest::addColumn<qreal>("scale");
+        QTest::addColumn<int>("direction");
+        QTest::addColumn<int>("mode");
+        for (qreal scale : {1.0, 1.5, 2.0})
+            for (int mode = 0; mode < 3; ++mode)
+                for (int direction = 0; direction < 4; ++direction)
+                    QTest::newRow(
+                        qPrintable(QStringLiteral("%1-%2-%3").arg(scale).arg(mode).arg(direction)))
+                        << scale << direction << mode;
+    }
+    void selectionNudgeKeys()
+    {
+        using namespace waibusnap;
+        QFETCH(qreal, scale);
+        QFETCH(int, direction);
+        QFETCH(int, mode);
+        auto frame = annotationFrame();
+        frame.display.devicePixelRatio = scale;
+        frame.pixels = mosaicTestImage(QSize(800, 600) * scale);
+        frame.pixels.setDevicePixelRatio(scale);
+        SelectionOverlay overlay(frame);
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {200, 200});
+        QTRY_VERIFY(overlay.hasFocus());
+        const Qt::Key keys[] = {Qt::Key_Left, Qt::Key_Up, Qt::Key_Right, Qt::Key_Down};
+        const Qt::KeyboardModifiers modifiers[] = {Qt::NoModifier, Qt::ShiftModifier,
+                                                   Qt::AltModifier};
+        QRect expected(qRound(100 * scale), qRound(100 * scale), qRound(100 * scale),
+                       qRound(100 * scale));
+        QCOMPARE(overlay.selection(), expected);
+        const auto step = [&]
+        {
+            if (mode == 0)
+                expected.translate(direction == 0   ? -1
+                                   : direction == 2 ? 1
+                                                    : 0,
+                                   direction == 1   ? -1
+                                   : direction == 3 ? 1
+                                                    : 0);
+            else
+            {
+                const int amount = mode == 1 ? 1 : -1;
+                expected.adjust(direction == 0 ? -amount : 0, direction == 1 ? -amount : 0,
+                                direction == 2 ? amount : 0, direction == 3 ? amount : 0);
+            }
+        };
+        for (int repeat = 0; repeat < 3; ++repeat)
+        {
+            // 真实重复事件也必须逐次移动一个源像素，不能变成逻辑像素或加速。
+            QKeyEvent key(QEvent::KeyPress, keys[direction], modifiers[mode], QString(), repeat > 0,
+                          1);
+            QApplication::sendEvent(&overlay, &key);
+            step();
+            QVERIFY(key.isAccepted());
+            QCOMPARE(overlay.selection(), expected);
+            QCOMPARE(overlay.selectionSizeText(),
+                     QStringLiteral("%1 × %2 像素").arg(expected.width()).arg(expected.height()));
+            const QPoint anchor = mode == 0        ? expected.topLeft()
+                                  : direction == 0 ? QPoint(expected.left(), expected.center().y())
+                                  : direction == 1 ? QPoint(expected.center().x(), expected.top())
+                                  : direction == 2
+                                      ? QPoint(expected.right(), expected.center().y())
+                                      : QPoint(expected.center().x(), expected.bottom());
+            QVERIFY(overlay.magnifierVisible());
+            QCOMPARE(overlay.magnifierAnchor(), anchor);
+            QCOMPARE(overlay.magnifierPositionText(),
+                     QStringLiteral("%1, %2").arg(anchor.x()).arg(anchor.y()));
+            const QPoint cell = anchor - overlay.magnifierSampleRect().topLeft();
+            QCOMPARE(overlay.magnifierSample().pixelColor(cell), frame.pixels.pixelColor(anchor));
+        }
+        auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
+        QVERIFY(toolbar && toolbar->isVisible());
+        QVERIFY(overlay.rect().contains(toolbar->geometry()));
+        QVERIFY(!toolbar->geometry().intersects(overlay.magnifierRect()));
+        QVERIFY(!overlay.magnifierRect().contains(
+            (QPointF(overlay.magnifierAnchor()) / scale).toPoint()));
+    }
+    void selectionNudgeLimits_data()
+    {
+        QTest::addColumn<int>("direction");
+        QTest::addColumn<int>("mode");
+        for (int mode = 0; mode < 3; ++mode)
+            for (int direction = 0; direction < 4; ++direction)
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(mode).arg(direction)))
+                    << direction << mode;
+    }
+    void selectionNudgeLimits()
+    {
+        using namespace waibusnap;
+        QFETCH(int, direction);
+        QFETCH(int, mode);
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        overlay.activateWindow();
+        if (mode == 2)
+            drag(overlay, {100, 100}, {101, 101});
+        else
+            drag(overlay, {1, 1}, {799, 599});
+        QTRY_VERIFY(overlay.hasFocus());
+        const Qt::Key keys[] = {Qt::Key_Left, Qt::Key_Up, Qt::Key_Right, Qt::Key_Down};
+        const Qt::KeyboardModifiers modifiers[] = {Qt::NoModifier, Qt::ShiftModifier,
+                                                   Qt::AltModifier};
+        for (int index = 0; index < 6; ++index)
+            QTest::keyClick(&overlay, keys[direction], modifiers[mode]);
+        const QRect result = overlay.selection();
+        const QRect expected[] = {QRect(201, 200, 1, 2), QRect(200, 201, 2, 1),
+                                  QRect(200, 200, 1, 2), QRect(200, 200, 2, 1)};
+        if (mode == 2)
+            QCOMPARE(result, expected[direction]);
+        else if (direction == 0)
+            QCOMPARE(result.left(), 0);
+        else if (direction == 1)
+            QCOMPARE(result.top(), 0);
+        else if (direction == 2)
+            QCOMPARE(result.right(), 1599);
+        else
+            QCOMPARE(result.bottom(), 1199);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QVERIFY(overlay.exportToPath(temporary.filePath(QStringLiteral("边界.png"))));
+        QVERIFY(overlay.isSelectionSaved());
+        QKeyEvent limit(QEvent::KeyPress, keys[direction], modifiers[mode]);
+        limit.ignore();
+        QApplication::sendEvent(&overlay, &limit);
+        QVERIFY(limit.isAccepted());
+        QCOMPARE(overlay.selection(), result);
+        QVERIFY(overlay.isSelectionSaved());
+        // 两个维度都缩到 1 后，任意收缩仍不得翻转。
+        if (mode == 2)
+        {
+            for (int index = 0; index < 6; ++index)
+                QTest::keyClick(&overlay, direction % 2 == 0 ? Qt::Key_Up : Qt::Key_Left,
+                                Qt::AltModifier);
+            QCOMPARE(overlay.selection().size(), QSize(1, 1));
+            const QRect minimum = overlay.selection();
+            for (Qt::Key key : keys)
+                QTest::keyClick(&overlay, key, Qt::AltModifier);
+            QCOMPARE(overlay.selection(), minimum);
+        }
+    }
+    void selectionNudgeIgnoresModifiersAndControlFocus()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {200, 200});
+        QTRY_VERIFY(overlay.hasFocus());
+        const QRect before = overlay.selection();
+        const Qt::KeyboardModifiers ignored[] = {Qt::ShiftModifier | Qt::AltModifier,
+                                                 Qt::ControlModifier,
+                                                 Qt::MetaModifier,
+                                                 Qt::ControlModifier | Qt::ShiftModifier,
+                                                 Qt::MetaModifier | Qt::AltModifier,
+                                                 Qt::ShiftModifier | Qt::AltModifier |
+                                                     Qt::MetaModifier,
+                                                 Qt::ControlModifier | Qt::AltModifier,
+                                                 Qt::KeypadModifier};
+        for (auto modifiers : ignored)
+            for (Qt::Key key : {Qt::Key_Left, Qt::Key_Up, Qt::Key_Right, Qt::Key_Down})
+                QTest::keyClick(&overlay, key, modifiers);
+        QCOMPARE(overlay.selection(), before);
+        QVERIFY(!overlay.magnifierVisible());
+        auto* combo = overlay.findChild<QComboBox*>(QStringLiteral("annotationColorCombo"));
+        combo->setFocus();
+        QTRY_VERIFY(combo->hasFocus());
+        QTest::keyClick(combo, Qt::Key_Down);
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QCOMPARE(overlay.selection(), before);
+        QVERIFY(!overlay.magnifierVisible());
+        // 无选区也不触发；已有鼠标交互不能被键盘更改快照。
+        SelectionOverlay empty(annotationFrame());
+        empty.show();
+        empty.activateWindow();
+        empty.setFocus();
+        QTRY_VERIFY(empty.hasFocus());
+        QTest::keyClick(&empty, Qt::Key_Right);
+        QVERIFY(empty.selection().isEmpty());
+        QVERIFY(!empty.magnifierVisible());
+        QTest::mousePress(&empty, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        QTest::mouseMove(&empty, {200, 200});
+        const QRect dragging = empty.selection();
+        QTest::keyClick(&empty, Qt::Key_Right);
+        QCOMPARE(empty.selection(), dragging);
+        QTest::mouseRelease(&empty, Qt::LeftButton, Qt::NoModifier, {200, 200});
+    }
+    void selectionNudgeToolAndTextIsolation()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {400, 350});
+        QTRY_VERIFY(overlay.hasFocus());
+        const QRect before = overlay.selection();
+        const char* tools[] = {"rectangleToolButton", "ellipseToolButton",  "lineToolButton",
+                               "arrowToolButton",     "freehandToolButton", "textToolButton",
+                               "coverToolButton",     "mosaicToolButton"};
+        for (const char* tool : tools)
+        {
+            QTest::mouseClick(button(overlay, tool), Qt::LeftButton);
+            QVERIFY(overlay.activeTool().has_value());
+            for (auto modifier : {Qt::NoModifier, Qt::ShiftModifier, Qt::AltModifier})
+                for (auto key : {Qt::Key_Left, Qt::Key_Right, Qt::Key_Up, Qt::Key_Down})
+                    QTest::keyClick(&overlay, key, modifier);
+            QCOMPARE(overlay.selection(), before);
+            QVERIFY(!overlay.magnifierVisible());
+            drag(overlay, {150, 150}, {200, 200});
+            QVERIFY(!overlay.magnifierVisible());
+            if (overlay.activeTool() == AnnotationType::Text)
+            {
+                auto* editor = overlay.findChild<AnnotationTextEdit*>();
+                QVERIFY(editor && editor->isVisible());
+                editor->setPlainText(QStringLiteral("测试文本 ABC"));
+                editor->moveCursor(QTextCursor::End);
+                const int end = editor->textCursor().position();
+                QTest::keyClick(editor, Qt::Key_Left);
+                QCOMPARE(editor->textCursor().position(), end - 1);
+                QInputMethodEvent preedit(QStringLiteral("候选"), {});
+                QApplication::sendEvent(editor, &preedit);
+                QVERIFY(editor->isComposing());
+                QTest::keyClick(editor, Qt::Key_Right);
+                QCOMPARE(overlay.selection(), before);
+                QVERIFY(!overlay.magnifierVisible());
+                QInputMethodEvent clear;
+                QApplication::sendEvent(editor, &clear);
+            }
+            QTest::mouseClick(button(overlay, tool), Qt::LeftButton);
+            QVERIFY(!overlay.activeTool());
+        }
+    }
+    void selectionNudgeHistoryDirtyAndOutput()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto frame = annotationFrame();
+        QImage copied;
+        OverlayActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{true, {}};
+        };
+        SelectionOverlay overlay(frame, actions);
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {400, 350});
+        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        drag(overlay, {150, 150}, {200, 200});
+        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "undoAnnotationButton"), Qt::LeftButton);
+        QVERIFY(overlay.annotations().isEmpty());
+        QVERIFY(button(overlay, "redoAnnotationButton")->isEnabled());
+        const QString first = temporary.filePath(QStringLiteral("微调前.png"));
+        QVERIFY(overlay.exportToPath(first));
+        QVERIFY(overlay.isSelectionSaved());
+        QTRY_VERIFY(overlay.hasFocus());
+        const QRect before = overlay.selection();
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QCOMPARE(overlay.selection(), before.translated(1, 0));
+        QVERIFY(!overlay.isSelectionSaved());
+        QVERIFY(!button(overlay, "undoAnnotationButton")->isEnabled());
+        QVERIFY(button(overlay, "redoAnnotationButton")->isEnabled());
+        QTest::mouseClick(button(overlay, "redoAnnotationButton"), Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), 1);
+        const QRect nudged = overlay.selection();
+        standardKey(&overlay, QKeySequence::Undo);
+        QCOMPARE(overlay.selection(), nudged);
+        QVERIFY(overlay.annotations().isEmpty());
+        standardKey(&overlay, QKeySequence::Redo);
+        QCOMPARE(overlay.annotations().size(), 1);
+        QTest::keyClick(&overlay, Qt::Key_Down, Qt::ShiftModifier);
+        QVERIFY(overlay.magnifierVisible());
+        const QImage expected =
+            renderAnnotatedSelection(frame.pixels, overlay.annotations(), overlay.selection());
+        const QString path = temporary.filePath(QStringLiteral("微调后.png"));
+        QVERIFY(overlay.exportToPath(path));
+        const QImage saved(path);
+        QCOMPARE(saved, expected.convertToFormat(saved.format()));
+        QVERIFY(overlay.isSelectionSaved());
+        QVERIFY(overlay.magnifierVisible());
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QVERIFY(!overlay.isSelectionSaved());
+        const QImage finalImage =
+            renderAnnotatedSelection(frame.pixels, overlay.annotations(), overlay.selection());
+        QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
+        QCOMPARE(copied, finalImage);
+        QCOMPARE(finished.size(), 1);
+        QCOMPARE(finished.first().at(1).toInt(), copiedSessionOutcome);
+        QVERIFY(!overlay.magnifierVisible());
+        QVERIFY(overlay.magnifierSample().isNull());
+    }
+    void selectionNudgeSavePanelAndFinishedIsolation()
+    {
+        using namespace waibusnap;
+        SelectionOverlay* current = nullptr;
+        bool panelChecked = false;
+        OverlayActions actions;
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            const QRect before = current->selection();
+            current->setFocus();
+            QTest::keyClick(current, Qt::Key_Right);
+            panelChecked = current->selection() == before && !current->magnifierVisible();
+            return QString();
+        };
+        SelectionOverlay overlay(annotationFrame(), actions);
+        current = &overlay;
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {200, 200});
+        QTRY_VERIFY(overlay.hasFocus());
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QVERIFY(overlay.magnifierVisible());
+        QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+        QVERIFY(panelChecked);
+        const QRect before = overlay.selection();
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QCOMPARE(overlay.selection(), before);
+        QVERIFY(!overlay.magnifierVisible());
+        QVERIFY(overlay.magnifierSampleRect().isEmpty());
+    }
+    void magnifierMouseSampling_data()
+    {
+        QTest::addColumn<qreal>("scale");
+        QTest::addColumn<QPointF>("position");
+        const QPointF points[] = {{0, 0},     {800, 0}, {0, 600},   {800, 600}, {400, 0},
+                                  {400, 600}, {0, 300}, {800, 300}, {250, 200}};
+        for (qreal scale : {1.0, 1.5, 2.0})
+            for (int index = 0; index < 9; ++index)
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(scale).arg(index)))
+                    << scale << points[index];
+    }
+    void magnifierMouseSampling()
+    {
+        using namespace waibusnap;
+        QFETCH(qreal, scale);
+        QFETCH(QPointF, position);
+        auto frame = annotationFrame();
+        frame.display.devicePixelRatio = scale;
+        frame.display.logicalGeometry.moveTopLeft({-800, -600});
+        frame.pixels = mosaicTestImage(QSize(800, 600) * scale);
+        frame.pixels.setDevicePixelRatio(scale);
+        SelectionOverlay overlay(frame);
+        overlay.show();
+        QMouseEvent press(QEvent::MouseButtonPress, position, overlay.mapToGlobal(position),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &press);
+        QVERIFY(overlay.magnifierVisible());
+        const QPoint anchor(std::clamp(qRound(position.x() * scale), 0, frame.pixels.width() - 1),
+                            std::clamp(qRound(position.y() * scale), 0, frame.pixels.height() - 1));
+        QCOMPARE(overlay.magnifierAnchor(), anchor);
+        QCOMPARE(overlay.magnifierPositionText(),
+                 QStringLiteral("%1, %2").arg(anchor.x()).arg(anchor.y()));
+        const QRect sampled = overlay.magnifierSampleRect();
+        QVERIFY(sampled.contains(anchor));
+        QVERIFY(frame.pixels.rect().contains(sampled));
+        QCOMPARE(sampled.size(), QSize(15, 15));
+        const QImage sample = overlay.magnifierSample();
+        QCOMPARE(sample.devicePixelRatio(), qreal(1));
+        for (int y = 0; y < sample.height(); ++y)
+            for (int x = 0; x < sample.width(); ++x)
+                QCOMPARE(sample.pixelColor(x, y),
+                         frame.pixels.pixelColor(sampled.x() + x, sampled.y() + y));
+        if (position == QPointF(250, 200))
+            QCOMPARE(sample.pixelColor(7, 7), frame.pixels.pixelColor(anchor));
+        QVERIFY(!overlay.magnifierRect().contains((QPointF(anchor) / scale).toPoint()));
+        QMouseEvent release(QEvent::MouseButtonRelease, position, overlay.mapToGlobal(position),
+                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &release);
+        QVERIFY(!overlay.magnifierVisible());
+        QVERIFY(overlay.magnifierSample().isNull());
+    }
+    void magnifierFollowsSelectionGestures()
+    {
+        using namespace waibusnap;
+        const QPoint starts[] = {{300, 200}, {200, 220}, {400, 220}, {300, 150}, {300, 300}};
+        const QRect expected[] = {{404, 306, 400, 300},
+                                  {404, 300, 396, 300},
+                                  {400, 300, 404, 300},
+                                  {400, 306, 400, 294},
+                                  {400, 300, 400, 306}};
+        for (int index = 0; index < 5; ++index)
+        {
+            SelectionOverlay overlay(annotationFrame());
+            overlay.show();
+            drag(overlay, {200, 150}, {400, 300});
+            const QPoint start = starts[index];
+            QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, start);
+            QVERIFY(overlay.magnifierVisible());
+            QCOMPARE(overlay.magnifierAnchor(), start * 2);
+            QTest::mouseMove(&overlay, start + QPoint(2, 3));
+            QCOMPARE(overlay.magnifierAnchor(), (start + QPoint(2, 3)) * 2);
+            QCOMPARE(overlay.selection(), expected[index]);
+            QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, start + QPoint(2, 3));
+            QVERIFY(!overlay.magnifierVisible());
+        }
+    }
+    void magnifierPaintUsesNearestPixels()
+    {
+        using namespace waibusnap;
+        auto frame = annotationFrame();
+        frame.pixels = mosaicTestImage(frame.pixels.size());
+        frame.pixels.setDevicePixelRatio(2);
+        SelectionOverlay overlay(frame);
+        overlay.show();
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, {250, 200});
+        const QImage painted = overlay.grab().toImage();
+        const qreal dpr = painted.devicePixelRatio();
+        const QRect panel = overlay.magnifierRect();
+        const int cell = qRound(8 * dpr);
+        const QPoint grid(qRound(panel.x() * dpr) + qRound(4 * dpr),
+                          qRound(panel.y() * dpr) + qRound(4 * dpr));
+        const QImage sample = overlay.magnifierSample();
+        const QPoint marked = overlay.magnifierAnchor() - overlay.magnifierSampleRect().topLeft();
+        int black = 0, white = 0;
+        for (int y = 0; y < sample.height() * cell; ++y)
+            for (int x = 0; x < sample.width() * cell; ++x)
+            {
+                const QColor actual = painted.pixelColor(grid + QPoint(x, y));
+                if (QPoint(x / cell, y / cell) == marked)
+                {
+                    black += actual == QColor(Qt::black);
+                    white += actual == QColor(Qt::white);
+                    if (x % cell == cell / 2 && y % cell == cell / 2)
+                        QCOMPARE(actual, sample.pixelColor(marked));
+                }
+                else
+                    QCOMPARE(actual, sample.pixelColor(x / cell, y / cell));
+            }
+        QVERIFY(black > 0);
+        QVERIFY(white > 0);
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, {250, 200});
+    }
+    void magnifierKeyboardTimeoutAndCleanup()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        overlay.activateWindow();
+        drag(overlay, {100, 100}, {200, 200});
+        QTRY_VERIFY(overlay.hasFocus());
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QVERIFY(overlay.magnifierVisible());
+        QTest::qWait(450);
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QTest::qWait(400);
+        QVERIFY(overlay.magnifierVisible());
+        QTRY_VERIFY_WITH_TIMEOUT(!overlay.magnifierVisible(), 1200);
+        QVERIFY(overlay.magnifierSample().isNull());
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QVERIFY(overlay.magnifierVisible());
+        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        QVERIFY(!overlay.magnifierVisible());
+        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QVERIFY(overlay.magnifierVisible());
+        overlay.close();
+        QVERIFY(!overlay.magnifierVisible());
+        QVERIFY(overlay.magnifierSampleRect().isEmpty());
+        QVERIFY(overlay.magnifierPositionText().isEmpty());
+        QTest::qWait(850);
+        QVERIFY(!overlay.magnifierVisible());
     }
     void overlayCanPaintSelectAndCancel()
     {

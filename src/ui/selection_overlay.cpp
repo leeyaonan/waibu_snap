@@ -1,4 +1,5 @@
 #include "ui/selection_overlay.h"
+#include "core/selection_assistance.h"
 #include "core/window_snapping.h"
 #include "output/annotation_renderer.h"
 #include "session/monotonic_clock.h"
@@ -53,6 +54,9 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
                     status_->hide();
                 updateToolbar();
             });
+    magnifierTimeout_.setSingleShot(true);
+    magnifierTimeout_.setTimerType(Qt::PreciseTimer);
+    connect(&magnifierTimeout_, &QTimer::timeout, this, &SelectionOverlay::hideMagnifier);
 }
 void SelectionOverlay::ensureToolbar()
 {
@@ -269,6 +273,7 @@ void SelectionOverlay::saveSelection()
     if (finished_ || saveDialogOpen_ || selection_.isEmpty() || dragMode_ != DragMode::None)
         return;
     finishText(true);
+    hideMagnifier();
     saveDialogOpen_ = true;
     toolbar_->setEnabled(false);
     QPointer<SelectionOverlay> self(this);
@@ -387,6 +392,8 @@ void SelectionOverlay::updateCursor(QPointF position)
 }
 void SelectionOverlay::dragTo(QPointF position)
 {
+    if (dragMode_ != DragMode::Annotate)
+        showMouseMagnifier(position);
     maximumPressDistance_ = std::max(
         maximumPressDistance_, std::hypot(position.x() - press_.x(), position.y() - press_.y()));
     if (dragMode_ == DragMode::Annotate)
@@ -474,10 +481,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         }
         const QString hint = activeTool_ ? QStringLiteral("拖拽标注 · 再点工具调整选区 · Esc 取消")
                                          : QStringLiteral("单击吸附 · 拖拽框选 · Esc 取消");
-        const QString text = QStringLiteral("%1 × %2 像素   %3")
-                                 .arg(selection_.width())
-                                 .arg(selection_.height())
-                                 .arg(hint);
+        const QString text = selectionSizeText() + QStringLiteral("   ") + hint;
         const QRect box(16, 16, std::max(0, std::min(width() - 32, 580)), 36);
         painter.fillRect(box, QColor(20, 20, 20, 220));
         painter.setPen(Qt::white);
@@ -488,6 +492,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
             painter.fillRect(notice, QColor(20, 20, 20, 220));
             painter.drawText(notice.adjusted(12, 0, -12, 0), Qt::AlignVCenter, snappingNotice_);
         }
+        paintMagnifier(painter);
     }
     if (!painted_)
     {
@@ -499,6 +504,7 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
 {
     if (finished_ || saveDialogOpen_ || event->button() != Qt::LeftButton)
         return;
+    hideMagnifier();
     finishText(true);
     setFocus(Qt::MouseFocusReason);
     press_ = event->position();
@@ -533,6 +539,7 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
         setSelection({});
     }
     updateCursor(press_);
+    showMouseMagnifier(press_);
     updateToolbar();
     update();
 }
@@ -565,6 +572,7 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         draft_.reset();
     }
     dragMode_ = DragMode::None;
+    hideMagnifier();
     updateHover(event->position());
     updateCursor(event->position());
     updateToolbar();
@@ -587,8 +595,137 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
         undoAnnotation();
     else if (event->matches(QKeySequence::Redo))
         redoAnnotation();
+    else if (nudgeSelection(event))
+        event->accept();
     else
         QWidget::keyPressEvent(event);
+}
+QString SelectionOverlay::selectionSizeText() const
+{
+    return QStringLiteral("%1 × %2 像素").arg(selection_.width()).arg(selection_.height());
+}
+bool SelectionOverlay::nudgeSelection(QKeyEvent* event)
+{
+    if (!hasFocus() || activeTool_ || selection_.isEmpty() || dragMode_ != DragMode::None)
+        return false;
+    const auto modifiers = event->modifiers();
+    if (modifiers & ~(Qt::ShiftModifier | Qt::AltModifier) ||
+        modifiers == (Qt::ShiftModifier | Qt::AltModifier))
+        return false;
+    SelectionEdge edge;
+    switch (event->key())
+    {
+    case Qt::Key_Left:
+        edge = SelectionEdge::Left;
+        break;
+    case Qt::Key_Up:
+        edge = SelectionEdge::Top;
+        break;
+    case Qt::Key_Right:
+        edge = SelectionEdge::Right;
+        break;
+    case Qt::Key_Down:
+        edge = SelectionEdge::Bottom;
+        break;
+    default:
+        return false;
+    }
+    const auto mode = modifiers == Qt::ShiftModifier ? SelectionNudge::Expand
+                      : modifiers == Qt::AltModifier ? SelectionNudge::Shrink
+                                                     : SelectionNudge::Move;
+    setSelection(nudgedPixelSelection(selection_, edge, mode, frame_.pixels.size()));
+    updateToolbar();
+    showMagnifier(selectionNudgeAnchor(selection_, edge, mode), true);
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+    return true;
+}
+void SelectionOverlay::showMagnifier(QPoint anchor, bool keyboard)
+{
+    if (finished_ || saveDialogOpen_ || activeTool_)
+        return;
+    const QRect sampleRect = magnifierSamplingRect(anchor, frame_.pixels.size());
+    if (sampleRect.isEmpty())
+        return;
+    if (!magnifierVisible_ || anchor != magnifierAnchor_)
+    {
+        magnifierAnchor_ = anchor;
+        magnifierSampleRect_ = sampleRect;
+        magnifierSample_ = frame_.pixels.copy(sampleRect);
+        magnifierSample_.setDevicePixelRatio(1);
+    }
+    magnifierVisible_ = true;
+    if (keyboard)
+        magnifierTimeout_.start(700);
+    else
+        magnifierTimeout_.stop();
+    update();
+}
+void SelectionOverlay::showMouseMagnifier(QPointF position)
+{
+    const QPointF source = physicalPoint(position);
+    // 沿用物理坐标路径，最近像素取整后夹在实际像素索引内；不累计逻辑步长。
+    showMagnifier({std::clamp(qRound(source.x()), 0, frame_.pixels.width() - 1),
+                   std::clamp(qRound(source.y()), 0, frame_.pixels.height() - 1)},
+                  false);
+}
+void SelectionOverlay::hideMagnifier()
+{
+    magnifierTimeout_.stop();
+    magnifierVisible_ = false;
+    magnifierAnchor_ = {};
+    magnifierSampleRect_ = {};
+    magnifierSample_ = {};
+    update();
+}
+QString SelectionOverlay::magnifierPositionText() const
+{
+    return magnifierVisible_
+               ? QStringLiteral("%1, %2").arg(magnifierAnchor_.x()).arg(magnifierAnchor_.y())
+               : QString();
+}
+QRect SelectionOverlay::magnifierRect() const
+{
+    if (!magnifierVisible_)
+        return {};
+    const QSize panel(magnifierSample_.width() * magnifierCellSize + 8,
+                      magnifierSample_.height() * magnifierCellSize + 32);
+    const QPointF anchor = QPointF(magnifierAnchor_) / frame_.display.devicePixelRatio;
+    return placedMagnifier(anchor, panel, rect(),
+                           toolbar_ && toolbar_->isVisible() ? toolbar_->geometry() : QRect());
+}
+void SelectionOverlay::paintMagnifier(QPainter& painter)
+{
+    if (!magnifierVisible_)
+        return;
+    const QRect panel = magnifierRect();
+    const qreal dpr = devicePixelRatioF();
+    painter.save();
+    // 在目标设备像素坐标中整数对齐；每源像素在 1 / 1.5 / 2 倍为 8 / 12 / 16 像素。
+    painter.scale(1 / dpr, 1 / dpr);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    const QPoint origin(qRound(panel.x() * dpr), qRound(panel.y() * dpr));
+    const int cell = qRound(magnifierCellSize * dpr);
+    const int padding = qRound(4 * dpr);
+    const QRect grid(origin + QPoint(padding, padding), magnifierSample_.size() * cell);
+    const QRect background(origin, QSize(grid.width() + padding * 2, qRound(panel.height() * dpr)));
+    painter.fillRect(background, QColor(20, 20, 20));
+    painter.drawImage(grid, magnifierSample_, magnifierSample_.rect());
+    const QPoint offset = magnifierAnchor_ - magnifierSampleRect_.topLeft();
+    const QRectF marker(grid.topLeft() + offset * cell, QSize(cell, cell));
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(Qt::black, 3 * dpr));
+    painter.drawRect(marker.adjusted(1.5 * dpr, 1.5 * dpr, -1.5 * dpr, -1.5 * dpr));
+    painter.setPen(QPen(Qt::white, dpr));
+    painter.drawRect(marker.adjusted(1.5 * dpr, 1.5 * dpr, -1.5 * dpr, -1.5 * dpr));
+    painter.setPen(Qt::white);
+    QFont textFont = painter.font();
+    textFont.setPixelSize(qRound(12 * dpr));
+    painter.setFont(textFont);
+    painter.drawText(QRect(grid.x(), grid.y() + grid.height(), grid.width(), qRound(24 * dpr)),
+                     Qt::AlignCenter, magnifierPositionText());
+    painter.restore();
 }
 void SelectionOverlay::closeEvent(QCloseEvent* event)
 {
@@ -597,6 +734,7 @@ void SelectionOverlay::closeEvent(QCloseEvent* event)
     {
         hoveredWindowPixels_ = {};
         finished_ = true;
+        hideMagnifier();
         discardAnnotations();
         emit finished({}, cancelledSessionOutcome);
     }
@@ -606,6 +744,7 @@ void SelectionOverlay::complete(int outcome)
     if (finished_)
         return;
     finished_ = true;
+    hideMagnifier();
     hoveredWindowPixels_ = {};
     discardAnnotations();
     hide();
@@ -625,6 +764,7 @@ void SelectionOverlay::activateTool(AnnotationType type)
         return;
     finishText(true);
     activeTool_ = activeTool_ == type ? std::nullopt : std::optional<AnnotationType>(type);
+    hideMagnifier();
     for (int index = 0; index < toolButtons_.size(); ++index)
         toolButtons_[index]->setChecked(activeTool_ == static_cast<AnnotationType>(index));
     toolbar_->findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"))
