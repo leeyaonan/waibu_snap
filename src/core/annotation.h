@@ -14,7 +14,8 @@ enum class AnnotationType
     Line,
     Arrow,
     Freehand,
-    Text
+    Text,
+    Cover
 };
 const std::array<QColor, 3>& annotationColors();
 inline constexpr std::array<int, 3> annotationLineWidths = {2, 4, 8};
