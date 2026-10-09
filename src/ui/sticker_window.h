@@ -1,6 +1,7 @@
 #pragma once
 #include "core/annotation.h"
 #include "interfaces/sticker_window_behavior.h"
+#include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include <QTimer>
 #include <QWidget>
@@ -110,6 +111,7 @@ class StickerWindow final : public QWidget
     QComboBox* widths_ = nullptr;
     QComboBox* sizes_ = nullptr;
     AnnotationHistory history_;
+    AnnotationRenderCache renderCache_;
     AnnotationStyle style_;
     std::optional<AnnotationType> activeTool_;
     std::optional<Annotation> draft_;
@@ -124,6 +126,7 @@ class StickerWindow final : public QWidget
     qreal wheelRemainder_ = 0;
     qreal scale_ = 1;
     bool saved_ = false;
+    bool mosaicNoticeShown_ = false;
     bool editing_ = false;
     bool dragging_ = false;
     bool saveDialogOpen_ = false;

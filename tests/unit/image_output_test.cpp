@@ -1,15 +1,210 @@
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
+#include <QColorSpace>
 #include <QDir>
 #include <QFile>
 #include <QImageReader>
 #include <QTemporaryDir>
 #include <QTest>
+#include <algorithm>
 #include <utility>
 class ImageOutputTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void mosaicBlockFormulaAndAreaAverage()
+    {
+        using namespace waibusnap;
+        QCOMPARE(mosaicBlockSize({1, 2}), 4);
+        QCOMPARE(mosaicBlockSize({53, 100}), 4);
+        QCOMPARE(mosaicBlockSize({54, 100}), 5);
+        QCOMPARE(mosaicBlockSize({120, 200}), 10);
+        QCOMPARE(mosaicBlockSize({576, 900}), 48);
+        QCOMPARE(mosaicBlockSize({10000, 20000}), 48);
+        QImage source(11, 9, QImage::Format_ARGB32);
+        for (int y = 0; y < source.height(); ++y)
+            for (int x = 0; x < source.width(); ++x)
+                source.setPixelColor(x, y, QColor(x * 20, y * 20, 80, 100));
+        source.setDevicePixelRatio(2);
+        source.setColorSpace(QColorSpace::SRgb);
+        const auto original = source;
+        const auto patch = pixelateRegion(source, {1.25, 1.25, 8.5, 6.5});
+        QCOMPARE(patch.pixels, QRect(1, 1, 9, 7));
+        QCOMPARE(patch.image.devicePixelRatio(), qreal(1));
+        QCOMPARE(patch.image.colorSpace(), source.colorSpace());
+        QCOMPARE(pixelateRegion(source, {1.25, 1.25, 8.5, 6.5}).image, patch.image);
+        // 独立计算线性渐变块平均，完整块及残块均须均匀且不透明。
+        for (int y = 0; y < 7; ++y)
+            for (int x = 0; x < 9; ++x)
+            {
+                const int left = 1 + x / 4 * 4, top = 1 + y / 4 * 4;
+                const int right = std::min(left + 3, 9), bottom = std::min(top + 3, 7);
+                QCOMPARE(patch.image.pixelColor(x, y),
+                         QColor((left + right) * 10, (top + bottom) * 10, 80));
+            }
+        const auto clipped = pixelateRegion(source, {-2.25, -1.25, 10, 8});
+        QCOMPARE(clipped.pixels, QRect(0, 0, 8, 7));
+        // 原网格起点为 (-3,-2)，裁剪后第一块只有 1×2 像素。
+        QCOMPARE(clipped.image.pixelColor(0, 0), QColor(0, 10, 80));
+        QCOMPARE(clipped.image.pixelColor(0, 1), QColor(0, 10, 80));
+        QCOMPARE(clipped.image.pixelColor(1, 2), QColor(50, 70, 80));
+        const auto edge = pixelateRegion(source, {9.25, 7.25, 10, 10});
+        QCOMPARE(edge.pixels, QRect(9, 7, 2, 2));
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 2; ++x)
+                QCOMPARE(edge.image.pixelColor(x, y), QColor(190, 150, 80));
+        QVERIFY(pixelateRegion(source, {20, 20, 10, 10}).image.isNull());
+        QVERIFY(pixelateRegion(source, {1, 1, 0, 8}).image.isNull());
+        QVERIFY(pixelateRegion({}, {1, 1, 8, 8}).image.isNull());
+        const auto tiny = pixelateRegion(source, {5.2, 6.2, 0.1, 0.1});
+        QCOMPARE(tiny.pixels, QRect(5, 6, 1, 1));
+        QCOMPARE(tiny.image.pixelColor(0, 0), QColor(100, 120, 80));
+        QCOMPARE(source, original);
+    }
+    void mosaicReplacesShapeAndTextPixels_data()
+    {
+        QTest::addColumn<qreal>("dpr");
+        QTest::addColumn<bool>("reverse");
+        QTest::addColumn<QRect>("covered");
+        const qreal dprs[] = {1, 1.5, 2};
+        const QRect bounds[] = {{13, 11, 63, 39}, {19, 16, 95, 59}, {26, 22, 126, 78}};
+        for (int index = 0; index < 3; ++index)
+            for (const bool reverse : {false, true})
+                QTest::newRow(qPrintable(QStringLiteral("%1x-%2").arg(dprs[index]).arg(reverse)))
+                    << dprs[index] << reverse << bounds[index];
+    }
+    void mosaicReplacesShapeAndTextPixels()
+    {
+        QFETCH(qreal, dpr);
+        QFETCH(bool, reverse);
+        QFETCH(QRect, covered);
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QImage source(160, 120, QImage::Format_ARGB32_Premultiplied);
+        for (int y = 0; y < source.height(); ++y)
+            for (int x = 0; x < source.width(); ++x)
+                source.setPixelColor(x, y, QColor(x, y, (x + y) % 256));
+        source.setDevicePixelRatio(dpr);
+        const auto original = source;
+        Annotation rectangle{AnnotationType::Rectangle, {}, {5, 5}, {150, 100}, {}, {}};
+        Annotation line{AnnotationType::Line, {}, {0, 30}, {160, 30}, {}, {}};
+        line.style.color = Qt::green;
+        Annotation text{
+            AnnotationType::Text, {}, {10, 15}, {}, {}, QStringLiteral("敏感内容 ABC 123\n第二行")};
+        QVector<Annotation> underneath{rectangle, line, text};
+        const auto before = renderAnnotatedSelection(source, underneath, source.rect());
+        QVERIFY(before != cropFrozenSelection(source, source.rect()));
+        Annotation mosaic{AnnotationType::Mosaic,      {}, QPointF(13.25, 11.25) * dpr,
+                          QPointF(75.75, 49.75) * dpr, {}, {}};
+        if (reverse)
+            std::swap(mosaic.first, mosaic.last);
+        auto annotations = underneath;
+        annotations.append(mosaic);
+        const auto output = renderAnnotatedSelection(source, annotations, source.rect());
+        const QString path = temporary.filePath(QStringLiteral("马赛克.png"));
+        QVERIFY(exportPngToPath(output, path).success);
+        const QImage loaded(path);
+        const int block = dpr == 2 ? 7 : dpr == 1.5 ? 5 : 4;
+        QCOMPARE(mosaicBlockSize(covered.size()), block);
+        bool changed = false;
+        // 不调用像素化函数构造期望值，独立核对原基图的面积平均及完整网格。
+        for (int y = 0; y < loaded.height(); ++y)
+            for (int x = 0; x < loaded.width(); ++x)
+            {
+                QColor expected = before.pixelColor(x, y);
+                if (covered.contains(x, y))
+                {
+                    const int left = covered.x() + (x - covered.x()) / block * block;
+                    const int top = covered.y() + (y - covered.y()) / block * block;
+                    const int right = std::min(left + block - 1, covered.right());
+                    const int bottom = std::min(top + block - 1, covered.bottom());
+                    expected = QColor((left + right + 1) / 2, (top + bottom + 1) / 2,
+                                      (left + right + top + bottom + 1) / 2);
+                    changed |= expected != source.pixelColor(x, y);
+                }
+                QCOMPARE(output.pixelColor(x, y), expected);
+                QCOMPARE(loaded.pixelColor(x, y), expected);
+            }
+        QVERIFY(changed);
+        QImage preview = source;
+        AnnotationRenderCache cache;
+        {
+            QPainter painter(&preview);
+            painter.scale(1 / dpr, 1 / dpr);
+            paintAnnotations(painter, annotations, source, &cache);
+        }
+        preview.setDevicePixelRatio(1);
+        QCOMPARE(preview, output);
+        const QRect crop(20, 20, 80, 60);
+        QCOMPARE(renderAnnotatedSelection(source, annotations, crop), output.copy(crop));
+        AnnotationHistory history;
+        for (const auto& annotation : annotations)
+            QVERIFY(history.add(annotation));
+        QVERIFY(history.undo());
+        QCOMPARE(renderAnnotatedSelection(source, history.annotations(), source.rect()), before);
+        QVERIFY(history.redo());
+        QCOMPARE(renderAnnotatedSelection(source, history.annotations(), source.rect()), output);
+        // 样式不参与马赛克；草稿调用也必须完全一致。
+        mosaic.style = {QColor(), 0, 0, {}};
+        annotations.last() = mosaic;
+        QCOMPARE(renderAnnotatedSelection(source, annotations, source.rect()), output);
+        QImage draftPreview = renderAnnotatedSelection(source, underneath, source.rect());
+        {
+            QPainter painter(&draftPreview);
+            paintAnnotation(painter, mosaic, source);
+        }
+        QCOMPARE(draftPreview, output);
+        Annotation cover = mosaic;
+        cover.type = AnnotationType::Cover;
+        cover.style = {};
+        cover.style.color = Qt::blue;
+        annotations.append(cover);
+        const auto coveredOutput = renderAnnotatedSelection(source, annotations, source.rect());
+        for (int y = covered.top(); y <= covered.bottom(); ++y)
+            for (int x = covered.left(); x <= covered.right(); ++x)
+                QCOMPARE(coveredOutput.pixelColor(x, y), QColor(Qt::blue));
+        // 后画马赛克仍采样原基图，覆盖实心遮盖；后画图形仍位于马赛克之上。
+        annotations.append(mosaic);
+        QCOMPARE(renderAnnotatedSelection(source, annotations, source.rect()), output);
+        annotations.append(line);
+        QCOMPARE(renderAnnotatedSelection(source, annotations, source.rect()).pixelColor(50, 30),
+                 QColor(Qt::green));
+        Annotation outside = mosaic;
+        outside.first = {200, 200};
+        outside.last = {300, 300};
+        annotations = {outside};
+        QCOMPARE(renderAnnotatedSelection(source, annotations, source.rect()),
+                 cropFrozenSelection(source, source.rect()));
+        QCOMPARE(source, original);
+    }
+    void mosaicCacheMatchesDirectRenderingAndInvalidates()
+    {
+        using namespace waibusnap;
+        QImage source(120, 100, QImage::Format_ARGB32_Premultiplied);
+        source.fill(Qt::white);
+        source.setPixelColor(20, 20, Qt::black);
+        QVector<Annotation> annotations{{AnnotationType::Mosaic, {}, {10, 10}, {90, 80}, {}, {}}};
+        AnnotationRenderCache cache;
+        const auto compareCached = [&]
+        {
+            QImage preview = source.copy();
+            {
+                QPainter painter(&preview);
+                paintAnnotations(painter, annotations, source, &cache);
+            }
+            QCOMPARE(preview, renderAnnotatedSelection(source, annotations, source.rect()));
+        };
+        compareCached();
+        compareCached();
+        source.setPixelColor(20, 20, Qt::red);
+        compareCached();
+        annotations.last().last = {30, 30};
+        compareCached();
+        annotations.clear();
+        compareCached();
+        annotations.append({AnnotationType::Mosaic, {}, {15, 15}, {70, 65}, {}, {}});
+        compareCached();
+    }
     void coverReplacesShapeAndTextPixels_data()
     {
         QTest::addColumn<qreal>("dpr");
@@ -80,7 +275,7 @@ class ImageOutputTest final : public QObject
             {
                 QPainter painter(&preview);
                 painter.scale(1 / dpr, 1 / dpr);
-                paintAnnotations(painter, annotations);
+                paintAnnotations(painter, annotations, source);
             }
             preview.setDevicePixelRatio(1);
             QCOMPARE(preview, output);
@@ -196,7 +391,7 @@ class ImageOutputTest final : public QObject
         {
             QPainter painter(&preview);
             painter.scale(0.5, 0.5);
-            paintAnnotations(painter, annotations);
+            paintAnnotations(painter, annotations, background);
         }
         preview.setDevicePixelRatio(1);
         QCOMPARE(renderAnnotatedSelection(background, annotations, background.rect()), preview);
