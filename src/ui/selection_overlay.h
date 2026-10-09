@@ -32,6 +32,12 @@ class SelectionOverlay final : public QWidget
     bool hasPainted() const { return painted_; }
     bool isSelectionSaved() const { return saved_; }
     QString selectionSizeText() const;
+    bool magnifierVisible() const { return magnifierVisible_; }
+    QPoint magnifierAnchor() const { return magnifierAnchor_; }
+    QRect magnifierSampleRect() const { return magnifierSampleRect_; }
+    QImage magnifierSample() const { return magnifierSample_; }
+    QString magnifierPositionText() const;
+    QRect magnifierRect() const;
     QPoint selectionGlobalPosition() const;
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
     std::optional<AnnotationType> activeTool() const { return activeTool_; }
@@ -76,6 +82,10 @@ class SelectionOverlay final : public QWidget
     void finishText(bool commit, bool restoreFocus = true);
     void discardAnnotations();
     bool nudgeSelection(QKeyEvent* event);
+    void showMagnifier(QPoint anchor, bool keyboard);
+    void showMouseMagnifier(QPointF position);
+    void hideMagnifier();
+    void paintMagnifier(QPainter& painter);
     QPointF physicalPoint(QPointF position) const;
     void showStatus(const QString& text, bool temporary);
     bool finishSave(const ImageFileResult& output);
@@ -89,6 +99,11 @@ class SelectionOverlay final : public QWidget
     QWidget* toolbar_ = nullptr;
     QLabel* status_ = nullptr;
     QTimer statusTimeout_;
+    QTimer magnifierTimeout_;
+    QPoint magnifierAnchor_;
+    QRect magnifierSampleRect_;
+    QImage magnifierSample_;
+    bool magnifierVisible_ = false;
     AnnotationHistory history_;
     AnnotationRenderCache renderCache_;
     AnnotationStyle style_;
