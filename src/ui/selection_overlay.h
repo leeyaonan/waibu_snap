@@ -4,6 +4,7 @@
 #include "interfaces/capture_provider.h"
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
+#include "output/image_save.h"
 #include <QLabel>
 #include <QTimer>
 #include <QVector>
@@ -15,10 +16,9 @@ class QShortcut;
 namespace waibusnap
 {
 class AnnotationTextEdit;
-struct OverlayActions
+struct OverlayActions : ImageSaveActions
 {
     std::function<ImageOutputResult(const QImage&)> copyImage;
-    std::function<QString(QWidget*, const QString&)> chooseSavePath;
     std::function<ImageOutputResult(const QImage&)> pinImage;
 };
 class SelectionOverlay final : public QWidget
@@ -76,6 +76,7 @@ class SelectionOverlay final : public QWidget
     void discardAnnotations();
     QPointF physicalPoint(QPointF position) const;
     void showStatus(const QString& text, bool temporary);
+    bool finishSave(const ImageFileResult& output);
     QRectF logicalSelection() const;
     SelectionEdges edgesAt(QPointF position) const;
     void updateCursor(QPointF position);

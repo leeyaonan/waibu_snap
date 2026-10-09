@@ -56,6 +56,7 @@ class ApplicationController final : public QObject
     QMenu menu_;
     QSystemTrayIcon tray_;
     std::unique_ptr<GlobalHotkey> hotkey_;
+    AppSettings settings_;
     HotkeySettings hotkeySettings_;
     std::unique_ptr<DisplayTopology> displays_;
     std::unique_ptr<CaptureProvider> capture_;

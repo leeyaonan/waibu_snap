@@ -3,6 +3,7 @@
 #include "interfaces/sticker_window_behavior.h"
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
+#include "output/image_save.h"
 #include <QTimer>
 #include <QWidget>
 #include <functional>
@@ -28,10 +29,9 @@ enum class StickerQuitDecision
     SaveAll,
     DiscardAll
 };
-struct StickerActions
+struct StickerActions : ImageSaveActions
 {
     std::function<ImageOutputResult(const QImage&)> copyImage;
-    std::function<QString(QWidget*, const QString&)> chooseSavePath;
     std::function<StickerCloseDecision(QWidget*)> confirmClose;
     std::function<StickerQuitDecision(int)> confirmQuit;
 };
@@ -93,6 +93,7 @@ class StickerWindow final : public QWidget
     void finishText(bool commit, bool restoreFocus = true);
     void positionTextEditor();
     void showStatus(const QString& text, bool temporary);
+    bool finishSave(const ImageFileResult& output);
     void positionControls();
     qreal screenDpr() const;
     void moveDrag(QPointF globalPosition);
