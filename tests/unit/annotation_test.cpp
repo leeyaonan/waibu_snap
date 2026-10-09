@@ -2,6 +2,7 @@
 #include "core/selection_geometry.h"
 #include <QTest>
 #include <cmath>
+#include <utility>
 namespace
 {
 waibusnap::Annotation sample(waibusnap::AnnotationType type, int index = 0)
@@ -31,12 +32,17 @@ class AnnotationTest final : public QObject
 {
     Q_OBJECT
   private slots:
-    void sixTypesAndStyles()
+    void sevenTypesAndStyles()
     {
         using namespace waibusnap;
         AnnotationHistory history;
-        for (int type = 0; type < 6; ++type)
+        const AnnotationType types[] = {AnnotationType::Rectangle, AnnotationType::Ellipse,
+                                        AnnotationType::Line,      AnnotationType::Arrow,
+                                        AnnotationType::Freehand,  AnnotationType::Text,
+                                        AnnotationType::Cover};
+        for (int type = 0; type < 7; ++type)
         {
+            QCOMPARE(static_cast<int>(types[type]), type);
             Annotation annotation = sample(static_cast<AnnotationType>(type));
             annotation.style = {annotationColors()[type % 3], annotationLineWidths[type % 3],
                                 annotationTextSizes[type % 3], QStringLiteral("测试字体")};
@@ -44,7 +50,7 @@ class AnnotationTest final : public QObject
             QVERIFY(history.add(annotation));
             compare(history.annotations().last(), annotation);
         }
-        QCOMPARE(history.annotations().size(), qsizetype(6));
+        QCOMPARE(history.annotations().size(), qsizetype(7));
         QCOMPARE(history.annotations().last().text, QStringLiteral("截图说明 ABC 123\n第二行"));
         for (int index = 1; index < 3; ++index)
         {
@@ -52,6 +58,35 @@ class AnnotationTest final : public QObject
             QVERIFY(annotationLineWidths[index] > annotationLineWidths[index - 1]);
             QVERIFY(annotationTextSizes[index] > annotationTextSizes[index - 1]);
         }
+    }
+    void coverRejectsZeroAreaAndRestoresHistory()
+    {
+        using namespace waibusnap;
+        AnnotationHistory history;
+        const auto rectangle = sample(AnnotationType::Rectangle);
+        auto cover = sample(AnnotationType::Cover);
+        QVERIFY(cover.isVisible());
+        QVERIFY(history.add(rectangle));
+        QVERIFY(history.add(cover));
+        QVERIFY(history.undo());
+        compare(history.annotations().last(), rectangle);
+        for (const QPointF last : {cover.first, QPointF(cover.first.x(), cover.last.y()),
+                                   QPointF(cover.last.x(), cover.first.y())})
+        {
+            auto empty = cover;
+            empty.last = last;
+            QVERIFY(!empty.isVisible());
+            QVERIFY(!history.add(empty));
+            QVERIFY(history.canRedo());
+        }
+        QVERIFY(history.redo());
+        compare(history.annotations().last(), cover);
+        std::swap(cover.first, cover.last);
+        QVERIFY(cover.isVisible());
+        QVERIFY(history.add(cover));
+        QVERIFY(history.undo());
+        QVERIFY(history.redo());
+        compare(history.annotations().last(), cover);
     }
     void arrowGeometryScalesAndRotates()
     {
@@ -112,7 +147,7 @@ class AnnotationTest final : public QObject
         using namespace waibusnap;
         AnnotationHistory history;
         for (int index = 0; index < 25; ++index)
-            QVERIFY(history.add(sample(static_cast<AnnotationType>(index % 6), index)));
+            QVERIFY(history.add(sample(static_cast<AnnotationType>(index % 7), index)));
         const auto original = history.annotations();
         QCOMPARE(original.size(), qsizetype(25));
         for (int index = 0; index < AnnotationHistory::capacity; ++index)

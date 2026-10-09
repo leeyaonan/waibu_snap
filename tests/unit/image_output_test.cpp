@@ -5,10 +5,96 @@
 #include <QImageReader>
 #include <QTemporaryDir>
 #include <QTest>
+#include <utility>
 class ImageOutputTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void coverReplacesShapeAndTextPixels_data()
+    {
+        QTest::addColumn<qreal>("dpr");
+        QTest::addColumn<bool>("reverse");
+        QTest::addColumn<QRect>("covered");
+        const qreal dprs[] = {1, 1.5, 2};
+        const QRect bounds[] = {{13, 11, 63, 39}, {19, 16, 95, 59}, {26, 22, 126, 78}};
+        for (int index = 0; index < 3; ++index)
+            for (const bool reverse : {false, true})
+                QTest::newRow(qPrintable(QStringLiteral("%1x-%2").arg(dprs[index]).arg(reverse)))
+                    << dprs[index] << reverse << bounds[index];
+    }
+    void coverReplacesShapeAndTextPixels()
+    {
+        QFETCH(qreal, dpr);
+        QFETCH(bool, reverse);
+        QFETCH(QRect, covered);
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QImage source(160, 120, QImage::Format_ARGB32_Premultiplied);
+        for (int y = 0; y < source.height(); ++y)
+            for (int x = 0; x < source.width(); ++x)
+                source.setPixelColor(x, y, QColor(x, y, (x + y) % 256, 150 + x % 100));
+        source.setDevicePixelRatio(dpr);
+        const QImage original = source;
+        Annotation rectangle{AnnotationType::Rectangle, {}, {5, 5}, {150, 100}, {}, {}};
+        Annotation line{AnnotationType::Line, {}, {0, 30}, {160, 30}, {}, {}};
+        line.style.color = Qt::green;
+        Annotation text{
+            AnnotationType::Text, {}, {10, 15}, {}, {}, QStringLiteral("敏感内容 ABC 123\n第二行")};
+        const QVector<Annotation> underneath{rectangle, line, text};
+        const QImage before = renderAnnotatedSelection(source, underneath, source.rect());
+        QVERIFY(before != cropFrozenSelection(source, source.rect()));
+        const QString beforePath = temporary.filePath(QStringLiteral("遮盖前.png"));
+        QVERIFY(exportPngToPath(before, beforePath).success);
+        const QImage savedBefore(beforePath);
+        Annotation cover{AnnotationType::Cover,       {}, QPointF(13.25, 11.25) * dpr,
+                         QPointF(75.75, 49.75) * dpr, {}, {}};
+        if (reverse)
+            std::swap(cover.first, cover.last);
+        for (const QColor& color : annotationColors())
+        {
+            cover.style.color = color;
+            // 即使模型颜色含透明度，实心遮盖仍必须替换为不透明纯色。
+            cover.style.color.setAlpha(40);
+            auto annotations = underneath;
+            annotations.append(cover);
+            const auto output = renderAnnotatedSelection(source, annotations, source.rect());
+            QCOMPARE(output.devicePixelRatio(), qreal(1));
+            const QString path = temporary.filePath(QStringLiteral("遮盖.png"));
+            QVERIFY(exportPngToPath(output, path).success);
+            const QImage loaded(path);
+            QCOMPARE(loaded.size(), source.size());
+            QCOMPARE(loaded.devicePixelRatio(), qreal(1));
+            // 全图回读包含四边 / 四角及边界外邻接像素，检查无描边或半透明泄漏。
+            for (int y = 0; y < loaded.height(); ++y)
+                for (int x = 0; x < loaded.width(); ++x)
+                {
+                    const QColor expected =
+                        covered.contains(x, y) ? color : before.pixelColor(x, y);
+                    // 区域外分别比较内存合成与 PNG 基线，避免预乘转直通道的量化差异。
+                    QCOMPARE(loaded.pixelColor(x, y),
+                             covered.contains(x, y) ? color : savedBefore.pixelColor(x, y));
+                    QCOMPARE(output.pixelColor(x, y), expected);
+                }
+            QImage preview = source;
+            {
+                QPainter painter(&preview);
+                painter.scale(1 / dpr, 1 / dpr);
+                paintAnnotations(painter, annotations);
+            }
+            preview.setDevicePixelRatio(1);
+            QCOMPARE(preview, output);
+            const QRect crop(20, 20, 80, 60);
+            QCOMPARE(renderAnnotatedSelection(source, annotations, crop), output.copy(crop));
+            // 后画的图形仍按原序列覆盖遮盖；不会把遮盖固定成顶层。
+            annotations.append(line);
+            const auto later = renderAnnotatedSelection(source, annotations, source.rect());
+            QCOMPARE(later.pixelColor(50, 30), line.style.color);
+            QVERIFY(later != output);
+        }
+        QCOMPARE(source, original);
+        QCOMPARE(source.devicePixelRatio(), dpr);
+    }
     void annotationPixelsAndCrop_data()
     {
         QTest::addColumn<qreal>("dpr");
@@ -55,14 +141,14 @@ class ImageOutputTest final : public QObject
         QCOMPARE(moved.pixelColor(7, 2), QColor(Qt::red));
         QCOMPARE(moved.pixelColor(7, 7), QColor(Qt::white));
     }
-    void sixTypesRenderAndUndoRedoRestoresPixels()
+    void sevenTypesRenderAndUndoRedoRestoresPixels()
     {
         using namespace waibusnap;
         QImage background(400, 240, QImage::Format_ARGB32_Premultiplied);
         background.fill(Qt::white);
         AnnotationHistory history;
         QVector<QImage> steps{background};
-        for (int type = 0; type < 6; ++type)
+        for (int type = 0; type < 7; ++type)
         {
             Annotation annotation{
                 static_cast<AnnotationType>(type), {}, {qreal(10 + type * 55), 30},
@@ -77,13 +163,13 @@ class ImageOutputTest final : public QObject
             QVERIFY(output != steps.last());
             steps.append(output);
         }
-        for (int index = 5; index >= 0; --index)
+        for (int index = 6; index >= 0; --index)
         {
             QVERIFY(history.undo());
             QCOMPARE(renderAnnotatedSelection(background, history.annotations(), background.rect()),
                      steps[index]);
         }
-        for (int index = 1; index <= 6; ++index)
+        for (int index = 1; index <= 7; ++index)
         {
             QVERIFY(history.redo());
             QCOMPARE(renderAnnotatedSelection(background, history.annotations(), background.rect()),
@@ -96,7 +182,7 @@ class ImageOutputTest final : public QObject
         QImage background(300, 220, QImage::Format_ARGB32_Premultiplied);
         background.fill(Qt::white);
         QVector<Annotation> annotations;
-        for (int type = 0; type < 6; ++type)
+        for (int type = 0; type < 7; ++type)
         {
             Annotation annotation{
                 static_cast<AnnotationType>(type), {}, {20, qreal(20 + type * 25)},

@@ -89,6 +89,15 @@ void stickerDrag(waibusnap::StickerWindow& sticker, QPoint first, QPoint last)
         QApplication::sendEvent(&sticker, &event);
     }
 }
+void compareCoveredPixels(const QImage& actual, const QImage& before, QRect cover, QColor color)
+{
+    QCOMPARE(actual.size(), before.size());
+    QCOMPARE(actual.devicePixelRatio(), qreal(1));
+    for (int y = 0; y < actual.height(); ++y)
+        for (int x = 0; x < actual.width(); ++x)
+            QCOMPARE(actual.pixelColor(x, y),
+                     cover.contains(x, y) ? color : before.pixelColor(x, y));
+}
 // Windows 无控制台时 Qt 日志默认走调试器而不是 stderr；测试依赖子进程 stderr，
 // 显式启用官方开关（QT_FORCE_STDERR_LOGGING），双端行为一致。
 QProcessEnvironment childProcessEnvironment()
@@ -510,7 +519,10 @@ class StartupSmokeTest final : public QObject
         QVERIFY(sticker->isSaved());
         const char* names[] = {"stickerEditRectangleToolButton", "stickerEditEllipseToolButton",
                                "stickerEditLineToolButton",      "stickerEditArrowToolButton",
-                               "stickerEditFreehandToolButton",  "stickerEditTextToolButton"};
+                               "stickerEditFreehandToolButton",  "stickerEditTextToolButton",
+                               "stickerEditCoverToolButton"};
+        for (const char* name : names)
+            QVERIFY(sticker->findChild<QPushButton*>(QString::fromLatin1(name)));
         for (int index = 0; index < 5; ++index)
         {
             auto* tool = sticker->findChild<QPushButton*>(QString::fromLatin1(names[index]));
@@ -571,13 +583,21 @@ class StartupSmokeTest final : public QObject
         auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton"));
         QVERIFY(more && more->isVisible());
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
-        QCOMPARE(menu->actions().size(), qsizetype(14));
+        QCOMPARE(menu->actions().size(), qsizetype(15));
         QVERIFY(sticker->rect().contains(more->geometry()));
         // 折叠入口仍能启用文本、选择三字号并完成。
         menu->actions()[5]->trigger();
         QVERIFY(sizes->isEnabled());
-        menu->actions()[8]->menu()->actions()[2]->trigger();
+        menu->actions()[9]->menu()->actions()[2]->trigger();
         QCOMPARE(sizes->currentIndex(), 2);
+        menu->actions()[6]->trigger();
+        QVERIFY(sticker->activeTool() == AnnotationType::Cover);
+        QVERIFY(menu->actions()[6]->isChecked());
+        QVERIFY(!menu->actions()[8]->isEnabled());
+        QVERIFY(!menu->actions()[9]->isEnabled());
+        menu->actions()[6]->trigger();
+        QVERIFY(!sticker->activeTool());
+        QVERIFY(menu->actions()[8]->isEnabled());
         menu->actions().last()->trigger();
         QVERIFY(!sticker->isEditing());
     }
@@ -1099,6 +1119,227 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(summaries, 2);
         QVERIFY(windows.first());
     }
+    void coverOverlayToolbarFitsNarrowScreens_data()
+    {
+        QTest::addColumn<int>("screenWidth");
+        for (int width : {320, 480, 559, 560, 800})
+            QTest::newRow(qPrintable(QString::number(width))) << width;
+    }
+    void coverOverlayToolbarFitsNarrowScreens()
+    {
+        QFETCH(int, screenWidth);
+        using namespace waibusnap;
+        auto frame = annotationFrame();
+        frame.display.logicalGeometry.setWidth(screenWidth);
+        frame.pixels = QImage(screenWidth * 2, 1200, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(2);
+        SelectionOverlay overlay(frame);
+        overlay.show();
+        drag(overlay, {100, 100}, {250, 200});
+        auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
+        auto* first = button(overlay, "rectangleToolButton");
+        auto* cover = button(overlay, "coverToolButton");
+        QVERIFY(toolbar && first && cover);
+        QVERIFY(overlay.rect().contains(toolbar->geometry()));
+        QVERIFY(toolbar->rect().contains(cover->geometry()));
+        QVERIFY(cover->isVisible());
+        QCOMPARE(cover->y() == first->y(), screenWidth >= 560);
+        QTest::mouseClick(cover, Qt::LeftButton);
+        QVERIFY(overlay.activeTool() == AnnotationType::Cover);
+    }
+    void coverOverlayGesturesHistoryAndOutput_data()
+    {
+        QTest::addColumn<qreal>("dpr");
+        QTest::newRow("normal") << qreal(1);
+        QTest::newRow("fractional") << qreal(1.5);
+        QTest::newRow("retina") << qreal(2);
+    }
+    void coverOverlayGesturesHistoryAndOutput()
+    {
+        QFETCH(qreal, dpr);
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("覆盖层遮盖.png"));
+        QImage copied;
+        OverlayActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{true, {}};
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&) { return path; };
+        auto frame = annotationFrame();
+        frame.display.devicePixelRatio = dpr;
+        frame.pixels = QImage(QSize(800, 600) * dpr, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(dpr);
+        SelectionOverlay overlay(frame, actions);
+        overlay.show();
+        drag(overlay, {100, 100}, {300, 250});
+        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        drag(overlay, {110, 110}, {240, 220});
+        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {125, 125});
+        overlay.findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("敏感 ABC 123"));
+        auto* cover = button(overlay, "coverToolButton");
+        QVERIFY(cover && cover->isVisible());
+        QCOMPARE(cover->text(), QStringLiteral("遮盖"));
+        QTest::mouseClick(cover, Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QVERIFY(overlay.activeTool() == AnnotationType::Cover);
+        auto* widths = overlay.findChild<QComboBox*>(QStringLiteral("annotationWidthCombo"));
+        auto* sizes = overlay.findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"));
+        auto* colors = overlay.findChild<QComboBox*>(QStringLiteral("annotationColorCombo"));
+        QVERIFY(!widths->isEnabled());
+        QVERIFY(!sizes->isEnabled());
+        QVERIFY(colors->isEnabled());
+        QTest::mouseClick(cover, Qt::LeftButton);
+        QVERIFY(!overlay.activeTool());
+        QVERIFY(!cover->isChecked());
+        QVERIFY(widths->isEnabled());
+        QTest::mouseClick(cover, Qt::LeftButton);
+        QVERIFY(overlay.exportToPath(path));
+        QVERIFY(overlay.isSelectionSaved());
+        const QImage before(path);
+        const QRect selection = overlay.selection();
+        for (const QPoint end : {QPoint(115, 115), QPoint(115, 180), QPoint(225, 115)})
+        {
+            drag(overlay, {115, 115}, end);
+            QCOMPARE(overlay.annotations().size(), qsizetype(2));
+            QVERIFY(overlay.isSelectionSaved());
+        }
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, {115, 115});
+        QTest::mouseMove(&overlay, {225, 180});
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QVERIFY(overlay.isSelectionSaved());
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, {225, 180});
+        QCOMPARE(overlay.annotations().size(), qsizetype(3));
+        QCOMPARE(overlay.annotations().last().type, AnnotationType::Cover);
+        QCOMPARE(overlay.annotations().last().style.color, annotationColors()[0]);
+        QCOMPARE(overlay.annotations().last().first, QPointF(115, 115) * dpr);
+        QCOMPARE(overlay.selection(), selection);
+        QVERIFY(!overlay.isSelectionSaved());
+        const QRect covered = QRectF(QPointF(115, 115) * dpr, QPointF(225, 180) * dpr)
+                                  .toAlignedRect()
+                                  .translated(-selection.topLeft());
+        QVERIFY(overlay.exportToPath(path));
+        const QImage saved(path);
+        compareCoveredPixels(saved, before, covered, annotationColors()[0]);
+        QVERIFY(overlay.isSelectionSaved());
+        QTest::mouseClick(button(overlay, "undoAnnotationButton"), Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QVERIFY(!overlay.isSelectionSaved());
+        QCOMPARE(renderAnnotatedSelection(frame.pixels, overlay.annotations(), selection)
+                     .convertToFormat(before.format()),
+                 before);
+        QTest::mouseClick(button(overlay, "redoAnnotationButton"), Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(3));
+        QCOMPARE(renderAnnotatedSelection(frame.pixels, overlay.annotations(), selection)
+                     .convertToFormat(saved.format()),
+                 saved);
+        colors->setCurrentIndex(2);
+        drag(overlay, {225, 180}, {115, 115});
+        QCOMPARE(overlay.annotations().last().style.color, annotationColors()[2]);
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
+        compareCoveredPixels(copied, before, covered, annotationColors()[2]);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first().at(1).toInt(), 10);
+        QVERIFY(overlay.annotations().isEmpty());
+    }
+    void coverStickerGesturesHistoryAndOutput_data()
+    {
+        QTest::addColumn<qreal>("scale");
+        QTest::newRow("normal") << qreal(1);
+        QTest::newRow("fractional") << qreal(0.75);
+        QTest::newRow("enlarged") << qreal(2);
+    }
+    void coverStickerGesturesHistoryAndOutput()
+    {
+        QFETCH(qreal, scale);
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("贴图遮盖.png"));
+        QImage copied;
+        StickerActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{true, {}};
+        };
+        actions.confirmClose = [](QWidget*) { return StickerCloseDecision::Discard; };
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        StickerManager manager(nullptr, actions);
+        QVERIFY(manager.create(image, {40, 50}, true).success);
+        auto sticker = manager.windows().first();
+        sticker->setScale(scale, sticker->pos());
+        sticker->setEditing(true);
+        const QRect geometry = sticker->geometry();
+        const qreal factor = sticker->windowHandle()->screen()->devicePixelRatio() / scale;
+        stickerClick(*sticker, "stickerEditRectangleToolButton");
+        stickerDrag(*sticker, {80, 80}, {240, 200});
+        stickerClick(*sticker, "stickerEditTextToolButton");
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        sticker->findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("敏感 ABC 123"));
+        auto* cover =
+            sticker->findChild<QPushButton*>(QStringLiteral("stickerEditCoverToolButton"));
+        QVERIFY(cover && cover->isVisible());
+        QCOMPARE(cover->text(), QStringLiteral("遮盖"));
+        stickerClick(*sticker, "stickerEditCoverToolButton");
+        QCOMPARE(sticker->annotations().size(), qsizetype(2));
+        QVERIFY(sticker->activeTool() == AnnotationType::Cover);
+        auto* widths = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"));
+        auto* sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
+        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
+        QVERIFY(!widths->isEnabled());
+        QVERIFY(!sizes->isEnabled());
+        QVERIFY(colors->isEnabled());
+        stickerClick(*sticker, "stickerEditCoverToolButton");
+        QVERIFY(!sticker->activeTool());
+        QVERIFY(!cover->isChecked());
+        QVERIFY(widths->isEnabled());
+        stickerClick(*sticker, "stickerEditCoverToolButton");
+        QVERIFY(sticker->exportToPath(path));
+        const QImage before(path);
+        QVERIFY(sticker->isSaved());
+        for (const QPoint end : {QPoint(85, 85), QPoint(85, 170), QPoint(220, 85)})
+        {
+            stickerDrag(*sticker, {85, 85}, end);
+            QCOMPARE(sticker->annotations().size(), qsizetype(2));
+            QVERIFY(sticker->isSaved());
+        }
+        stickerDrag(*sticker, {85, 85}, {220, 170});
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        QCOMPARE(sticker->annotations().last().type, AnnotationType::Cover);
+        QCOMPARE(sticker->annotations().last().style.color, annotationColors()[0]);
+        QCOMPARE(sticker->annotations().last().first, QPointF(85, 85) * factor);
+        QCOMPARE(sticker->geometry(), geometry);
+        QVERIFY(!sticker->isSaved());
+        const QRect covered =
+            QRectF(QPointF(85, 85) * factor, QPointF(220, 170) * factor).toAlignedRect();
+        QVERIFY(sticker->exportToPath(path));
+        const QImage saved(path);
+        compareCoveredPixels(saved, before, covered, annotationColors()[0]);
+        QVERIFY(sticker->isSaved());
+        stickerClick(*sticker, "stickerEditUndoAnnotationButton");
+        QCOMPARE(sticker->annotations().size(), qsizetype(2));
+        QVERIFY(!sticker->isSaved());
+        QCOMPARE(sticker->renderedImage().convertToFormat(before.format()), before);
+        stickerClick(*sticker, "stickerEditRedoAnnotationButton");
+        QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        QCOMPARE(sticker->renderedImage().convertToFormat(saved.format()), saved);
+        colors->setCurrentIndex(2);
+        stickerDrag(*sticker, {220, 170}, {85, 85});
+        QCOMPARE(sticker->annotations().last().style.color, annotationColors()[2]);
+        stickerClick(*sticker, "stickerEditCopyButton");
+        compareCoveredPixels(copied, before, covered, annotationColors()[2]);
+        QVERIFY(!sticker->isSaved());
+        QVERIFY(sticker->isEditing());
+    }
     void annotationToolsAreDiscoverableAndGesturesTakePriority()
     {
         using namespace waibusnap;
@@ -1109,11 +1350,13 @@ class StartupSmokeTest final : public QObject
         drag(overlay, {100, 100}, {300, 250});
         const QRect selection = overlay.selection();
         const char* names[] = {"rectangleToolButton", "ellipseToolButton",  "lineToolButton",
-                               "arrowToolButton",     "freehandToolButton", "textToolButton"};
+                               "arrowToolButton",     "freehandToolButton", "textToolButton",
+                               "coverToolButton"};
         const QString labels[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
                                   QStringLiteral("直线"), QStringLiteral("箭头"),
-                                  QStringLiteral("画笔"), QStringLiteral("文本")};
-        for (int index = 0; index < 6; ++index)
+                                  QStringLiteral("画笔"), QStringLiteral("文本"),
+                                  QStringLiteral("遮盖")};
+        for (int index = 0; index < 7; ++index)
         {
             auto* tool = button(overlay, names[index]);
             QVERIFY(tool && tool->isVisible());
