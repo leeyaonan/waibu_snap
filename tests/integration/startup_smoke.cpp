@@ -30,6 +30,7 @@
 #include <QSignalSpy>
 #include <QString>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QTest>
 #include <QWheelEvent>
 #include <QWindow>
@@ -2428,7 +2429,7 @@ class StartupSmokeTest final : public QObject
                 QCOMPARE(loaded, expected.convertToFormat(loaded.format()));
         }
     }
-    void invalidQuickDirectoryFallsBackAndCancelKeepsImage_data()
+    void quickDirectoryAvailabilityAndCancelKeepsImage_data()
     {
         QTest::addColumn<bool>("sticker");
         QTest::addColumn<int>("kind");
@@ -2438,7 +2439,7 @@ class StartupSmokeTest final : public QObject
                     QStringLiteral("%1-%2").arg(sticker ? "sticker" : "overlay").arg(kind)))
                     << sticker << kind;
     }
-    void invalidQuickDirectoryFallsBackAndCancelKeepsImage()
+    void quickDirectoryAvailabilityAndCancelKeepsImage()
     {
         using namespace waibusnap;
         QFETCH(bool, sticker);
@@ -2452,6 +2453,7 @@ class StartupSmokeTest final : public QObject
             QVERIFY(file.open(QIODevice::WriteOnly));
             file.write("original");
         }
+        bool directlyWritable = false;
         if (kind == 2)
         {
             QVERIFY(QDir().mkpath(directory));
@@ -2479,8 +2481,8 @@ class StartupSmokeTest final : public QObject
             QVERIFY(manager.create(sampleFrame().pixels, {30, 40}).success);
             const auto window = manager.windows().first();
             const QImage image = window->image();
-            QVERIFY(!window->saveImage());
-            QVERIFY(!window->isSaved());
+            QCOMPARE(window->saveImage(), directlyWritable);
+            QCOMPARE(window->isSaved(), directlyWritable);
             QVERIFY(window->isVisible());
             QCOMPARE(window->image(), image);
             QCOMPARE(manager.count(), 1);
@@ -2495,7 +2497,7 @@ class StartupSmokeTest final : public QObject
             drag(overlay, {20, 10}, {80, 60});
             const QRect selection = overlay.selection();
             QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
-            QVERIFY(!overlay.isSelectionSaved());
+            QCOMPARE(overlay.isSelectionSaved(), directlyWritable);
             QVERIFY(overlay.isVisible());
             QCOMPARE(overlay.selection(), selection);
             QCOMPARE(finished.count(), 0);
@@ -2504,7 +2506,15 @@ class StartupSmokeTest final : public QObject
             QVERIFY(QFile::setPermissions(directory, QFileDevice::ReadOwner |
                                                          QFileDevice::WriteOwner |
                                                          QFileDevice::ExeOwner));
-        QCOMPARE(panels, 1);
+        QCOMPARE(panels, directlyWritable ? 0 : 1);
+        if (directlyWritable)
+        {
+            const QStringList files = QDir(directory).entryList(QDir::Files | QDir::Hidden);
+            QCOMPARE(files.size(), 1);
+            QImageReader reader(QDir(directory).filePath(files.first()));
+            QCOMPARE(reader.format(), QByteArray("jpeg"));
+            QCOMPARE(reader.size(), sticker ? sampleFrame().pixels.size() : QSize(120, 100));
+        }
         QVERIFY(!QFileInfo::exists(temporary.filePath(QStringLiteral("错误.png"))));
     }
     void quitSaveAllUsesQuickDirectoryWithoutCollisions_data()

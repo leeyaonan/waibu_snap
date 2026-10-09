@@ -132,13 +132,15 @@ macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release 本机构建与 WaibuSnap De
 
 `image_output` 增加 JPEG 按 JPEG 解码、`.jpg` / `.jpeg` / 大写后缀 / 无后缀、原像素尺寸 / DPR=1 / 无 alpha / sRGB、合成标注区域允许有损容差；缺失目录 / 只读原文件原子失败且原字节不变、连续同时间戳新文件不覆盖及临时文件清理。既有 PNG 用例逐字保留，PNG 专用工具作为兼容入口继续验证原契约。
 
-`quickSaveDirectoryCollisionAndFormat` 在覆盖层 / 贴图的 PNG / JPEG 四组数据中验证面板零调用、每次读取偏好、预置同时间戳旧文件不变、连续输出不重名、完整绝对路径与 tooltip、真实编码回读尺寸 / DPR；`invalidQuickDirectoryFallsBackAndCancelKeepsImage` 验证不存在 / 文件冒充 / 不可写 / 空目录回退面板，取消后选区或贴图及保存状态保留；`quitSaveAllUsesQuickDirectoryWithoutCollisions` 验证隐藏的三张未保存贴图共用快速目录，同时间戳两格式均不重名。
+`quickSaveDirectoryCollisionAndFormat` 在覆盖层 / 贴图的 PNG / JPEG 四组数据中验证面板零调用、每次读取偏好、预置同时间戳旧文件不变、连续输出不重名、完整绝对路径与 tooltip、真实编码回读尺寸 / DPR；`quickDirectoryAvailabilityAndCancelKeepsImage` 验证不存在 / 文件冒充 / 实际不可写 / 空目录回退面板，取消后选区或贴图及保存状态保留；目录只读属性夹具先用真实临时文件探针确认能否创建文件，可写时应快速保存；`quitSaveAllUsesQuickDirectoryWithoutCollisions` 验证隐藏的三张未保存贴图共用快速目录，同时间戳两格式均不重名。
 
-`savePanelFormatsNormalizeSuffixAndDispatch` 验证过滤器有损文案、按过滤器规范化后缀、默认 PNG 偏好下面板显式选 `.jpeg` 后真实输出 JPEG，以及未知后缀仍按原 PNG 规则追加。原「其他后缀均追加 `.png`、不会输出 JPEG」说明调整为「未知后缀追加 `.png`，`.jpg` / `.jpeg` 输出 JPEG」；既有默认 PNG 流程与断言不变。原生面板及系统查看器由下方人工清单核对，注入测试不冒充真机验收。工作区 docs/ 不修改，结果码 / 测量协议及剪贴板行为不变。 `quickSaveWriteFailureDoesNotSwitchToPanel` 复现决策后目录消失的写入失败，确保不静默转到面板；`saveSettingsWriteFailureKeepsDialogAndCanRetry` 验证偏好写入失败对话框保持打开、重试成功。
+`savePanelFormatsNormalizeSuffixAndDispatch` 验证过滤器有损文案、按过滤器规范化后缀、默认 PNG 偏好下面板显式选 `.jpeg` 后真实输出 JPEG，以及未知后缀仍按原 PNG 规则追加。原「其他后缀均追加 `.png`、不会输出 JPEG」说明调整为「未知后缀追加 `.png`，`.jpg` / `.jpeg` 输出 JPEG」；既有默认 PNG 流程与断言不变。原生面板及系统查看器由下方人工清单核对，注入测试不冒充真机验收。工作区 docs/ 不修改，结果码 / 测量协议及剪贴板行为不变。`quickSaveWriteFailureDoesNotSwitchToPanel` 复现决策后目录消失的写入失败，确保不静默转到面板；`saveSettingsWriteFailureKeepsDialogAndCanRetry` 验证偏好写入失败对话框保持打开、重试成功。
 
-本机 Qt 6.11.2 / arm64 Release 构建、WaibuSnap Dev 稳定签名及 requirement 校验通过；全部 **11 项 CTest**、clang-format **18.1.8** 与 `git diff --check` 通过。主 `startup_smoke` **113 项**、独立 2 倍屏幕 DPR 子集 **38 项**通过，均零失败 / 零跳过。第一轮新增 JPEG 夹具写错标注字段名导致编译失败，修正为已有 `first` / `last` 后复验通过，未调整既有 PNG 用例。
+本机 Qt 6.11.2 / arm64 Release 构建、WaibuSnap Dev 稳定签名及 requirement 校验通过；全部 **11 项 CTest**、clang-format **18.1.8** 与 `git diff --check` 通过。主 `startup_smoke` **113 项**、独立 2 倍屏幕 DPR 子集 **38 项**通过，均零失败 / 零跳过。既有 PNG 用例逐字保留。
 
 独立 `open -W -n` LaunchServices 进程使用临时 INI / JSONL 完成两条注入，依次冷 / 热且均 **码 2**，冻结帧 **1920×1080**、选区 **0×0**，可见代理与可交互终点均非零。原有普通实例不退出；受控进程因 F1 占用如实记录系统错误 -9878，测试注入正常完成并自行退出。没有改屏幕录制权限；原始日志留本机临时目录，不提交图片或设置。双端 CI 链接与状态登记在本次 PR。
+
+首轮 Windows CI 在新增目录只读属性的两组夹具失败：Windows 的目录只读属性不等于不可创建文件，实际快速保存成功符合目录可写语义。夹具改用真实临时文件探针建立预期：不可写则回退面板，可写则直接输出 JPEG；不跳过用例、不放宽缺失目录 / 文件冒充目录的断言，导出到只读文件的原子失败断言也保持不变。此修正仅影响测试夹具，产品保存逻辑无需变更。
 
 ## 人工核对清单（待用户真机操作）
 
