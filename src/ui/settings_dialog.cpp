@@ -1,16 +1,23 @@
 #include "ui/settings_dialog.h"
 #include "app/hotkey_rules.h"
+#include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
 namespace waibusnap
 {
 SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, const QString& notice,
-                               QWidget* parent)
-    : QDialog(parent), saveHotkey_(std::move(save))
+                               QWidget* parent, SaveSettingsActions saveSettings)
+    : QDialog(parent), saveHotkey_(std::move(save)), originalSequence_(current),
+      saveSettings_(std::move(saveSettings))
 {
     setWindowTitle(QStringLiteral("WaibuSnap 设置"));
     setMinimumWidth(440);
@@ -36,6 +43,60 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     help->setObjectName(QStringLiteral("hotkeyHelp"));
     help->setWordWrap(true);
     layout->addWidget(help);
+    auto* saveGroup = new QGroupBox(QStringLiteral("保存"), this);
+    auto* saveLayout = new QVBoxLayout(saveGroup);
+    saveLayout->addWidget(
+        new QLabel(QStringLiteral("快速保存目录（留空时每次选择路径）"), saveGroup));
+    auto* directoryLayout = new QHBoxLayout;
+    directory_ = new QLineEdit(saveSettings_.preferences.quickDirectory, saveGroup);
+    directory_->setObjectName(QStringLiteral("quickDirectory"));
+    directory_->setReadOnly(true);
+    directory_->setPlaceholderText(QStringLiteral("每次选择路径"));
+    directory_->setToolTip(directory_->text());
+    auto* choose = new QPushButton(QStringLiteral("选择…"), saveGroup);
+    choose->setObjectName(QStringLiteral("chooseDirectoryButton"));
+    auto* clear = new QPushButton(QStringLiteral("清除"), saveGroup);
+    clear->setObjectName(QStringLiteral("clearDirectoryButton"));
+    directoryLayout->addWidget(directory_, 1);
+    directoryLayout->addWidget(choose);
+    directoryLayout->addWidget(clear);
+    saveLayout->addLayout(directoryLayout);
+    if (!saveSettings_.chooseDirectory)
+        saveSettings_.chooseDirectory = [](QWidget* parent, const QString& current) {
+            return QFileDialog::getExistingDirectory(parent, QStringLiteral("选择快速保存目录"),
+                                                     current);
+        };
+    connect(choose, &QPushButton::clicked, this,
+            [this]
+            {
+                const QString selected = saveSettings_.chooseDirectory(this, directory_->text());
+                if (!selected.isEmpty())
+                {
+                    directory_->setText(QDir(selected).absolutePath());
+                    directory_->setToolTip(directory_->text());
+                }
+            });
+    connect(clear, &QPushButton::clicked, this,
+            [this]
+            {
+                directory_->clear();
+                directory_->setToolTip({});
+            });
+    format_ = new QComboBox(saveGroup);
+    format_->setObjectName(QStringLiteral("saveFormat"));
+    format_->addItems({QStringLiteral("PNG"), QStringLiteral("JPEG")});
+    format_->setCurrentIndex(saveSettings_.preferences.format == ImageFormat::Jpeg ? 1 : 0);
+    saveLayout->addWidget(format_);
+    auto* lossNotice = new QLabel(
+        QStringLiteral("JPEG 为有损格式，压缩可能改变颜色与细节；需保留原像素时请选择 PNG。"),
+        saveGroup);
+    lossNotice->setObjectName(QStringLiteral("jpegLossNotice"));
+    lossNotice->setWordWrap(true);
+    lossNotice->setVisible(format_->currentIndex() == 1);
+    saveLayout->addWidget(lossNotice);
+    connect(format_, &QComboBox::currentIndexChanged, lossNotice,
+            [lossNotice](int index) { lossNotice->setVisible(index == 1); });
+    layout->addWidget(saveGroup);
     status_ = new QLabel(notice, this);
     status_->setObjectName(QStringLiteral("settingsStatus"));
     status_->setTextFormat(Qt::PlainText);
@@ -65,8 +126,12 @@ void SettingsDialog::save()
 {
     const auto sequence = editor_->keySequence();
     QString error = hotkeyValidationError(sequence);
-    if (error.isEmpty())
+    if (error.isEmpty() && sequence != originalSequence_)
         error = saveHotkey_(sequence);
+    if (error.isEmpty() && saveSettings_.savePreferences)
+        error = saveSettings_.savePreferences({directory_->text(), format_->currentIndex() == 1
+                                                                       ? ImageFormat::Jpeg
+                                                                       : ImageFormat::Png});
     if (!error.isEmpty())
     {
         status_->setText(error);

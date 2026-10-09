@@ -33,6 +33,40 @@ LoadedHotkey AppSettings::loadHotkey() const
                 .arg(error)};
     return {sequence, {}};
 }
+SavePreferences AppSettings::loadSavePreferences() const
+{
+    QSettings settings(filePath_, QSettings::IniFormat);
+    SavePreferences preferences;
+    const QString directory = settings.value(QStringLiteral("save/quickDirectory")).toString();
+    const QString format =
+        settings.value(QStringLiteral("save/format"), QStringLiteral("png")).toString();
+    if (settings.status() != QSettings::NoError)
+        return {};
+    if (directory.isEmpty() || QDir::isAbsolutePath(directory))
+        preferences.quickDirectory = directory;
+    if (format == QStringLiteral("jpeg"))
+        preferences.format = ImageFormat::Jpeg;
+    // 非法键独立回退；读取不修复文件，也不触碰热键键。
+    return preferences;
+}
+QString AppSettings::saveSavePreferences(const SavePreferences& preferences) const
+{
+    if (!preferences.quickDirectory.isEmpty() && !QDir::isAbsolutePath(preferences.quickDirectory))
+        return QStringLiteral("快速保存目录必须为绝对路径。");
+    if (preferences.format != ImageFormat::Png && preferences.format != ImageFormat::Jpeg)
+        return QStringLiteral("保存格式无效。");
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()))
+        return QStringLiteral("无法创建设置目录，请重试保存。");
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.setValue(QStringLiteral("save/quickDirectory"), preferences.quickDirectory);
+    settings.setValue(QStringLiteral("save/format"), preferences.format == ImageFormat::Jpeg
+                                                         ? QStringLiteral("jpeg")
+                                                         : QStringLiteral("png"));
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return QStringLiteral("保存偏好写入失败，请重试保存。");
+    return {};
+}
 QString AppSettings::saveHotkey(const QKeySequence& sequence) const
 {
     const QString error = hotkeyValidationError(sequence);

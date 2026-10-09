@@ -1,5 +1,6 @@
 #pragma once
 #include "interfaces/global_hotkey.h"
+#include "output/image_output.h"
 #include <QKeySequence>
 #include <QString>
 namespace waibusnap
@@ -14,6 +15,8 @@ class AppSettings
   public:
     explicit AppSettings(QString filePath = {});
     LoadedHotkey loadHotkey() const;
+    SavePreferences loadSavePreferences() const;
+    QString saveSavePreferences(const SavePreferences& preferences) const;
     // 注册成功后才调用；失败返回中文原因，不声称重启后已保留。
     QString saveHotkey(const QKeySequence& sequence) const;
 
