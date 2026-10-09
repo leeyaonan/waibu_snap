@@ -13,14 +13,17 @@ bool Annotation::isVisible() const
 {
     const auto finite = [](QPointF point)
     { return std::isfinite(point.x()) && std::isfinite(point.y()); };
-    if (!style.color.isValid() || style.lineWidth <= 0 || style.textSize <= 0 || !finite(first) ||
-        !finite(last))
+    if (!finite(first) || !finite(last))
+        return false;
+    if (type != AnnotationType::Mosaic &&
+        (!style.color.isValid() || style.lineWidth <= 0 || style.textSize <= 0))
         return false;
     switch (type)
     {
     case AnnotationType::Rectangle:
     case AnnotationType::Ellipse:
     case AnnotationType::Cover:
+    case AnnotationType::Mosaic:
         return first.x() != last.x() && first.y() != last.y();
     case AnnotationType::Line:
     case AnnotationType::Arrow:

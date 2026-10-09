@@ -279,9 +279,9 @@ void StickerWindow::paintEvent(QPaintEvent*)
     const qreal factor = scale_ / screenDpr();
     painter.scale(factor, factor);
     painter.drawImage(QPointF(0, 0), image_);
-    paintAnnotations(painter, annotations());
+    paintAnnotations(painter, annotations(), image_, &renderCache_);
     if (draft_)
-        paintAnnotation(painter, *draft_);
+        paintAnnotation(painter, *draft_, image_);
 }
 QImage StickerWindow::renderedImage() const
 {

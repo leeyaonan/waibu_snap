@@ -448,9 +448,9 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         const qreal scale = frame_.display.devicePixelRatio;
         painter.save();
         painter.scale(1 / scale, 1 / scale);
-        paintAnnotations(painter, annotations());
+        paintAnnotations(painter, annotations(), frame_.pixels, &renderCache_);
         if (draft_)
-            paintAnnotation(painter, *draft_);
+            paintAnnotation(painter, *draft_, frame_.pixels);
         painter.restore();
         const QRectF region = logicalSelection();
         QPainterPath shade;

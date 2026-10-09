@@ -2,6 +2,7 @@
 #include "core/annotation.h"
 #include "core/selection_geometry.h"
 #include "interfaces/capture_provider.h"
+#include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include <QLabel>
 #include <QTimer>
@@ -86,6 +87,7 @@ class SelectionOverlay final : public QWidget
     QLabel* status_ = nullptr;
     QTimer statusTimeout_;
     AnnotationHistory history_;
+    AnnotationRenderCache renderCache_;
     AnnotationStyle style_;
     std::optional<AnnotationType> activeTool_;
     std::optional<Annotation> draft_;

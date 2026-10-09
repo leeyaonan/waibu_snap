@@ -32,15 +32,15 @@ class AnnotationTest final : public QObject
 {
     Q_OBJECT
   private slots:
-    void sevenTypesAndStyles()
+    void eightTypesAndStyles()
     {
         using namespace waibusnap;
         AnnotationHistory history;
         const AnnotationType types[] = {AnnotationType::Rectangle, AnnotationType::Ellipse,
                                         AnnotationType::Line,      AnnotationType::Arrow,
                                         AnnotationType::Freehand,  AnnotationType::Text,
-                                        AnnotationType::Cover};
-        for (int type = 0; type < 7; ++type)
+                                        AnnotationType::Cover,     AnnotationType::Mosaic};
+        for (int type = 0; type < 8; ++type)
         {
             QCOMPARE(static_cast<int>(types[type]), type);
             Annotation annotation = sample(static_cast<AnnotationType>(type));
@@ -50,7 +50,7 @@ class AnnotationTest final : public QObject
             QVERIFY(history.add(annotation));
             compare(history.annotations().last(), annotation);
         }
-        QCOMPARE(history.annotations().size(), qsizetype(7));
+        QCOMPARE(history.annotations().size(), qsizetype(8));
         QCOMPARE(history.annotations().last().text, QStringLiteral("截图说明 ABC 123\n第二行"));
         for (int index = 1; index < 3; ++index)
         {
@@ -87,6 +87,40 @@ class AnnotationTest final : public QObject
         QVERIFY(history.undo());
         QVERIFY(history.redo());
         compare(history.annotations().last(), cover);
+    }
+    void mosaicRejectsZeroAreaAndRestoresHistory()
+    {
+        using namespace waibusnap;
+        AnnotationHistory history;
+        const auto rectangle = sample(AnnotationType::Rectangle);
+        auto mosaic = sample(AnnotationType::Mosaic);
+        // 马赛克不依赖颜色 / 线宽 / 字号，即使样式无效也不影响补丁。
+        mosaic.style = {QColor(), 0, 0, {}};
+        QVERIFY(mosaic.isVisible());
+        QVERIFY(history.add(rectangle));
+        QVERIFY(history.add(mosaic));
+        QVERIFY(history.undo());
+        compare(history.annotations().last(), rectangle);
+        for (const QPointF last : {mosaic.first, QPointF(mosaic.first.x(), mosaic.last.y()),
+                                   QPointF(mosaic.last.x(), mosaic.first.y())})
+        {
+            auto empty = mosaic;
+            empty.last = last;
+            QVERIFY(!empty.isVisible());
+            QVERIFY(!history.add(empty));
+            QVERIFY(history.canRedo());
+        }
+        QVERIFY(history.redo());
+        compare(history.annotations().last(), mosaic);
+        std::swap(mosaic.first, mosaic.last);
+        QVERIFY(mosaic.isVisible());
+        QVERIFY(history.add(mosaic));
+        QVERIFY(history.undo());
+        QVERIFY(history.redo());
+        compare(history.annotations().last(), mosaic);
+        QVERIFY(history.undo());
+        QVERIFY(history.add(sample(AnnotationType::Mosaic, 1)));
+        QVERIFY(!history.canRedo());
     }
     void arrowGeometryScalesAndRotates()
     {
@@ -147,7 +181,7 @@ class AnnotationTest final : public QObject
         using namespace waibusnap;
         AnnotationHistory history;
         for (int index = 0; index < 25; ++index)
-            QVERIFY(history.add(sample(static_cast<AnnotationType>(index % 7), index)));
+            QVERIFY(history.add(sample(static_cast<AnnotationType>(index % 8), index)));
         const auto original = history.annotations();
         QCOMPARE(original.size(), qsizetype(25));
         for (int index = 0; index < AnnotationHistory::capacity; ++index)
