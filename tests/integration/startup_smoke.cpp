@@ -90,6 +90,25 @@ void stickerDrag(waibusnap::StickerWindow& sticker, QPoint first, QPoint last)
         QApplication::sendEvent(&sticker, &event);
     }
 }
+void compareAnnotations(const QVector<waibusnap::Annotation>& actual,
+                        const QVector<waibusnap::Annotation>& expected)
+{
+    QCOMPARE(actual.size(), expected.size());
+    for (qsizetype index = 0; index < expected.size(); ++index)
+    {
+        const auto& a = actual[index];
+        const auto& b = expected[index];
+        QCOMPARE(a.type, b.type);
+        QCOMPARE(a.first, b.first);
+        QCOMPARE(a.last, b.last);
+        QCOMPARE(a.points, b.points);
+        QCOMPARE(a.text, b.text);
+        QCOMPARE(a.style.color, b.style.color);
+        QCOMPARE(a.style.lineWidth, b.style.lineWidth);
+        QCOMPARE(a.style.textSize, b.style.textSize);
+        QCOMPARE(a.style.fontFamily, b.style.fontFamily);
+    }
+}
 void compareCoveredPixels(const QImage& actual, const QImage& before, QRect cover, QColor color)
 {
     QCOMPARE(actual.size(), before.size());
@@ -532,6 +551,411 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!second);
         QCOMPARE(manager.count(), 0);
         manager.closeAll();
+        QCOMPARE(manager.count(), 0);
+    }
+    void stickerHideRestorePreservesStateAndHistory()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        manager.hideAll();
+        manager.restoreAll();
+        QCOMPARE(manager.count(), 0);
+        const QImage image = mosaicTestImage({1200, 1000});
+        QVector<QRect> geometries;
+        QVector<qreal> scales;
+        QVector<QImage> images, rendered;
+        QVector<QVector<Annotation>> annotations;
+        const char* tools[] = {"stickerEditRectangleToolButton", "stickerEditEllipseToolButton",
+                               "stickerEditLineToolButton",      "stickerEditArrowToolButton",
+                               "stickerEditFreehandToolButton",  "stickerEditCoverToolButton",
+                               "stickerEditMosaicToolButton"};
+        QImage beforeUndo;
+        QVector<Annotation> beforeUndoAnnotations;
+        for (int index = 0; index < 3; ++index)
+        {
+            QVERIFY(manager.create(image, {80 + index * 40, 90 + index * 40}).success);
+            auto window = manager.windows().last();
+            window->setScale(0.75 + index * 0.5, window->pos());
+            window->setEditing(true);
+            window->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"))
+                ->setCurrentIndex(index);
+            window->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"))
+                ->setCurrentIndex(index);
+            window->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"))
+                ->setCurrentIndex(index);
+            for (const char* tool : tools)
+            {
+                stickerClick(*window, tool);
+                stickerDrag(*window, {100, 100}, {180, 160});
+            }
+            stickerClick(*window, "stickerEditTextToolButton");
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, {100, 170});
+            window->findChild<AnnotationTextEdit*>()->setPlainText(
+                QStringLiteral("隐藏往返 %1\nABC 123").arg(index));
+            window->setEditing(false);
+            QCOMPARE(window->annotations().size(), qsizetype(8));
+            if (index == 1)
+            {
+                beforeUndo = window->renderedImage();
+                beforeUndoAnnotations = window->annotations();
+                window->setEditing(true);
+                stickerClick(*window, "stickerEditUndoAnnotationButton");
+                window->setEditing(false);
+            }
+            window->setSaved(index == 0);
+            geometries.append(window->geometry());
+            scales.append(window->scale());
+            images.append(window->image());
+            rendered.append(window->renderedImage());
+            annotations.append(window->annotations());
+        }
+        const auto windows = manager.windows();
+        const auto verifyState = [&](bool visible)
+        {
+            QCOMPARE(manager.count(), 3);
+            for (int index = 0; index < windows.size(); ++index)
+            {
+                const auto& window = windows[index];
+                QVERIFY(window);
+                QCOMPARE(window->isVisible(), visible);
+                QVERIFY(!window->isEditing());
+                QCOMPARE(window->geometry(), geometries[index]);
+                QCOMPARE(window->scale(), scales[index]);
+                QCOMPARE(window->image(), images[index]);
+                QCOMPARE(window->renderedImage(), rendered[index]);
+                compareAnnotations(window->annotations(), annotations[index]);
+                QCOMPARE(window->isSaved(), index == 0);
+                QVERIFY(window->testAttribute(Qt::WA_ShowWithoutActivating));
+                QVERIFY(window->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+            }
+        };
+        for (int repeat = 0; repeat < 3; ++repeat)
+        {
+            manager.hideAll();
+            verifyState(false);
+            manager.hideAll();
+            verifyState(false);
+            manager.restoreAll();
+            verifyState(true);
+            manager.restoreAll();
+            verifyState(true);
+        }
+        windows[1]->setEditing(true);
+        auto* redo =
+            windows[1]->findChild<QPushButton*>(QStringLiteral("stickerEditRedoAnnotationButton"));
+        QVERIFY(redo && redo->isEnabled());
+        stickerClick(*windows[1], "stickerEditRedoAnnotationButton");
+        compareAnnotations(windows[1]->annotations(), beforeUndoAnnotations);
+        QCOMPARE(windows[1]->renderedImage(), beforeUndo);
+        stickerClick(*windows[1], "stickerEditUndoAnnotationButton");
+        QCOMPARE(windows[1]->renderedImage(), rendered[1]);
+    }
+    void stickerHideCommitsPendingTextWithoutConfirmation()
+    {
+        using namespace waibusnap;
+        int confirms = 0, saves = 0;
+        StickerActions actions;
+        actions.confirmClose = [&](QWidget*)
+        {
+            ++confirms;
+            return StickerCloseDecision::Cancel;
+        };
+        actions.confirmQuit = [&](int)
+        {
+            ++confirms;
+            return StickerQuitDecision::Cancel;
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            ++saves;
+            return QString();
+        };
+        StickerManager manager(nullptr, actions);
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {80, 90}, true).success);
+        auto window = manager.windows().first();
+        window->setEditing(true);
+        stickerClick(*window, "stickerEditTextToolButton");
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        auto* editor = window->findChild<AnnotationTextEdit*>();
+        QVERIFY(editor && editor->isVisible());
+        editor->setPlainText(QStringLiteral("隐藏前提交\n中文 ABC 123"));
+        const QRect geometry = window->geometry();
+        QVERIFY(window->annotations().isEmpty());
+        QVERIFY(window->isSaved());
+        manager.hideAll();
+        QVERIFY(!window->isVisible());
+        QVERIFY(!window->isEditing());
+        QVERIFY(!editor->isVisible());
+        QCOMPARE(window->annotations().size(), qsizetype(1));
+        QCOMPARE(window->annotations().first().type, AnnotationType::Text);
+        QCOMPARE(window->annotations().first().text, QStringLiteral("隐藏前提交\n中文 ABC 123"));
+        // 文本提交沿用 dirty 语义；隐藏本身既不保存也不关闭。
+        QVERIFY(!window->isSaved());
+        const QImage rendered = window->renderedImage();
+        manager.hideAll();
+        manager.restoreAll();
+        QVERIFY(window->isVisible());
+        QVERIFY(!window->isEditing());
+        QCOMPARE(window->geometry(), geometry);
+        QCOMPARE(window->renderedImage(), rendered);
+        QCOMPARE(window->annotations().size(), qsizetype(1));
+        QVERIFY(!window->isSaved());
+        QCOMPARE(confirms, 0);
+        QCOMPARE(saves, 0);
+    }
+    void stickerHiddenCloseAndCleanupDoNotResurrect()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        const QImage image = sampleFrame().pixels;
+        for (int index = 0; index < 3; ++index)
+            QVERIFY(manager.create(image, {80 + index * 20, 90}).success);
+        const auto windows = manager.windows();
+        manager.hideAll();
+        windows[0]->forceClose();
+        QCOMPARE(manager.count(), 2);
+        // 延迟销毁前仍有指针的已关闭窗口也不能恢复。
+        QVERIFY(windows[0] && !windows[0]->isVisible());
+        manager.restoreAll();
+        QVERIFY(!windows[0]->isVisible());
+        QVERIFY(windows[1]->isVisible());
+        QVERIFY(windows[2]->isVisible());
+        QTRY_VERIFY(!windows[0]);
+        windows[2]->hide();
+        bool closingGuardChecked = false;
+        connect(windows[1], &StickerWindow::closed, this,
+                [&]
+                {
+                    manager.hideAll();
+                    manager.restoreAll();
+                    QVERIFY(windows[2] && !windows[2]->isVisible());
+                    closingGuardChecked = true;
+                });
+        manager.closeAll();
+        QVERIFY(closingGuardChecked);
+        QCOMPARE(manager.count(), 0);
+        for (const auto& window : windows)
+            QVERIFY(!window);
+        manager.restoreAll();
+        manager.hideAll();
+        QCOMPARE(manager.count(), 0);
+    }
+    void stickerHiddenQuitDecisionsAndReentrancy_data()
+    {
+        QTest::addColumn<int>("decision");
+        QTest::newRow("cancel") << 0;
+        QTest::newRow("save-all") << 1;
+        QTest::newRow("discard-all") << 2;
+    }
+    void stickerHiddenQuitDecisionsAndReentrancy()
+    {
+        using namespace waibusnap;
+        QFETCH(int, decision);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        StickerManager* current = nullptr;
+        int summaries = 0, panels = 0;
+        const auto verifyGuard = [&]
+        {
+            current->hideAll();
+            current->restoreAll();
+            const auto windows = current->windows();
+            QCOMPARE(windows.size(), qsizetype(3));
+            QVERIFY(!windows[0]->isVisible());
+            QVERIFY(!windows[1]->isVisible());
+            QVERIFY(windows[2]->isVisible());
+        };
+        StickerActions actions;
+        actions.confirmQuit = [&](int count)
+        {
+            ++summaries;
+            // 汇总包含隐藏未保存项，跳过隐藏已保存项。
+            if (count != 2)
+                QTest::qFail("退出汇总未包含隐藏未保存贴图", __FILE__, __LINE__);
+            verifyGuard();
+            return static_cast<StickerQuitDecision>(decision);
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            verifyGuard();
+            return directory.filePath(QStringLiteral("%1.png").arg(++panels));
+        };
+        StickerManager manager(nullptr, actions);
+        current = &manager;
+        const QImage image = sampleFrame().pixels;
+        QVERIFY(manager.create(image, {80, 90}).success);
+        QVERIFY(manager.create(image, {100, 110}, true).success);
+        manager.hideAll();
+        QVERIFY(manager.create(image, {120, 130}).success);
+        const auto windows = manager.windows();
+        QCOMPARE(manager.resolveUnsavedForQuit(), decision != 0);
+        QCOMPARE(summaries, 1);
+        QCOMPARE(panels, decision == 1 ? 2 : 0);
+        QVERIFY(!windows[0]->isVisible());
+        QVERIFY(!windows[1]->isVisible());
+        QVERIFY(windows[2]->isVisible());
+        QCOMPARE(windows[0]->isSaved(), decision == 1);
+        QVERIFY(windows[1]->isSaved());
+        QCOMPARE(windows[2]->isSaved(), decision == 1);
+        if (decision == 0)
+        {
+            manager.restoreAll();
+            for (const auto& window : windows)
+                QVERIFY(window->isVisible());
+            manager.hideAll();
+            for (const auto& window : windows)
+                QVERIFY(!window->isVisible());
+        }
+        else
+        {
+            manager.closeAll();
+            manager.restoreAll();
+            QCOMPARE(manager.count(), 0);
+            for (const auto& window : windows)
+                QVERIFY(!window);
+        }
+    }
+    void stickerHiddenQuitDefaultDialogStillConfirms()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        QVERIFY(manager.create(sampleFrame().pixels, {80, 90}).success);
+        auto window = manager.windows().first();
+        manager.hideAll();
+        QString text;
+        QStringList labels;
+        QTimer::singleShot(0, this,
+                           [&]
+                           {
+                               auto* dialog =
+                                   qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                               if (!dialog)
+                                   return;
+                               text = dialog->text();
+                               for (auto* button : dialog->buttons())
+                                   labels.append(button->text());
+                               dialog->reject();
+                           });
+        QVERIFY(!manager.resolveUnsavedForQuit());
+        QVERIFY(text.contains(QStringLiteral("1 张未保存贴图")));
+        QVERIFY(labels.contains(QStringLiteral("取消退出")));
+        QVERIFY(labels.contains(QStringLiteral("逐张保存")));
+        QVERIFY(labels.contains(QStringLiteral("全部放弃")));
+        QCOMPARE(manager.count(), 1);
+        QVERIFY(window && !window->isVisible() && !window->isSaved());
+    }
+    void stickerHiddenRecoveryPreservesVisibility()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        const QImage image = sampleFrame().pixels;
+        QVERIFY(manager.create(image, {80, 90}, true).success);
+        auto window = manager.windows().first();
+        window->setScale(1.75, window->pos());
+        const QImage original = window->image();
+        const QImage rendered = window->renderedImage();
+        manager.hideAll();
+        const auto screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen);
+        for (bool notification : {false, true})
+        {
+            window->move(-10000, -10000);
+            if (notification)
+            {
+                // 只模拟屏幕移除通知，真实热插拔保留人工验收。
+                QVERIFY(QMetaObject::invokeMethod(qApp, "screenRemoved", Qt::DirectConnection,
+                                                  Q_ARG(QScreen*, nullptr)));
+            }
+            else
+                manager.recoverWindows();
+            QTRY_VERIFY(screen->availableGeometry().contains(window->pos()));
+            QVERIFY(!window->isVisible());
+            QCOMPARE(window->scale(), qreal(1.75));
+            QCOMPARE(window->image(), original);
+            QCOMPARE(window->renderedImage(), rendered);
+            QVERIFY(window->isSaved());
+        }
+        const QRect geometry = window->geometry();
+        manager.restoreAll();
+        QVERIFY(window->isVisible());
+        QCOMPARE(window->geometry(), geometry);
+        QVERIFY(screen->availableGeometry().contains(window->pos()));
+    }
+    void stickerMenuAvailabilityAndOverlayIsolation()
+    {
+        using namespace waibusnap;
+        ApplicationController controller(*qApp, {});
+        auto* menu = controller.menu();
+        QCOMPARE(menu->actions().size(), qsizetype(5));
+        QCOMPARE(menu->actions()[0]->text(), QStringLiteral("截图"));
+        QCOMPARE(menu->actions()[1]->text(), QStringLiteral("设置…"));
+        QCOMPARE(menu->actions()[4]->text(), QStringLiteral("退出"));
+        auto* hide = menu->actions()[2];
+        auto* restore = menu->actions()[3];
+        QCOMPARE(hide->text(), QStringLiteral("隐藏全部贴图"));
+        QCOMPARE(restore->text(), QStringLiteral("恢复全部贴图"));
+        QCOMPARE(hide->objectName(), QStringLiteral("hideAllStickersAction"));
+        QCOMPARE(restore->objectName(), QStringLiteral("restoreAllStickersAction"));
+        QVERIFY(!hide->isEnabled());
+        QVERIFY(!restore->isEnabled());
+        const auto verifyPopup = [&](bool visible, bool hidden)
+        {
+            // 人为弄旧状态，证明 aboutToShow 会按实时窗口状态刷新。
+            hide->setEnabled(!visible);
+            restore->setEnabled(!hidden);
+            menu->popup({10, 10});
+            QVERIFY(menu->isVisible());
+            QCOMPARE(hide->isEnabled(), visible);
+            QCOMPARE(restore->isEnabled(), hidden);
+            menu->hide();
+        };
+        verifyPopup(false, false);
+        auto& manager = controller.stickers();
+        const QImage image = sampleFrame().pixels;
+        QVERIFY(manager.create(image, {80, 90}, true).success);
+        QVERIFY(manager.create(image, {100, 110}).success);
+        const auto initial = manager.windows();
+        verifyPopup(true, false);
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        drag(overlay, {100, 100}, {300, 250});
+        const QRect selection = overlay.selection();
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        hide->trigger();
+        QVERIFY(!hide->isEnabled());
+        QVERIFY(restore->isEnabled());
+        for (const auto& window : initial)
+            QVERIFY(!window->isVisible());
+        verifyPopup(false, true);
+        QVERIFY(manager.create(image, {120, 130}).success);
+        auto fresh = manager.windows().last();
+        verifyPopup(true, true);
+        restore->trigger();
+        QVERIFY(hide->isEnabled());
+        QVERIFY(!restore->isEnabled());
+        QVERIFY(fresh->isVisible());
+        for (const auto& window : initial)
+            QVERIFY(window->isVisible());
+        hide->trigger();
+        QVERIFY(!hide->isEnabled());
+        QVERIFY(restore->isEnabled());
+        QVERIFY(manager.create(image, {140, 150}, true).success);
+        verifyPopup(true, true);
+        hide->trigger();
+        for (const auto& window : manager.windows())
+            QVERIFY(!window->isVisible());
+        QVERIFY(!hide->isEnabled());
+        QVERIFY(restore->isEnabled());
+        restore->trigger();
+        QVERIFY(hide->isEnabled());
+        QVERIFY(!restore->isEnabled());
+        QVERIFY(overlay.isVisible());
+        QCOMPARE(overlay.selection(), selection);
+        QCOMPARE(finished.count(), 0);
+        manager.closeAll();
+        verifyPopup(false, false);
         QCOMPARE(manager.count(), 0);
     }
     void stickerEditingEntrancesGesturesAndCompactTools()

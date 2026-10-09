@@ -2,7 +2,7 @@
 
 | 目录 | 职责 | 初始化状态 |
 | --- | --- | --- |
-| `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验 |
+| `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、全部隐藏 / 恢复、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验 |
 | `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂 |
 | `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏 |
 | `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口 |
@@ -33,7 +33,11 @@
 
 图像坐标、色彩、输出与换栈条件沿用工作区技术选型第 7 节；贴图内编辑和未保存确认已接入；标注对象再编辑与完整双端实机验收留待后续。Windows 原生窗口枚举、热键及捕获保持桩，混合 DPI / 负坐标专项仍待实机验证。
 
-`ApplicationController` 注入 `pinImage`，通过覆盖层只读的选区全局逻辑位置与 `isSelectionSaved()` 调用 `StickerManager::create`。合成图 DPR=1；正常输入保持 QImage 隐式共享，不额外复制整图。管理器区分活跃窗口与尚待延迟销毁的窗口，提供 `count()` / `windows()` / `closeAll()`；控制器托盘退出、`aboutToQuit` 与析构共用清理。无常驻贴图历史、抓屏或屏幕轮询；布局找回只响应屏幕通知。
+`ApplicationController` 注入 `pinImage`，通过覆盖层只读的选区全局逻辑位置与 `isSelectionSaved()` 调用 `StickerManager::create`。合成图 DPR=1；正常输入保持 QImage 隐式共享，不额外复制整图。管理器区分活跃窗口与尚待延迟销毁的窗口，提供 `count()` / `windows()` / `hideAll()` / `restoreAll()` / `closeAll()`；控制器托盘退出、`aboutToQuit` 与析构共用清理。无常驻贴图历史、抓屏或屏幕轮询；布局找回只响应屏幕通知。
+
+`StickerManager::hideAll()` 按 `QWidget::isVisible()` 遍历当前可见窗口，调用 `setEditing(false)` 提交文本并退出编辑，再 `hide()`；隐藏不触发关闭确认，不写 `saved_`。`restoreAll()` 仅对活跃列表中不可见的存活窗口调用 `show()`，沿用 WA_ShowWithoutActivating / DoesNotAcceptFocus。状态口径是实时可见性，没有额外的全局隐藏标记或待恢复快照；关闭后从活跃列表移除，故延迟销毁中的已关闭窗口也不能复活。混合状态下两项分别作用于可见 / 隐藏窗口；退出解析 resolvingQuit 与清理 closingAll 期间两 API 均为空操作。`recoverWindows()` 只调整屏幕及几何，不显示窗口；退出汇总遍历全部活跃窗口，隐藏未保存项仍需确认。
+
+`ApplicationController::refreshStickerActions()` 遍历 `windows()` 及实时可见性，设置常驻 QAction `hideAllStickersAction` / `restoreAllStickersAction` 的可用性；菜单顺序为截图、设置、隐藏、恢复、退出。构造时、`QMenu::aboutToShow` 和两项执行后刷新，不触及截图会话、覆盖层或测量协议。
 
 `StickerWindow` 使用 Frameless / StaysOnTop / Tool / DoesNotAcceptFocus 与 ShowWithoutActivating，子控件 NoFocus。Qt Tool 的失活隐藏通过 `WA_MacAlwaysShowToolWindow` 禁用；macOS 在显示前为 Qt 创建的 NSPanel 加 `NSWindowStyleMaskNonactivatingPanel` 并保持可见。Qt 的拒绝 key window 处理与 NSPanel 样式取舍依据 [Qt 6.11.2 Cocoa 窗口实现](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qcocoawindow.mm) 与 [QNSWindow](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qnswindow.mm)。处理集中在 `platform/macos/sticker_window_behavior.mm`，沿用已有呈现观察器的 NSView 桥接方式；Windows 编辑态允许前台输入并持有原前台窗口，退出编辑时通过同一行为会话恢复。offscreen 不转换原生句柄，真实浏览器 / 编辑器键盘焦点仍须人工核对。
 
