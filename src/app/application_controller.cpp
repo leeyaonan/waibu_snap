@@ -31,7 +31,23 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     menu_.addAction(QStringLiteral("截图"), this, [this] { trigger(QStringLiteral("tray")); });
     settingsAction_ =
         menu_.addAction(QStringLiteral("设置…"), this, &ApplicationController::openSettings);
+    hideAllStickersAction_ = menu_.addAction(QStringLiteral("隐藏全部贴图"), this,
+                                             [this]
+                                             {
+                                                 stickers_.hideAll();
+                                                 refreshStickerActions();
+                                             });
+    hideAllStickersAction_->setObjectName(QStringLiteral("hideAllStickersAction"));
+    restoreAllStickersAction_ = menu_.addAction(QStringLiteral("恢复全部贴图"), this,
+                                                [this]
+                                                {
+                                                    stickers_.restoreAll();
+                                                    refreshStickerActions();
+                                                });
+    restoreAllStickersAction_->setObjectName(QStringLiteral("restoreAllStickersAction"));
     menu_.addAction(QStringLiteral("退出"), this, &ApplicationController::quit);
+    connect(&menu_, &QMenu::aboutToShow, this, &ApplicationController::refreshStickerActions);
+    refreshStickerActions();
     tray_.setIcon(createTrayIcon());
     tray_.setContextMenu(&menu_);
     // 热插拔或屏幕参数变更只响应通知，立即取消当前会话。
@@ -67,6 +83,18 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
             });
 }
 ApplicationController::~ApplicationController() { cleanup(); }
+void ApplicationController::refreshStickerActions()
+{
+    bool visible = false, hidden = false;
+    for (const auto& window : stickers_.windows())
+        if (window)
+        {
+            visible |= window->isVisible();
+            hidden |= !window->isVisible();
+        }
+    hideAllStickersAction_->setEnabled(visible);
+    restoreAllStickersAction_->setEnabled(hidden);
+}
 void ApplicationController::start()
 {
     if (options_.smokeTest)
@@ -308,8 +336,11 @@ void ApplicationController::startSmokeTest()
         [this]
         {
             if (tray_.icon().isNull() || tray_.icon().availableSizes().isEmpty() ||
-                application_.quitOnLastWindowClosed() || menu_.actions().size() != 3 ||
+                application_.quitOnLastWindowClosed() || menu_.actions().size() != 5 ||
                 menu_.actions().at(1)->text() != QStringLiteral("设置…") ||
+                menu_.actions().at(2)->objectName() != QStringLiteral("hideAllStickersAction") ||
+                menu_.actions().at(3)->objectName() != QStringLiteral("restoreAllStickersAction") ||
+                menu_.actions().at(2)->isEnabled() || menu_.actions().at(3)->isEnabled() ||
                 !QApplication::topLevelWidgets().contains(&menu_))
             {
                 application_.exit(20);

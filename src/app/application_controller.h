@@ -46,10 +46,13 @@ class ApplicationController final : public QObject
     void fail(int outcome, const QString& explanation);
     void startSmokeTest();
     void openSettings();
+    void refreshStickerActions();
     QString changeHotkey(const QKeySequence& sequence);
     QApplication& application_;
     RunOptions options_;
     QAction* settingsAction_ = nullptr;
+    QAction* hideAllStickersAction_ = nullptr;
+    QAction* restoreAllStickersAction_ = nullptr;
     QMenu menu_;
     QSystemTrayIcon tray_;
     std::unique_ptr<GlobalHotkey> hotkey_;
