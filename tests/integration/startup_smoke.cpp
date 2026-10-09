@@ -2434,7 +2434,7 @@ class StartupSmokeTest final : public QObject
         QTest::addColumn<bool>("sticker");
         QTest::addColumn<int>("kind");
         for (bool sticker : {false, true})
-            for (int kind : {0, 1, 2, 3})
+            for (int kind : {0, 1, 2, 3, 4})
                 QTest::newRow(qPrintable(
                     QStringLiteral("%1-%2").arg(sticker ? "sticker" : "overlay").arg(kind)))
                     << sticker << kind;
@@ -2454,11 +2454,18 @@ class StartupSmokeTest final : public QObject
             file.write("original");
         }
         bool directlyWritable = false;
-        if (kind == 2)
+        if (kind == 2 || kind == 4)
         {
             QVERIFY(QDir().mkpath(directory));
-            QVERIFY(
-                QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+            if (kind == 2)
+                QVERIFY(QFile::setPermissions(directory,
+                                              QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+            // Windows 的目录只读属性不限制创建文件，不能冒充拒绝写入的夹具。
+            // 用真实文件探针建立预期，避免照抄保存决策的 QFileInfo 判断。
+            QTemporaryFile probe(QDir(directory).filePath(QStringLiteral("权限探针_XXXXXX")));
+            directlyWritable = probe.open();
+            if (kind == 4)
+                QVERIFY(directlyWritable);
         }
         if (kind == 3)
             directory.clear();
