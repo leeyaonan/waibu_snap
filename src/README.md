@@ -3,12 +3,12 @@
 | 目录 | 职责 | 初始化状态 |
 | --- | --- | --- |
 | `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、全部隐藏 / 恢复、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验 |
-| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂 |
-| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏 |
+| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂；`autostart` 的只读状态、开关操作与工厂 |
+| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏；`autostart.mm` 通过 SMAppService 注册主应用登录项 |
 | `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口 |
 | `core/` | 图像与标注核心 | `annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点、屏外找回与剪贴板级联纯函数；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
 | `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
-| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；八工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`clipboard_sticker_toast` 的只读失败提示与单次计时；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、保存 / 取消；无默认主窗口 |
+| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；八工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`clipboard_sticker_toast` 的只读失败提示与单次计时；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、登录启动开关、保存 / 取消；无默认主窗口 |
 | `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG / JPEG 原子提交；`image_save` 共享保存决策，格式感知命名与冲突避让；无自动保存 |
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
@@ -72,3 +72,9 @@
 `core/sticker_geometry::clipboardStickerPosition(available, windowSize, sequence)` 不依赖 QWidget：放得下时基点居中，放不下时左上内边距 24（不超过屏内最后一点）；右下每步 24，按可容纳步数取模回绕。放得下时整张不越界，超大图只保证左上角在可用区。quint64 控制器计数仅成功创建后递增，失败不消耗、关闭不回退；支持负坐标和极大序号。显示屏选择与图像读取均使用共享 Qt API，未新增 Windows 原生代码。
 
 `ui/clipboard_sticker_toast` 为控制器按需持有的单个 QLabel 顶层窗口，对象名 `clipboardStickerToast`，text() 可读；Tool / Frameless / StaysOnTop / DoesNotAcceptFocus、ShowWithoutActivating、NoFocus，暗底白字与纯文本换行。位置从光标右下 16 逻辑点起并按可用区域夹取，单个 2500 ms 单次 QTimer 在每次 showMessage 时重启，hideEvent 停止计时。成功创建、开始 / 结束截图及退出解析关闭，cleanup 销毁；空闲无周期读取剪贴板或驻留计时器。唯一失败提示文案为「剪贴板中没有可用图片，请先复制图片后再试；剪贴板内容未被修改。」
+
+`interfaces/autostart.h` 定义 `AutostartState { enabled, pendingApproval, notice }`、`Autostart::query() const` / `setEnabled(bool)` 与 `createAutostart()`，以及可注入的 `AutostartActions` 双回调。操作系统注册是唯一事实来源，不在 `AppSettings` 增加键，也不在应用启动时补写登录项。
+
+`platform/macos/autostart.mm` 使用 `SMAppService.mainAppService`；未注册为关，enabled 为开，requiresApproval 为开且待批准，notFound / 未知状态作为 notice 如实展示。查询不可用不会伪装为注册成功；用户明确开启时仍调用原生 API 获取实际结果（本机首次探针查询 notFound 后注册成功）。注册 / 注销失败附中文动作、系统原文、错误域和码；CMake 链接系统 ServiceManagement。`platform/windows/autostart.cpp` 只访问 HKCU Run 的 WaibuSnap 值，RAII 关闭 HKEY，查询只读且值存在即开启；每次开启写入带引号的当前 exe 原生路径，关闭缺项也幂等成功，错误保留系统原因和码，CMake 链接系统 Advapi32。原生头文件和句柄只在平台目录。
+
+`ApplicationController` 第五个可选构造参数为 `AutostartActions`，未注入的回调用 `createAutostart()` 包装并保留服务生命周期，再透传给 `SettingsDialog` 最后一个可选参数。独立对话框也有相同默认实现。对话框构造时实时查询，`autostartCheck` / `autostartHelp` 按系统状态预填、notice 优先，其次待批准提示；保存时重新查询，目标值不同才调用设置回调。保存顺序是变化的快捷键、保存偏好、开机启动；仅热键回调完整成功后推进比较基线，后续失败重试不重新注册，热键落盘失败仍可重试。默认测试只查询且保持初始勾选，所以不产生系统写入；C02 冒烟全部注入双回调，不依赖宿主状态。

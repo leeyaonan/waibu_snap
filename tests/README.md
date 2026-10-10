@@ -4,6 +4,7 @@
 
 | CTest 名称 | 覆盖 |
 | --- | --- |
+| `startup_smoke`（C02 登录启动） | 双向开关与重新打开、双向失败重试、未变化 / 取消 / 编辑器与复选框 Esc 零调用、保存时系统状态变化、待批准与 notice 优先；组合保存顺序与三阶段错误保留 / 重试幂等、无 INI 新键；控制器经菜单保存与重开取消；全部 query / setEnabled 使用替身，2 倍 DPR 子集包含同样 21 个数据用例 |
 | `startup_smoke`（托盘图标） | `trayIconUsesEmbeddedPlatformAssets`：内嵌确认稿能解码且含 alpha、图标非空、macOS 18 / 36px 与模板标记、Windows 彩色版 16 / 32px 与非模板、1x / 2x 输出物理尺寸及 DPR；真实应用子进程在临时工作目录检查托盘图标可解码，再运行原托盘 / 贴图生命周期冒烟；不做像素级外观断言 |
 | `startup_smoke` | 真正应用子进程加载动态库、五项托盘菜单、关闭临时窗口后仍驻留、设置打开期间忽略热键触发，再触发实际托盘「退出」；窗口悬停命中、单击吸附及 3 逻辑像素容差、有选区时悬停抑制、吸附后移动 / 调整 / 清除 / 再吸附、未命中单击、手动拖选替换与手势回到起点不误吸附、枚举错误仍可框选；设置对话框单组合输入、预填、Fn 说明、中文按钮、非法拒绝、注册失败保旧与文件不变、成功持久化、取消 / Esc 不保存；保留首帧、Retina 框选、全部移动 / 八方向调整、复制失败重试与码 10、保存失败 / 取消 / 冲突 / 原文件保护 / 面板焦点 / dirty 标记，以及无输出取消全部用例；受控参数仍需显式测试模式；选区后延迟创建工具栏、六个中文工具按钮 / 切换与取消激活、边角和选区外绘图优先、三档样式、按钮 / 系统快捷键撤销重做与 dirty 标记、分叉清除；文本预编辑保护、候选 / 编辑 / 会话 Esc 分层、中文及换行合成、空编辑不入栈、点击别处 / 工具栏空白 / ⌘或Ctrl+Enter / 复制保存前提交、编辑结束清理预编辑状态；已知直线 PNG 全图逐像素回读、复制与保存内容一致、会话结束历史清空；钉图先提交文本、合成图 / DPR=1 与码 11、失败保留重试、保存状态及负坐标放置继承；两张贴图独立、悬停 / 滚轮锚点 / 按钮缩放夹取与中心稳定、拖动、关闭销毁、编辑态无工具时停用移动；贴图原像素保存 / 复制失败重试、后缀碰撞 / 取消 / 面板期间退出；屏外找回、退出销毁包括待删除窗口 |
 | `startup_smoke`（4b 编辑） | `stickerEditingEntrancesGesturesAndCompactTools`：按钮 / 双击、绘图不拖窗、无工具不移动、滚轮锚点、完成 / Esc 后恢复拖动、编辑态无右键菜单、极小图全部编辑入口；`stickerTextImeEscapeAndCommitBoundaries`：预编辑保护 / Esc 分层、中文换行、空文本 / 点击别处（含同值 NoFocus 选项）/ 切工具 / 完成提交；`stickerHistoryStylesOutputAndDirtyState`：三档样式、20 步 / 标准快捷键、文本历史优先、分叉、保存再编辑、原像素 / DPR=1 和无标注隐式共享；`stickerPendingTextCommitsBeforeOutputsAndNewDrawing`：三字号、保存 / 复制 / 绘图前提交 |
@@ -169,7 +170,21 @@ macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release：本机构建、WaibuSnap D
 
 独立 `open -W -n` / LaunchServices 受控进程使用临时 INI / JSONL 完成 **两条注入码 2**，依次 cold=true / false，冻结帧 **3024×1964**、选区 **0×0**，`visible_proxy_ns` / `interactive_ns` 均非零，进程正常结束。未改屏幕录制权限、真实设置、结果码或测量协议；只复核注入 / 取消协议，不作为正式性能验收。原始日志、图片与设置不入库；双端 CI 链接及最终状态见本次 PR。
 
+## C02 可选开机启动自动证据（2026-10-10）
+
+`autostartToggleAndReopen`、`autostartFailureKeepsStateAndRetries` 双向验证原系统态不变、目标保留、中文错误可见和重试成功；`autostartUnchangedCancelAndEscape` 验证未变化保存零 setEnabled、取消 / Esc 零保存；`autostartSaveQueriesCurrentSystemState` 验证保存实时查询，不用打开时缓存。`autostartApprovalAndNotice` 覆盖勾选 +「登录项」待批准提示及 PlainText notice 优先；`autostartCombinedSaveOrderAndFailures` 验证「热键 → 偏好 → 启动」顺序、各阶段失败不吞错、已成功热键不重复注册、偏好可重复写、INI 无启动键；`controllerAutostartMenuSaveReopenAndCancel` 经托盘菜单调用第五参数替身，重开回读后取消零新增写入。原有默认路径测试不注入，保持查询得到的勾选值，仅只读查询。
+
+本机 macOS **27.0.1（26A434）/ arm64**、Qt **6.11.2 Release**：构建、WaibuSnap Dev 稳定签名与原 `local.waibusnap.dev` / 证书叶 requirement、全部 **11 项 CTest**、clang-format **18.1.8** 与 `git diff --check` 通过。主冒烟 **207 → 228 项**，独立 `QT_SCALE_FACTOR=2` 子集 **130 → 151 项**，均零失败 / 零跳过；全部 C02 用例在真实 **Cocoa 后端 23 项**通过（21 个数据用例 + 初始化 / 清理）。局部沿用已安装 Xcode 的 SDK **26.2**，无依赖或全局工具链修改；首轮沙箱无法读取钥匙串的 ad-hoc 回退已恢复为原开发签名。
+
+macOS 可逆探针在本机临时 `.app` 中直接编译生产 `platform/macos/autostart.mm`，使用同一 bundle id 和 WaibuSnap Dev / 原证书叶 requirement，经 `open -W -n` / LaunchServices 调用真实 API。首次查询 rawStatus=3（notFound）且关，注册返回空错误后 rawStatus=1、enabled=true、pendingApproval=false；注销返回空错误后 rawStatus=0、enabled=false，最终复查仍为 0。系统未拒绝本机自签名注册，本轮无拒绝错误码；探针没有开启的登录项残留。自签名在其他环境是否允许仍待验证，真实重登、系统设置外观与快捷键可用性不能由探针代替。
+
+独立 LaunchServices 受控进程使用临时 INI / JSONL 完成 **两条注入码 2**，依次 cold=true / false、冻结帧 **1920×1080**、选区 **0×0**、`visible_proxy_ns` / `interactive_ns` 均非零。F1 占用如实记录系统错误 **-9878**，未修改真实配置、屏幕录制权限、结果码 / 测量协议或单实例策略。原始日志与临时探针不入库。Windows 注册表实现仅编译，不在 CI 写真实 Run 值；双端 CI 链接及最终状态见本次 PR。工作区 docs/ 保持不动。
+
 ## 人工核对清单（待用户真机操作）
+
+- C02 / macOS：从真实应用包打开设置，首次默认关闭；开启后退出 / 重开确认回读，系统设置「登录项」状态一致，待批准时按提示允许。注销并重新登录后只出现一个实例，已配置截图快捷键可用；关闭后再重登不自动运行。移动应用包后从新位置打开并关闭 / 重新开启，核对新位置；系统拒绝时中文错误留在对话框、原注册态保持且可重试。
+- C02 / Windows：原生热键与目标实机补齐后，核对 HKCU Run 的 WaibuSnap 值为带引号的当前 exe 路径（含中文 / 空格），开关与系统状态一致、无需管理员、移动 exe 后重新开启更新路径；按相同重登口径验证启动与关闭。Windows 单实例锁仍后置，双端 CI 不能替代此项人工验收。
+
 
 - C01：macOS 真机分别从预览、浏览器、微信复制 PNG 图像内容，点托盘「剪贴板贴图」核对原尺寸 / 像素、拖动、25%–400% 缩放、八工具编辑和 PNG / JPEG 保存；读取贴图后回原应用粘贴，剪贴板内容仍相同。
 - C01：纯文本 / 不支持内容时无空白贴图，中文提示完整、光标附近不越可用屏、不抢当前应用键盘，约 2.5 秒消失；连续点击延长时限，无残留窗口。
