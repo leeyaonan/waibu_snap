@@ -1,5 +1,6 @@
 #include "ui/settings_dialog.h"
 #include "app/hotkey_rules.h"
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -15,10 +16,20 @@
 namespace waibusnap
 {
 SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, const QString& notice,
-                               QWidget* parent, SaveSettingsActions saveSettings)
+                               QWidget* parent, SaveSettingsActions saveSettings,
+                               AutostartActions autostartActions)
     : QDialog(parent), saveHotkey_(std::move(save)), originalSequence_(current),
-      saveSettings_(std::move(saveSettings))
+      saveSettings_(std::move(saveSettings)), autostartActions_(std::move(autostartActions))
 {
+    if (!autostartActions_.query || !autostartActions_.setEnabled)
+    {
+        const std::shared_ptr<Autostart> autostart = createAutostart();
+        if (!autostartActions_.query)
+            autostartActions_.query = [autostart] { return autostart->query(); };
+        if (!autostartActions_.setEnabled)
+            autostartActions_.setEnabled = [autostart](bool enabled)
+            { return autostart->setEnabled(enabled); };
+    }
     setWindowTitle(QStringLiteral("WaibuSnap 设置"));
     setMinimumWidth(440);
     auto* layout = new QVBoxLayout(this);
@@ -97,6 +108,24 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     connect(format_, &QComboBox::currentIndexChanged, lossNotice,
             [lossNotice](int index) { lossNotice->setVisible(index == 1); });
     layout->addWidget(saveGroup);
+    auto* startupGroup = new QGroupBox(QStringLiteral("启动"), this);
+    auto* startupLayout = new QVBoxLayout(startupGroup);
+    autostartCheck_ = new QCheckBox(QStringLiteral("登录时自动启动"), startupGroup);
+    autostartCheck_->setObjectName(QStringLiteral("autostartCheck"));
+    const auto startupState = autostartActions_.query();
+    autostartCheck_->setChecked(startupState.enabled);
+    startupLayout->addWidget(autostartCheck_);
+    auto* startupHelp = new QLabel(startupGroup);
+    startupHelp->setObjectName(QStringLiteral("autostartHelp"));
+    startupHelp->setTextFormat(Qt::PlainText);
+    startupHelp->setWordWrap(true);
+    startupHelp->setText(
+        !startupState.notice.isEmpty() ? startupState.notice
+        : startupState.pendingApproval
+            ? QStringLiteral("已在系统设置中等待批准，请在「登录项」中允许。")
+            : QStringLiteral("默认关闭。开启后，下次登录时自动运行；状态以系统注册为准。"));
+    startupLayout->addWidget(startupHelp);
+    layout->addWidget(startupGroup);
     status_ = new QLabel(notice, this);
     status_->setObjectName(QStringLiteral("settingsStatus"));
     status_->setTextFormat(Qt::PlainText);
@@ -127,11 +156,17 @@ void SettingsDialog::save()
     const auto sequence = editor_->keySequence();
     QString error = hotkeyValidationError(sequence);
     if (error.isEmpty() && sequence != originalSequence_)
+    {
         error = saveHotkey_(sequence);
+        if (error.isEmpty())
+            originalSequence_ = sequence;
+    }
     if (error.isEmpty() && saveSettings_.savePreferences)
         error = saveSettings_.savePreferences({directory_->text(), format_->currentIndex() == 1
                                                                        ? ImageFormat::Jpeg
                                                                        : ImageFormat::Png});
+    if (error.isEmpty() && autostartCheck_->isChecked() != autostartActions_.query().enabled)
+        error = autostartActions_.setEnabled(autostartCheck_->isChecked());
     if (!error.isEmpty())
     {
         status_->setText(error);

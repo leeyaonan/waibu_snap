@@ -89,6 +89,10 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     clipboardStickerFailureDoesNotAdvanceCascade clipboardStickerMenuSessionAndQuitGuards
     clipboardStickerReadOnly
     clipboardStickerToastClampsAtScreenEdges clipboardStickerCleanupDisablesAction
+    autostartToggleAndReopen autostartFailureKeepsStateAndRetries
+    autostartUnchangedCancelAndEscape autostartSaveQueriesCurrentSystemState
+    autostartApprovalAndNotice autostartCombinedSaveOrderAndFailures
+    controllerAutostartMenuSaveReopenAndCancel
     -o "${CMAKE_CURRENT_BINARY_DIR}/startup_smoke-sticker-high-dpi-output.txt,txt")
 set_tests_properties(startup_smoke_sticker_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2"

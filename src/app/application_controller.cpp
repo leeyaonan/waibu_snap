@@ -16,7 +16,8 @@ namespace waibusnap
 {
 ApplicationController::ApplicationController(QApplication& application, RunOptions options,
                                              StickerActions stickerActions,
-                                             ClipboardActions clipboardActions)
+                                             ClipboardActions clipboardActions,
+                                             AutostartActions autostartActions)
     : application_(application), options_(std::move(options)), hotkey_(createGlobalHotkey()),
       settings_(options_.settingsFile),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
@@ -28,8 +29,17 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                                         { return settings_.loadSavePreferences(); };
                                                         return std::move(stickerActions);
                                                     }()),
-      clipboardActions_(std::move(clipboardActions))
+      clipboardActions_(std::move(clipboardActions)), autostartActions_(std::move(autostartActions))
 {
+    if (!autostartActions_.query || !autostartActions_.setEnabled)
+    {
+        const std::shared_ptr<Autostart> autostart = createAutostart();
+        if (!autostartActions_.query)
+            autostartActions_.query = [autostart] { return autostart->query(); };
+        if (!autostartActions_.setEnabled)
+            autostartActions_.setEnabled = [autostart](bool enabled)
+            { return autostart->setEnabled(enabled); };
+    }
     if (!clipboardActions_.loadImage)
         clipboardActions_.loadImage = [] { return QGuiApplication::clipboard()->image(); };
     application_.setQuitOnLastWindowClosed(false);
@@ -184,14 +194,15 @@ void ApplicationController::openSettings()
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
         return;
     settingsOpen_ = true;
-    SettingsDialog dialog(hotkeySettings_.currentSequence(),
-                          [this](const QKeySequence& sequence) { return changeHotkey(sequence); },
-                          hotkeySettings_.enabled() ? QString() : hotkeySettings_.explanation(),
-                          nullptr,
-                          {settings_.loadSavePreferences(),
-                           [this](const SavePreferences& preferences)
-                           { return settings_.saveSavePreferences(preferences); },
-                           {}});
+    SettingsDialog dialog(
+        hotkeySettings_.currentSequence(),
+        [this](const QKeySequence& sequence) { return changeHotkey(sequence); },
+        hotkeySettings_.enabled() ? QString() : hotkeySettings_.explanation(), nullptr,
+        {settings_.loadSavePreferences(),
+         [this](const SavePreferences& preferences)
+         { return settings_.saveSavePreferences(preferences); },
+         {}},
+        autostartActions_);
     dialog.exec();
     settingsOpen_ = false;
 }

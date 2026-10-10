@@ -11,6 +11,7 @@
 #include "ui/settings_dialog.h"
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QCursor>
@@ -42,6 +43,28 @@
 
 namespace
 {
+struct AutostartStub
+{
+    waibusnap::AutostartState state;
+    QString error;
+    int queries = 0;
+    QVector<bool> requests;
+    waibusnap::AutostartActions actions()
+    {
+        return {[this]
+                {
+                    ++queries;
+                    return state;
+                },
+                [this](bool enabled)
+                {
+                    requests.append(enabled);
+                    if (error.isEmpty())
+                        state = {enabled, false, {}};
+                    return error;
+                }};
+    }
+};
 const QString clipboardToastText =
     QStringLiteral("剪贴板中没有可用图片，请先复制图片后再试；剪贴板内容未被修改。");
 QLabel* clipboardToast()
@@ -3050,6 +3073,335 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(image, sampleFrame().pixels);
         QCOMPARE(panels, 0);
         QVERIFY(QDir(temporary.path()).entryList(QDir::Files | QDir::Hidden).isEmpty());
+    }
+    void autostartToggleAndReopen_data()
+    {
+        QTest::addColumn<bool>("initial");
+        QTest::newRow("enable") << false;
+        QTest::newRow("disable") << true;
+    }
+    void autostartToggleAndReopen()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, initial);
+        AutostartStub stub;
+        stub.state.enabled = initial;
+        int hotkeys = 0;
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(),
+            [&](const QKeySequence&)
+            {
+                ++hotkeys;
+                return QString();
+            },
+            {}, nullptr, {}, stub.actions());
+        dialog.show();
+        auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"));
+        auto* help = dialog.findChild<QLabel*>(QStringLiteral("autostartHelp"));
+        QVERIFY(check && help);
+        QCOMPARE(check->text(), QStringLiteral("登录时自动启动"));
+        QCOMPARE(check->isChecked(), initial);
+        QVERIFY(help->text().contains(QStringLiteral("默认关闭")));
+        QCOMPARE(stub.queries, 1);
+        QVERIFY(stub.requests.isEmpty());
+        check->setChecked(!initial);
+        QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                          Qt::LeftButton);
+        QCOMPARE(stub.requests, QVector<bool>{!initial});
+        QCOMPARE(stub.state.enabled, !initial);
+        QCOMPARE(stub.queries, 2);
+        QCOMPARE(hotkeys, 0);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(!dialog.isVisible());
+        SettingsDialog reopened(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            {}, stub.actions());
+        QCOMPARE(reopened.findChild<QCheckBox*>(QStringLiteral("autostartCheck"))->isChecked(),
+                 !initial);
+        QCOMPARE(stub.queries, 3);
+        reopened.reject();
+        QCOMPARE(stub.requests.size(), 1);
+    }
+    void autostartFailureKeepsStateAndRetries_data() { autostartToggleAndReopen_data(); }
+    void autostartFailureKeepsStateAndRetries()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, initial);
+        AutostartStub stub;
+        stub.state.enabled = initial;
+        stub.error = QStringLiteral("测试系统拒绝登录启动项，错误码 42");
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            {}, stub.actions());
+        dialog.show();
+        auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"));
+        auto* save = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
+        check->setChecked(!initial);
+        QTest::mouseClick(save, Qt::LeftButton);
+        QVERIFY(dialog.isVisible());
+        QCOMPARE(dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"))->text(), stub.error);
+        QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"))->isVisible());
+        QCOMPARE(stub.state.enabled, initial);
+        QCOMPARE(check->isChecked(), !initial);
+        QCOMPARE(stub.requests, QVector<bool>{!initial});
+        stub.error.clear();
+        QTest::mouseClick(save, Qt::LeftButton);
+        QCOMPARE(stub.requests, (QVector<bool>{!initial, !initial}));
+        QCOMPARE(stub.state.enabled, !initial);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(!dialog.isVisible());
+    }
+    void autostartUnchangedCancelAndEscape_data()
+    {
+        QTest::addColumn<bool>("initial");
+        QTest::addColumn<int>("decision");
+        QTest::newRow("unchanged-off") << false << 0;
+        QTest::newRow("unchanged-on") << true << 0;
+        QTest::newRow("cancel-enabling") << false << 1;
+        QTest::newRow("cancel-disabling") << true << 1;
+        QTest::newRow("escape-editor") << false << 2;
+        QTest::newRow("escape-checkbox") << true << 3;
+    }
+    void autostartUnchangedCancelAndEscape()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, initial);
+        QFETCH(int, decision);
+        AutostartStub stub;
+        stub.state.enabled = initial;
+        int hotkeys = 0, preferences = 0;
+        SaveSettingsActions saves;
+        saves.savePreferences = [&](const SavePreferences&)
+        {
+            ++preferences;
+            return QString();
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(),
+            [&](const QKeySequence&)
+            {
+                ++hotkeys;
+                return QString();
+            },
+            {}, nullptr, saves, stub.actions());
+        dialog.show();
+        auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"));
+        auto* editor = dialog.findChild<QKeySequenceEdit*>(QStringLiteral("hotkeyEditor"));
+        if (decision != 0)
+        {
+            check->setChecked(!initial);
+            editor->setKeySequence(QKeySequence(Qt::Key_F2));
+            dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
+        }
+        if (decision == 0)
+            QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                              Qt::LeftButton);
+        else if (decision == 1)
+            QTest::mouseClick(
+                dialog.findChild<QPushButton*>(QStringLiteral("cancelSettingsButton")),
+                Qt::LeftButton);
+        else
+            QTest::keyClick(decision == 2 ? static_cast<QWidget*>(editor) : check, Qt::Key_Escape);
+        QVERIFY(stub.requests.isEmpty());
+        QCOMPARE(stub.state.enabled, initial);
+        QCOMPARE(stub.queries, decision == 0 ? 2 : 1);
+        QCOMPARE(hotkeys, 0);
+        QCOMPARE(preferences, decision == 0 ? 1 : 0);
+        QCOMPARE(dialog.result(), decision == 0 ? int(QDialog::Accepted) : int(QDialog::Rejected));
+        QVERIFY(!dialog.isVisible());
+    }
+    void autostartSaveQueriesCurrentSystemState_data()
+    {
+        QTest::addColumn<bool>("externalEnabled");
+        QTest::newRow("externally-enabled-no-write") << true;
+        QTest::newRow("externally-disabled-needs-write") << false;
+    }
+    void autostartSaveQueriesCurrentSystemState()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, externalEnabled);
+        AutostartStub stub;
+        stub.state.enabled = !externalEnabled;
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            {}, stub.actions());
+        dialog.show();
+        dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"))->setChecked(true);
+        stub.state.enabled = externalEnabled;
+        QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                          Qt::LeftButton);
+        QCOMPARE(stub.requests.size(), externalEnabled ? 0 : 1);
+        QCOMPARE(stub.queries, 2);
+        QVERIFY(stub.state.enabled);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    }
+    void autostartApprovalAndNotice_data()
+    {
+        QTest::addColumn<bool>("enabled");
+        QTest::addColumn<bool>("pending");
+        QTest::addColumn<QString>("notice");
+        QTest::newRow("approval") << true << true << QString();
+        QTest::newRow("notice-over-approval") << true << true << QStringLiteral("系统提示：<拒绝>");
+        QTest::newRow("unavailable") << false << false << QStringLiteral("测试登录项服务不可用");
+        QTest::newRow("enabled-notice") << true << false << QStringLiteral("测试路径需要重新确认");
+    }
+    void autostartApprovalAndNotice()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, enabled);
+        QFETCH(bool, pending);
+        QFETCH(QString, notice);
+        AutostartStub stub;
+        stub.state = {enabled, pending, notice};
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            {}, stub.actions());
+        dialog.show();
+        QCOMPARE(dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"))->isChecked(),
+                 enabled);
+        auto* help = dialog.findChild<QLabel*>(QStringLiteral("autostartHelp"));
+        QVERIFY(help->isVisible());
+        QCOMPARE(help->textFormat(), Qt::PlainText);
+        if (!notice.isEmpty())
+            QCOMPARE(help->text(), notice);
+        else
+        {
+            QVERIFY(help->text().contains(QStringLiteral("等待批准")));
+            QVERIFY(help->text().contains(QStringLiteral("登录项")));
+        }
+        QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                          Qt::LeftButton);
+        QVERIFY(stub.requests.isEmpty());
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    }
+    void autostartCombinedSaveOrderAndFailures_data()
+    {
+        QTest::addColumn<int>("failure");
+        QTest::newRow("all-success") << 0;
+        QTest::newRow("hotkey-failure") << 1;
+        QTest::newRow("preferences-failure") << 2;
+        QTest::newRow("autostart-failure") << 3;
+    }
+    void autostartCombinedSaveOrderAndFailures()
+    {
+        using namespace waibusnap;
+        QFETCH(int, failure);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        AppSettings settings(temporary.filePath(QStringLiteral("settings.ini")));
+        AutostartStub stub;
+        const auto stubActions = stub.actions();
+        QStringList order;
+        int attempt = 1;
+        SaveSettingsActions saves;
+        saves.savePreferences = [&](const SavePreferences& preferences)
+        {
+            order.append(QStringLiteral("偏好"));
+            return failure == 2 && attempt == 1 ? QStringLiteral("测试偏好错误")
+                                                : settings.saveSavePreferences(preferences);
+        };
+        AutostartActions autostart = stubActions;
+        autostart.setEnabled = [&](bool enabled)
+        {
+            order.append(QStringLiteral("启动"));
+            stub.error = failure == 3 && attempt == 1 ? QStringLiteral("测试启动错误") : QString();
+            return stubActions.setEnabled(enabled);
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(),
+            [&](const QKeySequence& sequence)
+            {
+                order.append(QStringLiteral("热键"));
+                return failure == 1 && attempt == 1 ? QStringLiteral("测试热键错误")
+                                                    : settings.saveHotkey(sequence);
+            },
+            {}, nullptr, saves, autostart);
+        dialog.show();
+        dialog.findChild<QKeySequenceEdit*>(QStringLiteral("hotkeyEditor"))
+            ->setKeySequence(QKeySequence(Qt::Key_F2));
+        dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
+        dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"))->setChecked(true);
+        auto* save = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
+        QTest::mouseClick(save, Qt::LeftButton);
+        const QStringList all = {QStringLiteral("热键"), QStringLiteral("偏好"),
+                                 QStringLiteral("启动")};
+        QCOMPARE(order, all.mid(0, failure == 0 ? 3 : failure));
+        if (failure != 0)
+        {
+            QVERIFY(dialog.isVisible());
+            QCOMPARE(dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"))->text(),
+                     QStringLiteral("测试%1错误").arg(all.at(failure - 1)));
+            QVERIFY(!stub.state.enabled);
+            QCOMPARE(settings.loadHotkey().sequence,
+                     failure == 1 ? defaultScreenshotHotkey() : QKeySequence(Qt::Key_F2));
+            QCOMPARE(settings.loadSavePreferences().format,
+                     failure <= 2 ? ImageFormat::Png : ImageFormat::Jpeg);
+            attempt = 2;
+            order.clear();
+            QTest::mouseClick(save, Qt::LeftButton);
+            // 前次热键成功后不重复注册；保存偏好可重复写，启动失败保留目标并重试。
+            QCOMPARE(order, all.mid(failure == 1 ? 0 : 1));
+        }
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(!dialog.isVisible());
+        QVERIFY(stub.state.enabled);
+        QCOMPARE(stub.requests.size(), failure == 3 ? 2 : 1);
+        QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+        QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
+        QFile file(temporary.filePath(QStringLiteral("settings.ini")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY(!bytes.contains("autostart"));
+        QVERIFY(!bytes.contains("startup"));
+    }
+    void controllerAutostartMenuSaveReopenAndCancel()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        RunOptions options;
+        options.settingsFile = temporary.filePath(QStringLiteral("settings.ini"));
+        AutostartStub stub;
+        ApplicationController controller(*qApp, options, {}, {}, stub.actions());
+        QCOMPARE(stub.queries, 0);
+        int handled = 0;
+        QTimer::singleShot(
+            0,
+            [&]
+            {
+                auto* dialog = qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                auto* check = dialog->findChild<QCheckBox*>(QStringLiteral("autostartCheck"));
+                QVERIFY(!check->isChecked());
+                check->setChecked(true);
+                QTest::mouseClick(
+                    dialog->findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                    Qt::LeftButton);
+                ++handled;
+            });
+        controller.menu()->actions().at(2)->trigger();
+        QCOMPARE(handled, 1);
+        QCOMPARE(stub.requests, QVector<bool>{true});
+        QVERIFY(stub.state.enabled);
+        QTimer::singleShot(
+            0,
+            [&]
+            {
+                auto* dialog = qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                auto* check = dialog->findChild<QCheckBox*>(QStringLiteral("autostartCheck"));
+                QVERIFY(check->isChecked());
+                check->setChecked(false);
+                QTest::mouseClick(
+                    dialog->findChild<QPushButton*>(QStringLiteral("cancelSettingsButton")),
+                    Qt::LeftButton);
+                ++handled;
+            });
+        controller.menu()->actions().at(2)->trigger();
+        QCOMPARE(handled, 2);
+        QCOMPARE(stub.requests, QVector<bool>{true});
+        QCOMPARE(stub.queries, 3);
+        QVERIFY(stub.state.enabled);
     }
     void saveSettingsWriteFailureKeepsDialogAndCanRetry()
     {
