@@ -69,6 +69,10 @@ add_test(NAME sticker_geometry COMMAND sticker_geometry_test)
 
 add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     trayIconUsesEmbeddedPlatformAssets
+    ocrModeLifecycle ocrSelection ocrCopyDispatchAndSavedState
+    ocrDelayedProgressExitAndStaleResult ocrDialogEscAndRetry ocrDialogLoadingAndEmpty
+    ocrDialogFormats ocrPreviewLocalCopyIsPlain ocrInputUsesAnnotatedPixelsAndFallback
+    ocrTaskDestructionWaits
     stickerWindowsScaleDragAndCloseIndependently stickerOutputsKeepOriginalPixelsAndRetryFailures
     stickerEditingEntrancesGesturesAndCompactTools stickerTextImeEscapeAndCommitBoundaries
     stickerHistoryStylesOutputAndDirtyState stickerPendingTextCommitsBeforeOutputsAndNewDrawing
@@ -98,3 +102,25 @@ set_tests_properties(startup_smoke_sticker_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2"
     TIMEOUT 30
 )
+
+qt_add_executable(text_layout_test unit/text_layout_test.cpp)
+target_link_libraries(text_layout_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(text_layout_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME text_layout COMMAND text_layout_test)
+
+qt_add_executable(text_recognizer_test integration/text_recognizer_test.cpp)
+target_link_libraries(text_recognizer_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+target_compile_definitions(text_recognizer_test PRIVATE
+    WAIBUSNAP_OCR_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ocr-mixed-text.png")
+set_target_properties(text_recognizer_test PROPERTIES WIN32_EXECUTABLE FALSE)
+if(APPLE)
+    target_sources(text_recognizer_test PRIVATE integration/ocr_engine_languages_macos.mm)
+    target_compile_options(text_recognizer_test PRIVATE -fobjc-arc)
+    target_link_libraries(text_recognizer_test PRIVATE "${Vision_FRAMEWORK}")
+elseif(WIN32)
+    target_sources(text_recognizer_test PRIVATE integration/ocr_engine_languages_windows.cpp)
+    target_link_libraries(text_recognizer_test PRIVATE windowsapp)
+endif()
+add_test(NAME text_recognizer_real_engine COMMAND text_recognizer_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/text-recognizer-output.txt,txt")
+set_tests_properties(text_recognizer_real_engine PROPERTIES TIMEOUT 120)

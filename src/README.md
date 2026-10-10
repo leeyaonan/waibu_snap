@@ -3,12 +3,12 @@
 | 目录 | 职责 | 初始化状态 |
 | --- | --- | --- |
 | `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、全部隐藏 / 恢复、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验 |
-| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂；`autostart` 的只读状态、开关操作与工厂 |
-| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏；`autostart.mm` 通过 SMAppService 注册主应用登录项 |
-| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口 |
-| `core/` | 图像与标注核心 | `annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点、屏外找回与剪贴板级联纯函数；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
+| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂；`autostart` 的只读状态、开关操作与工厂；`text_recognizer` 的离线识别契约 |
+| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏；`autostart.mm` 通过 SMAppService 注册主应用登录项；`text_recognizer.mm` 使用 Vision |
+| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口；`text_recognizer.cpp` 使用 C++/WinRT OCR，`autostart` 使用 HKCU Run |
+| `core/` | 图像与标注核心 | `annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点、屏外找回与剪贴板级联纯函数；`text_layout` 的分词、段落与选择数学；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
 | `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
-| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；八工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`clipboard_sticker_toast` 的只读失败提示与单次计时；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、登录启动开关、保存 / 取消；无默认主窗口 |
+| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；覆盖层九工具（八标注 + 取字）/ 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`text_recognition_task` 后台识别与 `ocr_dialog` 富文本编辑；`clipboard_sticker_toast` 的只读失败提示与单次计时；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、登录启动开关、保存 / 取消；无默认主窗口 |
 | `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG / JPEG 原子提交；`image_save` 共享保存决策，格式感知命名与冲突避让；无自动保存 |
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
@@ -78,3 +78,21 @@
 `platform/macos/autostart.mm` 使用 `SMAppService.mainAppService`；未注册为关，enabled 为开，requiresApproval 为开且待批准，notFound / 未知状态作为 notice 如实展示。查询不可用不会伪装为注册成功；用户明确开启时仍调用原生 API 获取实际结果（本机首次探针查询 notFound 后注册成功）。注册 / 注销失败附中文动作、系统原文、错误域和码；CMake 链接系统 ServiceManagement。`platform/windows/autostart.cpp` 只访问 HKCU Run 的 WaibuSnap 值，RAII 关闭 HKEY，查询只读且值存在即开启；每次开启写入带引号的当前 exe 原生路径，关闭缺项也幂等成功，错误保留系统原因和码，CMake 链接系统 Advapi32。原生头文件和句柄只在平台目录。
 
 `ApplicationController` 第五个可选构造参数为 `AutostartActions`，未注入的回调用 `createAutostart()` 包装并保留服务生命周期，再透传给 `SettingsDialog` 最后一个可选参数。独立对话框也有相同默认实现。对话框构造时实时查询，`autostartCheck` / `autostartHelp` 按系统状态预填、notice 优先，其次待批准提示；保存时重新查询，目标值不同才调用设置回调。保存顺序是变化的快捷键、保存偏好、开机启动；仅热键回调完整成功后推进比较基线，后续失败重试不重新注册，热键落盘失败仍可重试。默认测试只查询且保持初始勾选，所以不产生系统写入；C02 冒烟全部注入双回调，不依赖宿主状态。
+
+## 截图 OCR
+
+`interfaces/text_recognizer.h` 定义 `RecognizedToken{text, box, offset, length}`、`RecognizedLine{text, box, tokens}`、`TextRecognitionResult{ok, explanation, lines}` 和可替换的 `TextRecognizer::recognize(const QImage&) const` / `createTextRecognizer()`。坐标是输入图本地物理像素，左上原点、DPR=1；offset / length 为行文本 UTF-16 索引。调用允许阻塞，仅工作线程使用，不读取 QWidget。无文字为成功空行集，失败为中文原因；共享层不暴露原生类型。
+
+macOS 使用 `VNRecognizeTextRequest` accurate 与语言校正，查询支持列表后配置 `zh-Hans`、`en-US`；不支持中文时收缩语言并明确记录，完全不支持时失败。原生调用包在 `@autoreleasepool`；行盒归一化坐标翻转 y 后映射为像素。每行复用 `core/text_layout::tokenizeLine` 的 UTF-16 范围逐词查询 `boundingBoxForRange`，一次识别内保存盒，任一查询失败清空该行 tokens，选择回落整行。只输出实际语言配置元数据，不记录识别文字、图片或盒。
+
+Windows 使用 SDK 自带 C++/WinRT 和 `windowsapp` 系统库，工作线程 MTA 以 RAII 成对初始化 / 释放 apartment，关闭前清理 C++/WinRT 激活工厂缓存，避免最后一个 MTA 关闭后的缓存失效；优先 `TryCreateFromUserProfileLanguages`，失败再试 `zh-Hans`。QImage 编码为内存 PNG，经 `InMemoryRandomAccessStream` / `BitmapDecoder` 转 Bgra8 `SoftwareBitmap`，`.get()` 阻塞等待识别。原生词按行文本前向搜索对齐 offset / length；任一词对齐失败整行回落，不猜测索引。语言包缺失、超出原生尺寸上限、转换与 HRESULT 错误均中文说明。图像转换 / MTA 阻塞路径由 Windows CI 编译和有语言包时的真实样本测试覆盖，目标实机行为后补。
+
+`core/text_layout` 不依赖视图或具体平台：连续 CJK、字母数字 / 撇号、完整 emoji 字素分词；标点空白不产词；按行高中位数与 1.6 倍相邻行间距重建段落；最近词、跨行正反区间与忠实行文本切片。跨行从首词到末词，保留中间标点、空格和换行；没有原生词盒时整行是一个选择单元。平台静态目标增加对 core 的单向链接。
+
+`SelectionOverlay` 进入取字时提交正在编辑的标注，调用 `renderAnnotatedSelection`（含遮盖 / 马赛克），交给 `TextRecognitionTask`。任务为 QThread，携带单调 token，经队列连接回 UI；退出、重试、重进和会话完成使旧 token 过期。300 ms 单次计时器提供进度反馈；退出模式立即清结果 / 选择 / 计时器，后台任务仍可完成但结果被丢弃。任务完成后延迟销毁；析构 requestInterruption + wait，系统识别没有可中断 API，因此结束会话销毁线程可能等待剩余一次识别时长（冷启动尤其需要人工核对）。不引入 QtConcurrent、轮询或常驻服务。
+
+图上命中与高亮将选区本地盒加选区物理原点后除源屏 DPR；选中盒路径并集用半透明色与细边绘制，裁剪在选区内，不进入输出。模式中选区手柄、移动 / 绘图 / 放大镜 / 微调、标注撤销重做禁用；复制快捷键仅分派文字且无选中吞掉，显式整图复制按钮保留码 10。弹窗 / 保存面板的交互有重入保护。`isTextMode`、`isRecognizingText`、`selectedOcrText`、`ocrHighlightBoxes` 是只读测试观察缝。
+
+`OverlayActions::recognizer` 为 `shared_ptr<const TextRecognizer>`，默认按需 `createTextRecognizer()`；`setClipboardText` 默认真实 QClipboard。替身可延时与返回不同序列，不要求 OCR 授权。`OcrDialog` 构造接收 `setClipboard(const QMimeData&)`，默认克隆 MIME 到真实剪贴板；读取最新 QTextDocument 的 toHtml / toPlainText。只读预览的局部复制只生成 text/plain；编辑用 QTextCharFormat / QTextListFormat，格式快捷键显式分派给编辑器，禁止富文本粘贴带入图片 / 表格等扩展格式。模态子弹窗 open() 不开启自定义嵌套循环，四态结果由覆盖层推送，重试发信号。关闭丢弃编辑内容，结果不持久化。
+
+接口保留后续替换引擎的余量；云 API、开源引擎、Key 管理与网络设置本轮没有实现。结果码 1–11、会话测量协议、保存与钉图行为不变。测试见 `tests/README.md`。

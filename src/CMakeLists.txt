@@ -1,6 +1,6 @@
 add_subdirectory(platform)
 
-add_library(waibusnap_core STATIC core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
+add_library(waibusnap_core STATIC core/text_layout.cpp core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options)
@@ -11,6 +11,7 @@ add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp)
 target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp ui/selection_overlay.h
+    ui/text_recognition_task.cpp ui/text_recognition_task.h ui/ocr_dialog.cpp ui/ocr_dialog.h
     ui/clipboard_sticker_toast.cpp ui/clipboard_sticker_toast.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h
