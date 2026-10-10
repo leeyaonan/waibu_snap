@@ -6,9 +6,9 @@
 | `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂 |
 | `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏 |
 | `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口 |
-| `core/` | 图像与标注核心 | `annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点与屏外找回纯函数；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
+| `core/` | 图像与标注核心 | `annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点、屏外找回与剪贴板级联纯函数；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
 | `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
-| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；八工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、保存 / 取消；无默认主窗口 |
+| `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；八工具 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`clipboard_sticker_toast` 的只读失败提示与单次计时；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、保存 / 取消；无默认主窗口 |
 | `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG / JPEG 原子提交；`image_save` 共享保存决策，格式感知命名与冲突避让；无自动保存 |
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
@@ -51,7 +51,7 @@
 
 `StickerManager::hideAll()` 按 `QWidget::isVisible()` 遍历当前可见窗口，调用 `setEditing(false)` 提交文本并退出编辑，再 `hide()`；隐藏不触发关闭确认，不写 `saved_`。`restoreAll()` 仅对活跃列表中不可见的存活窗口调用 `show()`，沿用 WA_ShowWithoutActivating / DoesNotAcceptFocus。状态口径是实时可见性，没有额外的全局隐藏标记或待恢复快照；关闭后从活跃列表移除，故延迟销毁中的已关闭窗口也不能复活。混合状态下两项分别作用于可见 / 隐藏窗口；退出解析 resolvingQuit 与清理 closingAll 期间两 API 均为空操作。`recoverWindows()` 只调整屏幕及几何，不显示窗口；退出汇总遍历全部活跃窗口，隐藏未保存项仍需确认。
 
-`ApplicationController::refreshStickerActions()` 遍历 `windows()` 及实时可见性，设置常驻 QAction `hideAllStickersAction` / `restoreAllStickersAction` 的可用性；菜单顺序为截图、设置、隐藏、恢复、退出。构造时、`QMenu::aboutToShow` 和两项执行后刷新，不触及截图会话、覆盖层或测量协议。
+`ApplicationController::refreshStickerActions()` 遍历 `windows()` 及实时可见性，设置常驻 QAction `hideAllStickersAction` / `restoreAllStickersAction` 的可用性；菜单顺序为截图、剪贴板贴图、设置、隐藏、恢复、退出（六项）。构造时、`QMenu::aboutToShow`、操作后及会话 / 退出状态转换时刷新；`clipboardStickerAction` 在 active / resolvingQuit / quitting 时禁用，无图时仍可点击提示。
 
 `StickerWindow` 使用 Frameless / StaysOnTop / Tool / DoesNotAcceptFocus 与 ShowWithoutActivating，子控件 NoFocus。Qt Tool 的失活隐藏通过 `WA_MacAlwaysShowToolWindow` 禁用；macOS 在显示前为 Qt 创建的 NSPanel 加 `NSWindowStyleMaskNonactivatingPanel` 并保持可见。Qt 的拒绝 key window 处理与 NSPanel 样式取舍依据 [Qt 6.11.2 Cocoa 窗口实现](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qcocoawindow.mm) 与 [QNSWindow](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qnswindow.mm)。处理集中在 `platform/macos/sticker_window_behavior.mm`，沿用已有呈现观察器的 NSView 桥接方式；Windows 编辑态允许前台输入并持有原前台窗口，退出编辑时通过同一行为会话恢复。offscreen 不转换原生句柄，真实浏览器 / 编辑器键盘焦点仍须人工核对。
 
@@ -66,3 +66,9 @@
 `StickerActions` 提供复制、路径选择、`confirmClose(QWidget*)` 与 `confirmQuit(count)` 行为缝，默认使用真实剪贴板、原生保存面板与中文三选一 QMessageBox；路径导出使用 `image_output` 的 PNG / JPEG 原子提交及格式感知命名工具。单张关闭先提交文本，已保存直接关闭，未保存选择取消 / 保存 / 放弃；面板取消或写入失败返回 false、提示并保留窗口。窗口以 confirmingClose / saveDialogOpen 保护嵌套循环，Qt 自身的 close 重入也以实际窗口生命周期与回调次数验证。
 
 `StickerManager::resolveUnsavedForQuit()` 在清理前结束编辑并提交文本，按创建顺序收集未保存项；汇总取消或任一逐张保存取消 / 失败返回 false，已保存项保持已保存。汇总期间禁用贴图交互与新增，保存 / 关闭确认期间再退出直接返回 false。控制器单独用 resolvingQuit 保护托盘重入，只有返回 true 才进入既有 cleanup，故中止不销毁选区、不释放热键；期间不接受新的截图或设置。`closeAll()` 使用 forceClose，aboutToQuit 与析构仍兜底清理，不二次确认；管理器保留待删除窗口的所有权，面板嵌套循环中的删除用 QPointer 防护。应用冒烟的两张贴图显式 saved=true，确认决策由进程内用例覆盖。选区退出码 9、受控模式码 2、结果码 1–11 与测量协议不变。
+
+`ClipboardActions::loadImage` 是 `ApplicationController` 的第四个可选构造参数，签名 `std::function<QImage()>`；默认仅调用 `QGuiApplication::clipboard()->image()`，不调用 setImage / setMimeData。测试注入确定图像或空图，独立于无头剪贴板能力。读取副本 DPR 归一为 1，按光标所在 QScreen 的可用区域与当前屏 DPR 计算初始窗口逻辑尺寸，再走 `StickerManager::create(image, position)` 默认 saved=false 路径；没有独立贴图列表或输出生命周期，不写截图结果码 / JSONL。
+
+`core/sticker_geometry::clipboardStickerPosition(available, windowSize, sequence)` 不依赖 QWidget：放得下时基点居中，放不下时左上内边距 24（不超过屏内最后一点）；右下每步 24，按可容纳步数取模回绕。放得下时整张不越界，超大图只保证左上角在可用区。quint64 控制器计数仅成功创建后递增，失败不消耗、关闭不回退；支持负坐标和极大序号。显示屏选择与图像读取均使用共享 Qt API，未新增 Windows 原生代码。
+
+`ui/clipboard_sticker_toast` 为控制器按需持有的单个 QLabel 顶层窗口，对象名 `clipboardStickerToast`，text() 可读；Tool / Frameless / StaysOnTop / DoesNotAcceptFocus、ShowWithoutActivating、NoFocus，暗底白字与纯文本换行。位置从光标右下 16 逻辑点起并按可用区域夹取，单个 2500 ms 单次 QTimer 在每次 showMessage 时重启，hideEvent 停止计时。成功创建、开始 / 结束截图及退出解析关闭，cleanup 销毁；空闲无周期读取剪贴板或驻留计时器。唯一失败提示文案为「剪贴板中没有可用图片，请先复制图片后再试；剪贴板内容未被修改。」

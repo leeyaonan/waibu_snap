@@ -151,7 +151,31 @@ macOS 27.0.1（26A434）/ arm64、Qt 6.11.2 Release：本机构建、WaibuSnap D
 
 独立 `open -W -n` LaunchServices 受控进程以临时 INI / JSONL 完成 **两条注入码 2**，依次冷 / 热，冻结帧 **1920×1080**、选区 **0×0**、`visible_proxy_ns` / `interactive_ns` 均非零。原普通实例 PID 保持，受控实例已退出；F1 占用时如实记录 -9878。未改屏幕录制授权、结果码 / 测量协议或正式性能测量；工作区 docs/ 保持不动。原始日志仅留本机临时目录，双端 CI 链接与结果见本次 PR。
 
+## C01 剪贴板图片贴图用例（2026-10-10）
+
+`sticker_geometry::clipboardCascade` 新增 16 行矩阵：居中、连续 +24、最后可容纳位置、越界回绕及重复回绕、负坐标屏、单轴放不下、超大图、完全等屏、极小屏、quint64 最大序号、空参数；直接断言位置及可见范围。
+
+`startup_smoke` 新增：`clipboardStickerImageLifecycle`（源 DPR 1 / 1.5 / 2，恰一张、原像素 / DPR=1、窗口大小与纯函数位置、第二张 +24、保存 PNG 回读、隐藏恢复、未保存退出汇总、无自动文件与测量记录）；`clipboardStickerEmptyToastReuseTimeoutAndCleanup`（计数不变、完整文案、窗口旗标、已有输入焦点、重复实例 / 文本刷新 / 重启计时、超时消失、析构无残留）；`clipboardStickerFailureDoesNotAdvanceCascade`；`clipboardStickerMenuSessionAndQuitGuards`（无图可用、弹出前刷新、截图 / 退出解析期间禁用和直接触发保护、取消后恢复）；`clipboardStickerToastClampsAtScreenEdges`；`clipboardStickerCleanupDisablesAction`；`clipboardStickerReadOnly`（真实图片 / 纯文本、逐像素 / 逐字不变与零 dataChanged 写入信号）。全部加入独立 2 倍屏幕 DPR 子集。
+
+剪贴板用例先保存原 MIME 格式字节，夹具 setImage / setText 后默认读真实 QClipboard，结束恢复原内容；产品 C01 只读路径没有任何写入。若平台剪贴板无法回读夹具，使用记录读取次数的替身并保留同样的像素 / 内容及零变化断言，不跳过测试；本机 Cocoa 复验设置 `WAIBUSNAP_REQUIRE_SYSTEM_CLIPBOARD=1`，强制真实分支，不能回退替身。跨应用复制 PNG 的格式互操作仍保留人工核对。
+
+焦点测试区分后端能力：已查证 [Qt 6.11.2 offscreen 源码](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/offscreen/qoffscreenwindow.cpp#L78)，该后端首次显示非 ToolTip 窗口必发送 focusWindowChanged，忽略 DoesNotAcceptFocus / ShowWithoutActivating。因此无头用例先断言此后端事件，再固定已有输入焦点，严格核对重复触发、计时与消失期间焦点不变；产品窗口旗标不改。真实 Cocoa 子集保留首次显示前后的焦点 / activeWindow 不变断言，且强制真实剪贴板；不据 offscreen 声称原生首次显示焦点已验收。
+
+必要调整仅为托盘由 **5→6 项**，「设置…」索引 **1→2**、隐藏 / 恢复索引 **2/3→3/4**、退出仍为末项；子进程冒烟与既有设置测试同步新索引，原语义断言保留。结果码、测量协议、保存与退出决策保持原样；工作区 docs/ 未修改。
+
+本机 macOS **27.0.1（26A434）/ arm64**、Qt **6.11.2 Release**：构建、WaibuSnap Dev 稳定签名与原 `local.waibusnap.dev` / 证书叶 requirement、全部 **11 项 CTest**、clang-format **18.1.8**、`git diff --check` 通过。主冒烟 **197→207 项**，独立 `QT_SCALE_FACTOR=2` 子集 **120→130 项**，均零失败 / 零跳过；贴图几何单元 **9→25 项**。真实 Cocoa 剪贴板 / 生命周期 / 提示窗子集 **9 项**通过（含初始化 / 清理），默认 QClipboard 的图片逐像素与文本逐字保持、零写入信号，首次显示及超时焦点断言保留。
+
+本机构建初次因 Xcode 17 链接器读到系统默认 CommandLineTools macOS 27 SDK 的新架构标记而失败；通过局部指定已安装 Xcode 自带 **SDK 26.2** 的 SDKROOT / CMAKE_OSX_SYSROOT 后通过，无新依赖、无全局工具链设置修改。原始失败与复验证据只保留本机临时 / 构建目录。首轮焦点夹具问题与 offscreen 的强制激活事件已按上述后端能力修正，不更改产品旗标、不删除原生断言。
+
+独立 `open -W -n` / LaunchServices 受控进程使用临时 INI / JSONL 完成 **两条注入码 2**，依次 cold=true / false，冻结帧 **3024×1964**、选区 **0×0**，`visible_proxy_ns` / `interactive_ns` 均非零，进程正常结束。未改屏幕录制权限、真实设置、结果码或测量协议；只复核注入 / 取消协议，不作为正式性能验收。原始日志、图片与设置不入库；双端 CI 链接及最终状态见本次 PR。
+
 ## 人工核对清单（待用户真机操作）
+
+- C01：macOS 真机分别从预览、浏览器、微信复制 PNG 图像内容，点托盘「剪贴板贴图」核对原尺寸 / 像素、拖动、25%–400% 缩放、八工具编辑和 PNG / JPEG 保存；读取贴图后回原应用粘贴，剪贴板内容仍相同。
+- C01：纯文本 / 不支持内容时无空白贴图，中文提示完整、光标附近不越可用屏、不抢当前应用键盘，约 2.5 秒消失；连续点击延长时限，无残留窗口。
+- C01：多张居中后 +24 级联、边界回绕，超大图左上角可见；在 Retina / 外接 1× 与负坐标屏分别核对。隐藏 / 恢复保留编辑与缩放，隐藏未保存图仍计入退出汇总；重启不恢复、无自动文件。
+- C01：Windows 原生适配与目标实机补齐后，在 Windows 11 x64 复核上述入口、外部应用图片格式、Toast 焦点及 100% / 150% / 200% 混合 DPI；双端共享 CI 不能替代这部分验收。
+
 
 - S04：macOS 真机用像素网格，在 Retina 与外接 1× 屏分别拖选 / 移动 / 四边四角调整，核对 15×15 放大镜原像素与 8 逻辑点铺格清晰度、黑白双线锚点格、四角 / 四边翻转及不遮挡锚点；松开隐藏，连续微调停下约 700 ms 隐藏。
 - S04：画布持焦无工具时核对四方向移动、Shift 扩张、Option 收缩都恰 1 源屏物理像素，长按不加速；屏边 / 1×1 夹停、尺寸文本和工具栏同步。Cmd / Control / Meta、Shift+Option 忽略，Option+方向键不与系统操作冲突；工具激活与中文预编辑 / 候选时方向键保持原层。
