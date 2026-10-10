@@ -39,9 +39,7 @@ class MacAutostart final : public Autostart
             if (!service)
                 return QStringLiteral("系统登录项服务不可用，请从应用包启动后重试。");
             const auto state = query();
-            if (!state.notice.isEmpty())
-                return state.notice;
-            if (enabled == state.enabled)
+            if (state.notice.isEmpty() && enabled == state.enabled)
                 return {};
             NSError* error = nil;
             const BOOL success = enabled ? [service registerAndReturnError:&error]
