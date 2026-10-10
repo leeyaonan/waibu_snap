@@ -3,9 +3,9 @@
 | 目录 | 职责 | 初始化状态 |
 | --- | --- | --- |
 | `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、全部隐藏 / 恢复、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验 |
-| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂；`autostart` 的只读状态、开关操作与工厂；`text_recognizer` 的离线识别契约 |
-| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏；`autostart.mm` 通过 SMAppService 注册主应用登录项；`text_recognizer.mm` 使用 Vision |
-| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口；`text_recognizer.cpp` 使用 C++/WinRT OCR，`autostart` 使用 HKCU Run |
+| `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`overlay_window_behavior` 的冻结覆盖层窗口层级契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂；`autostart` 的只读状态、开关操作与工厂；`text_recognizer` 的离线识别契约 |
+| `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏；`overlay_window_behavior.mm` 首次显示时幂等设置 NSStatusWindowLevel；`autostart.mm` 通过 SMAppService 注册主应用登录项；`text_recognizer.mm` 使用 Vision |
+| `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行与覆盖层层级入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口；`text_recognizer.cpp` 使用 C++/WinRT OCR，`autostart` 使用 HKCU Run |
 | `core/` | 图像与标注核心 | `annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点、屏外找回与剪贴板级联纯函数；`text_layout` 的分词、段落与选择数学；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
 | `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
 | `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；覆盖层九工具（八标注 + 取字）/ 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`text_recognition_task` 后台识别与 `ocr_dialog` 富文本编辑；`clipboard_sticker_toast` 的只读失败提示与单次计时；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、登录启动开关、保存 / 取消；无默认主窗口 |
@@ -17,11 +17,17 @@
 
 `OverlayActions` 提供复制、钉图与路径选择的行为缝，默认走真实 QClipboard 和原生 QFileDialog；`exportToPath` 分离路径导出与面板。输出由 `renderAnnotatedSelection(frame_.pixels, annotations, selection)` 合成后裁剪，不捕获 QWidget 显示层；保存成功保留会话，复制成功以结果码 10、钉图成功以结果码 11 结束。工具栏在选区成立后创建，文本编辑器仅在使用文本工具时创建；标注、撤销历史、工具栏和短暂反馈计时器归会话所有，空闲无隐藏预建选区或轮询。
 
+`toolbar_icons` 直接移植已确认草案的 18×18 路径，用 QPainter 生成 19 类 QIcon，提供 1x / 2x、选中与禁用态，无新增依赖。主条按钮为 28×28 图标方块；九工具、撤销重做、输出操作按分隔线分组，取字模式在工具组与历史组间插入「提取全文」。宽屏单行高 44，放不下时两行，320px 使用三列工具网格加操作行。参数条只在对应工具下显示：图形为颜色 + 线宽、文本为颜色 + 字号、遮盖仅颜色；点按即时更新后续绘制参数，切换工具保留选值。
+
+`DisplayTarget::availableLogicalGeometry` 是捕获时刻快照，空值回退到完整显示器几何。macOS 把 NSScreen.visibleFrame 按 frame 的同一坐标翻转转换；stillMatches 不因 Dock 状态改变而变更契约，Windows 桩继续留空。主条 + 参数条整体按「选区下方 → 上方 → 可用区内部底侧」定位，负坐标屏先换算为本地可用区并与覆盖层求交。`outputStatus` 是覆盖层独立 QLabel，参数条下方留 10px、空间不足则在主条上方，右对齐、可换行；显示与计时不改变主条尺寸。放大镜同时受可用区夹取，并避让三个可见控件的并集。
+
+`raiseOverlayAboveSystemChrome` 不暴露原生句柄。macOS 仅在 Cocoa 后端且 QWindow 已有原生窗口时，通过 ARC bridge 取得 NSView.window 并设置 NSStatusWindowLevel；空指针、无原生窗口和 offscreen 安全返回。SelectionOverlay 首次 showEvent 调用，销毁后无须还原系统层级。Windows 沿用现有 topmost，接口为空实现。
+
 `core/selection_assistance` 沿用 `sticker_geometry` / `window_snapping` 的纯几何测试缝：`nudgedPixelSelection` 直接在源屏半开物理像素矩形上移动 / 扩张 / 收缩 1 像素，复用现有几何夹取；`selectionNudgeAnchor` 取移动左上角或对应边内最后像素的中点；`magnifierSamplingRect` 给出 15×15 贴边平移矩形；`placedMagnifier` 负责逻辑坐标四象限翻转、屏内夹取及工具栏避让。不依赖 QWidget 或平台接口。
 
-`SelectionOverlay` 按键分层为 **文本编辑 > 工具态 > 微调**：已结束 / 保存面板先拦截，文本编辑器继续负责 IME 与方向键；无工具、非拖动且覆盖层自身 `hasFocus()` 才接收无修饰 / Shift / `Qt::AltModifier` 方向键。Control / Meta 或 Shift+Alt 不处理，双端共享 Alt（macOS Option）路径。`setSelection` 仅在矩形真的改变时标脏，历史仍只包含标注；尺寸提示通过只读 `selectionSizeText()` 与绘制共用文本，工具栏沿用现有位置更新。
+`SelectionOverlay` 按键分层为 **文本编辑 > 工具态 > 微调**：已结束 / 保存面板先拦截，文本编辑器继续负责 IME 与方向键；无工具、非拖动且覆盖层自身 `hasFocus()` 才接收无修饰 / Shift / `Qt::AltModifier` 方向键。Control / Meta 或 Shift+Alt 不处理，双端共享 Alt（macOS Option）路径。`setSelection` 仅在矩形真的改变时标脏，历史仍只包含标注；尺寸提示通过只读 `selectionSizeText()` 与绘制共用文本，工具栏按可用区重新定位。
 
-放大镜在覆盖层 `paintEvent` 内自绘，不创建窗口 / 子控件。鼠标位置沿用 `physicalPoint` 后最近像素取整，并夹到 `[0, width-1] / [0, height-1]`；键盘直接给整数锚点，不通过逻辑坐标累计。仅复制冻结帧采样窗并将采样 DPR 归一为 1，目标按实际画布 DPR 整数铺格、关闭平滑，双线标记 `anchor - sampleRect.topLeft()`，贴边仍能辨认实际锚点格。绘制位于遮罩之后；若有子工具栏则由纯几何避让。`magnifierVisible()`、`magnifierAnchor()`、`magnifierSampleRect()`、`magnifierSample()`、`magnifierPositionText()` 和 `magnifierRect()` 均只读；采样图为源分辨率，内部锚点在中心格，贴边平移后由相对偏移定位。
+放大镜在覆盖层 `paintEvent` 内自绘，不创建窗口 / 子控件。鼠标位置沿用 `physicalPoint` 后最近像素取整，并夹到 `[0, width-1] / [0, height-1]`；键盘直接给整数锚点，不通过逻辑坐标累计。仅复制冻结帧采样窗并将采样 DPR 归一为 1，目标按实际画布 DPR 整数铺格、关闭平滑，双线标记 `anchor - sampleRect.topLeft()`，贴边仍能辨认实际锚点格。绘制位于遮罩之后；避让主条、参数条与状态胶囊的可见范围。`magnifierVisible()`、`magnifierAnchor()`、`magnifierSampleRect()`、`magnifierSample()`、`magnifierPositionText()` 和 `magnifierRect()` 均只读；采样图为源分辨率，内部锚点在中心格，贴边平移后由相对偏移定位。
 
 鼠标按下 / 拖动显示并停止隐藏计时，释放即清空；键盘每次重启同一个 700 ms 单次精确计时器，超时清空锚点 / 采样。工具激活、打开保存面板、关闭 / 完成 / 取消会话也停止计时并清空。输出继续只用冻结帧与标注合成，放大镜没有导出路径；结果码、测量协议、保存和退出语义不变。
 

@@ -16,7 +16,8 @@ add_test(NAME startup_smoke COMMAND startup_smoke -o
     "${CMAKE_CURRENT_BINARY_DIR}/startup_smoke-output.txt,txt")
 set_tests_properties(startup_smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WAIBUSNAP_TEST_APP=$<TARGET_FILE:WaibuSnap>"
-    TIMEOUT 30
+    # 紧凑工具栏增加可用区矩阵与高 DPI 子集，给完整断言留足执行时间。
+    TIMEOUT 60
 )
 
 qt_add_executable(selection_geometry_test unit/selection_geometry_test.cpp)
@@ -68,6 +69,11 @@ set_target_properties(sticker_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME sticker_geometry COMMAND sticker_geometry_test)
 
 add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
+    fullScreenToolbarUsesInsideBottom toolbarStaysReachableWithSystemChrome
+    toolbarCompactIconsAndTooltips toolbarOptionsFollowActiveTool toolbarStatusPillIndependent
+    toolbarStatusPillTimesOut
+    coverOverlayToolbarFitsNarrowScreens annotationStylesUndoRedoAndDirtyState
+    toolbarBackgroundCommitsAndClearsPreedit
     trayIconUsesEmbeddedPlatformAssets
     ocrModeLifecycle ocrSelection ocrCopyDispatchAndSavedState
     ocrDelayedProgressExitAndStaleResult ocrDialogEscAndRetry ocrDialogLoadingAndEmpty
@@ -100,7 +106,8 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     -o "${CMAKE_CURRENT_BINARY_DIR}/startup_smoke-sticker-high-dpi-output.txt,txt")
 set_tests_properties(startup_smoke_sticker_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2"
-    TIMEOUT 30
+    # 紧凑工具栏增加可用区矩阵与高 DPI 子集，给完整断言留足执行时间。
+    TIMEOUT 60
 )
 
 qt_add_executable(text_layout_test unit/text_layout_test.cpp)
