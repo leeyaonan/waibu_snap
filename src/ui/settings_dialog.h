@@ -1,9 +1,11 @@
 #pragma once
+#include "interfaces/autostart.h"
 #include "output/image_output.h"
 #include <QDialog>
 #include <QKeySequence>
 #include <functional>
 class QComboBox;
+class QCheckBox;
 class QLineEdit;
 class QKeySequenceEdit;
 class QLabel;
@@ -22,7 +24,8 @@ class SettingsDialog final : public QDialog
     using SaveHotkey = std::function<QString(const QKeySequence&)>;
     explicit SettingsDialog(const QKeySequence& current, SaveHotkey save,
                             const QString& notice = {}, QWidget* parent = nullptr,
-                            SaveSettingsActions saveSettings = {});
+                            SaveSettingsActions saveSettings = {},
+                            AutostartActions autostartActions = {});
 
   protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -36,5 +39,7 @@ class SettingsDialog final : public QDialog
     SaveSettingsActions saveSettings_;
     QLineEdit* directory_ = nullptr;
     QComboBox* format_ = nullptr;
+    AutostartActions autostartActions_;
+    QCheckBox* autostartCheck_ = nullptr;
 };
 }
