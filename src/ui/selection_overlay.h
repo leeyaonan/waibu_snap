@@ -1,11 +1,13 @@
 #pragma once
 #include "core/annotation.h"
 #include "core/selection_geometry.h"
+#include "core/text_layout.h"
 #include "interfaces/capture_provider.h"
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include "output/image_save.h"
 #include <QLabel>
+#include <QPointer>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -16,8 +18,11 @@ class QShortcut;
 namespace waibusnap
 {
 class AnnotationTextEdit;
+class OcrDialog;
 struct OverlayActions : ImageSaveActions
 {
+    std::shared_ptr<const TextRecognizer> recognizer;
+    std::function<void(const QString&)> setClipboardText;
     std::function<ImageOutputResult(const QImage&)> copyImage;
     std::function<ImageOutputResult(const QImage&)> pinImage;
 };
@@ -28,6 +33,10 @@ class SelectionOverlay final : public QWidget
     explicit SelectionOverlay(CaptureFrame frame, OverlayActions actions = {},
                               QVector<QRect> windows = {}, QString snappingError = {});
     QRect selection() const;
+    bool isTextMode() const { return textMode_; }
+    bool isRecognizingText() const { return recognizingText_; }
+    QString selectedOcrText() const;
+    QVector<QRectF> ocrHighlightBoxes() const;
     QRect hoveredWindowPixels() const { return hoveredWindowPixels_; }
     bool hasPainted() const { return painted_; }
     bool isSelectionSaved() const { return saved_; }
@@ -50,6 +59,7 @@ class SelectionOverlay final : public QWidget
   protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
+    void mouseDoubleClickEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
@@ -68,6 +78,13 @@ class SelectionOverlay final : public QWidget
     };
     void complete(int outcome);
     void copySelection();
+    void copyShortcut();
+    void toggleTextMode();
+    void exitTextMode();
+    void startOcrRecognition();
+    void openOcrDialog();
+    text_layout::TokenPosition textAt(QPointF position, bool nearest) const;
+    void selectOcrTo(QPointF position);
     void pinSelection();
     void saveSelection();
     void setSelection(QRect pixels);
@@ -114,6 +131,18 @@ class SelectionOverlay final : public QWidget
     QVector<QPushButton*> toolButtons_;
     QPushButton* undoButton_ = nullptr;
     QPushButton* redoButton_ = nullptr;
+    QPushButton* ocrButton_ = nullptr;
+    QPushButton* extractAllTextButton_ = nullptr;
+    QShortcut* copyShortcut_ = nullptr;
+    bool textMode_ = false;
+    bool recognizingText_ = false;
+    bool selectingText_ = false;
+    quint64 recognitionToken_ = 0;
+    QTimer recognitionProgress_;
+    TextRecognitionResult ocrResult_;
+    text_layout::TokenPosition ocrAnchor_;
+    QVector<text_layout::SelectionRange> ocrSelection_;
+    QPointer<OcrDialog> ocrDialog_;
     QShortcut* undoShortcut_ = nullptr;
     QShortcut* redoShortcut_ = nullptr;
     QRect selection_;

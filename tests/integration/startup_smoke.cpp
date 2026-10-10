@@ -7,8 +7,10 @@
 #include "output/annotation_renderer.h"
 #include "session/session_metrics.h"
 #include "ui/annotation_text_edit.h"
+#include "ui/ocr_dialog.h"
 #include "ui/selection_overlay.h"
 #include "ui/settings_dialog.h"
+#include "ui/text_recognition_task.h"
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -16,6 +18,7 @@
 #include <QComboBox>
 #include <QCursor>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEnterEvent>
 #include <QFile>
 #include <QFileInfo>
@@ -28,6 +31,8 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QPushButton>
@@ -37,12 +42,61 @@
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTest>
+#include <QTextEdit>
 #include <QWheelEvent>
 #include <QWindow>
 #include <algorithm>
+#include <atomic>
 
 namespace
 {
+
+waibusnap::TextRecognitionResult sampleOcrResult()
+{
+    return {true,
+            {},
+            {{QStringLiteral("Hello, world!  "),
+              {20, 20, 500, 40},
+              {{"Hello", {20, 20, 80, 40}, 0, 5}, {"world", {130, 20, 100, 40}, 7, 5}}},
+             {QString::fromUtf8("你好，😀 OCR。"),
+              {20, 100, 500, 40},
+              {{QStringLiteral("你好"), {20, 100, 80, 40}, 0, 2},
+               {QString::fromUtf8("😀"), {130, 100, 30, 40}, 3, 2},
+               {"OCR", {190, 100, 80, 40}, 6, 3}}}}};
+}
+class OcrStub final : public waibusnap::TextRecognizer
+{
+  public:
+    mutable std::atomic<int> calls{0};
+    mutable std::atomic<int> completions{0};
+    mutable std::atomic<bool> worker{false};
+    int delayMs = 0;
+    bool firstOnlyDelay = false;
+    QVector<waibusnap::TextRecognitionResult> results{sampleOcrResult()};
+    waibusnap::TextRecognitionResult recognize(const QImage& image) const override
+    {
+        const int index = calls.fetch_add(1);
+        worker = QThread::currentThread() != qApp->thread();
+        {
+            QMutexLocker lock(&mutex_);
+            input_ = image;
+        }
+        if (!firstOnlyDelay || index == 0)
+            QThread::msleep(delayMs);
+        ++completions;
+        return results[std::min(index, int(results.size()) - 1)];
+    }
+    QImage input() const
+    {
+        QMutexLocker lock(&mutex_);
+        return input_;
+    }
+
+  private:
+    mutable QMutex mutex_;
+    mutable QImage input_;
+};
+
 struct AutostartStub
 {
     waibusnap::AutostartState state;
@@ -231,6 +285,446 @@ class StartupSmokeTest final : public QObject
     Q_OBJECT
   private slots:
     void initTestCase() { qApp->setQuitOnLastWindowClosed(false); }
+    void ocrModeLifecycle()
+    {
+        auto engine = std::make_shared<OcrStub>();
+        waibusnap::OverlayActions actions;
+        actions.recognizer = engine;
+        waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        const QRect selection = overlay.selection();
+        QTemporaryDir temp;
+        QVERIFY(overlay.exportToPath(temp.filePath("ocr.png")));
+        QVERIFY(overlay.isSelectionSaved());
+        int tools = 0;
+        for (auto* control : overlay.findChildren<QPushButton*>())
+            if (control->objectName().endsWith("ToolButton"))
+                ++tools;
+        QCOMPARE(tools, 9);
+        QCOMPARE(button(overlay, "ocrToolButton")->text(), QStringLiteral("取字"));
+        auto* extract = button(overlay, "extractAllTextButton");
+        QVERIFY(extract->isHidden());
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QVERIFY(overlay.isTextMode());
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QVERIFY(!extract->isHidden());
+        QVERIFY(button(overlay, "ocrToolButton")->isChecked());
+        QVERIFY(!overlay.activeTool());
+        QCOMPARE(engine->calls.load(), 1);
+        QVERIFY(engine->worker.load());
+        QCOMPARE(overlay.selection(), selection);
+        QVERIFY(overlay.isSelectionSaved());
+        drag(overlay, {100, 100}, {500, 320});
+        QCOMPARE(overlay.selection(), selection);
+        QVERIFY(overlay.annotations().isEmpty());
+        QVERIFY(!overlay.magnifierVisible());
+        overlay.setFocus();
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QTest::keyClick(&overlay, Qt::Key_Down, Qt::ShiftModifier);
+        QTest::keyClick(&overlay, Qt::Key_Left, Qt::AltModifier);
+        QCOMPARE(overlay.selection(), selection);
+        QVERIFY(!overlay.magnifierVisible());
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QVERIFY(!overlay.isTextMode());
+        QVERIFY(overlay.selectedOcrText().isEmpty());
+        QVERIFY(extract->isHidden());
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QCOMPARE(engine->calls.load(), 2);
+        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        QVERIFY(!overlay.isTextMode());
+        QCOMPARE(overlay.activeTool(),
+                 std::optional<waibusnap::AnnotationType>(waibusnap::AnnotationType::Line));
+        drag(overlay, {200, 250}, {300, 300});
+        QCOMPARE(overlay.annotations().size(), 1);
+        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        overlay.setFocus();
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QCOMPARE(overlay.selection(), selection.translated(1, 0));
+        QVERIFY(overlay.magnifierVisible());
+        QCOMPARE(finished.count(), 0);
+    }
+    void ocrSelection_data()
+    {
+        QTest::addColumn<int>("gesture");
+        QTest::addColumn<QString>("expected");
+        QTest::addColumn<int>("boxes");
+        QTest::newRow("english") << 0 << QString("Hello") << 1;
+        QTest::newRow("chinese") << 1 << QStringLiteral("你好") << 1;
+        QTest::newRow("emoji") << 2 << QString::fromUtf8("😀") << 1;
+        QTest::newRow("cross-line") << 3 << QString::fromUtf8("Hello, world!  \n你好，😀 OCR") << 5;
+        QTest::newRow("reverse") << 4 << QString::fromUtf8("Hello, world!  \n你好，😀 OCR") << 5;
+        QTest::newRow("punctuation-space") << 5 << QString("Hello, world") << 2;
+    }
+    void ocrSelection()
+    {
+        QFETCH(int, gesture);
+        QFETCH(QString, expected);
+        QFETCH(int, boxes);
+        auto engine = std::make_shared<OcrStub>();
+        QString copied;
+        int copies = 0;
+        waibusnap::OverlayActions actions;
+        actions.recognizer = engine;
+        actions.setClipboardText = [&](const QString& text)
+        {
+            copied = text;
+            ++copies;
+        };
+        waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        const QRect selection = overlay.selection();
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QMouseEvent textMove(QEvent::MouseMove, QPointF(125, 120),
+                             overlay.mapToGlobal(QPoint(125, 120)), Qt::NoButton, Qt::NoButton,
+                             Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &textMove);
+        QCOMPARE(overlay.cursor().shape(), Qt::IBeamCursor);
+        QMouseEvent blankMove(QEvent::MouseMove, QPointF(400, 300),
+                              overlay.mapToGlobal(QPoint(400, 300)), Qt::NoButton, Qt::NoButton,
+                              Qt::NoModifier);
+        QApplication::sendEvent(&overlay, &blankMove);
+        QCOMPARE(overlay.cursor().shape(), Qt::ArrowCursor);
+        if (gesture < 3)
+        {
+            const QPoint points[] = {{125, 120}, {125, 160}, {172, 160}};
+            QTest::mouseDClick(&overlay, Qt::LeftButton, Qt::NoModifier, points[gesture]);
+        }
+        else if (gesture == 3)
+            drag(overlay, {125, 120}, {215, 160});
+        else if (gesture == 4)
+            drag(overlay, {215, 160}, {125, 120});
+        else
+            drag(overlay, {125, 120}, {185, 120});
+        QCOMPARE(overlay.selectedOcrText(), expected);
+        QCOMPARE(overlay.ocrHighlightBoxes().size(), boxes);
+        QVERIFY(overlay.ocrHighlightBoxes().first().width() > 0);
+        QImage painted(overlay.size() * overlay.devicePixelRatioF(), QImage::Format_ARGB32);
+        painted.setDevicePixelRatio(overlay.devicePixelRatioF());
+        overlay.render(&painted);
+        const QRectF first = overlay.ocrHighlightBoxes().first();
+        const QPointF center = (first.center() + QPointF(selection.topLeft())) / 2;
+        QVERIFY(painted.pixelColor(qRound(center.x() * painted.devicePixelRatio()),
+                                   qRound(center.y() * painted.devicePixelRatio())) !=
+                QColor(Qt::white));
+        overlay.setFocus();
+        standardKey(&overlay, QKeySequence::Copy);
+        QCOMPARE(copies, 1);
+        QCOMPARE(copied, expected);
+        QCOMPARE(overlay.findChild<QLabel*>("outputStatus")->text(),
+                 QStringLiteral("已复制 %1 个字符").arg(expected.size()));
+        QCOMPARE(overlay.selection(), selection);
+        QCOMPARE(finished.count(), 0);
+        QVERIFY(overlay.isVisible());
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {400, 300});
+        QVERIFY(overlay.selectedOcrText().isEmpty());
+        QVERIFY(overlay.ocrHighlightBoxes().isEmpty());
+        standardKey(&overlay, QKeySequence::Copy);
+        QCOMPARE(copies, 1);
+    }
+    void ocrCopyDispatchAndSavedState()
+    {
+        auto engine = std::make_shared<OcrStub>();
+        int imageCopies = 0;
+        int textCopies = 0;
+        waibusnap::OverlayActions actions;
+        actions.recognizer = engine;
+        actions.copyImage = [&](const QImage&)
+        {
+            ++imageCopies;
+            return waibusnap::ImageOutputResult{true, {}};
+        };
+        actions.setClipboardText = [&](const QString&) { ++textCopies; };
+        waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        QTemporaryDir temp;
+        const auto path = temp.filePath("saved.png");
+        QVERIFY(overlay.exportToPath(path));
+        const auto saved = QImage(path);
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        overlay.setFocus();
+        standardKey(&overlay, QKeySequence::Copy);
+        QCOMPARE(imageCopies, 0);
+        QCOMPARE(textCopies, 0);
+        QVERIFY(overlay.findChild<QLabel*>("outputStatus")->isHidden());
+        QTest::mouseDClick(&overlay, Qt::LeftButton, Qt::NoModifier, {172, 160});
+        standardKey(&overlay, QKeySequence::Copy);
+        QCOMPARE(textCopies, 1);
+        QCOMPARE(imageCopies, 0);
+        QVERIFY(overlay.isSelectionSaved());
+        QCOMPARE(finished.count(), 0);
+        compareImagePixels(QImage(path), saved);
+        QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
+        QCOMPARE(imageCopies, 1);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first()[1].toInt(), waibusnap::copiedSessionOutcome);
+        waibusnap::SelectionOverlay ordinary(annotationFrame(), actions);
+        QSignalSpy ordinaryFinished(&ordinary, &waibusnap::SelectionOverlay::finished);
+        ordinary.show();
+        drag(ordinary, {100, 100}, {650, 450});
+        ordinary.activateWindow();
+        ordinary.setFocus();
+        standardKey(&ordinary, QKeySequence::Copy);
+        QCOMPARE(imageCopies, 2);
+        QCOMPARE(ordinaryFinished.first()[1].toInt(), waibusnap::copiedSessionOutcome);
+    }
+    void ocrDelayedProgressExitAndStaleResult()
+    {
+        auto engine = std::make_shared<OcrStub>();
+        engine->delayMs = 650;
+        engine->firstOnlyDelay = true;
+        engine->results = {{false, QStringLiteral("旧结果不得展示"), {}}, sampleOcrResult()};
+        waibusnap::OverlayActions actions;
+        actions.recognizer = engine;
+        waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_COMPARE(engine->calls.load(), 1);
+        QVERIFY(overlay.isRecognizingText());
+        QTRY_COMPARE(overlay.findChild<QLabel*>("outputStatus")->text(),
+                     QStringLiteral("正在识别文字…"));
+        QElapsedTimer elapsed;
+        elapsed.start();
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QVERIFY(elapsed.elapsed() < 150);
+        QVERIFY(!overlay.isTextMode());
+        QVERIFY(!overlay.isRecognizingText());
+        QVERIFY(overlay.findChild<QLabel*>("outputStatus")->isHidden());
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QCOMPARE(engine->calls.load(), 2);
+        QTest::qWait(700);
+        QVERIFY(overlay.findChild<QLabel*>("outputStatus")->isHidden());
+        QTest::mouseDClick(&overlay, Qt::LeftButton, Qt::NoModifier, {125, 120});
+        QCOMPARE(overlay.selectedOcrText(), QString("Hello"));
+        QCOMPARE(finished.count(), 0);
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QVERIFY(!overlay.isTextMode());
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(finished.first()[1].toInt(), waibusnap::cancelledSessionOutcome);
+    }
+    void ocrDialogEscAndRetry()
+    {
+        auto engine = std::make_shared<OcrStub>();
+        engine->results = {{false, QStringLiteral("测试失败"), {}}, sampleOcrResult()};
+        waibusnap::OverlayActions actions;
+        actions.recognizer = engine;
+        waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
+        QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        const QRect selection = overlay.selection();
+        const auto annotations = overlay.annotations();
+        QTemporaryDir temp;
+        QVERIFY(overlay.exportToPath(temp.filePath("before-dialog.png")));
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QVERIFY(overlay.findChild<QLabel*>("outputStatus")
+                    ->text()
+                    .contains(QStringLiteral("测试失败")));
+        QTest::mouseClick(button(overlay, "extractAllTextButton"), Qt::LeftButton);
+        auto* dialog = overlay.findChild<waibusnap::OcrDialog*>();
+        QVERIFY(dialog);
+        QVERIFY(dialog->isModal());
+        QCOMPARE(dialog->parentWidget(), &overlay);
+        drag(overlay, {125, 120}, {215, 160});
+        QVERIFY(overlay.selectedOcrText().isEmpty());
+        auto* retry = dialog->findChild<QPushButton*>("ocrRetryButton");
+        QVERIFY(retry->isVisible());
+        QTest::mouseClick(retry, Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QCOMPARE(engine->calls.load(), 2);
+        QCOMPARE(dialog->findChild<QTextEdit*>("ocrTextEdit")->toPlainText(),
+                 waibusnap::text_layout::assembleFullText(sampleOcrResult().lines));
+        QTest::mouseClick(dialog->findChild<QPushButton*>("ocrEditButton"), Qt::LeftButton);
+        dialog->findChild<QTextEdit*>("ocrTextEdit")
+            ->insertPlainText(QStringLiteral("临时编辑不改图"));
+        QTest::keyClick(dialog, Qt::Key_Escape);
+        QVERIFY(!dialog->isVisible());
+        QVERIFY(overlay.isTextMode());
+        QVERIFY(overlay.isSelectionSaved());
+        QCOMPARE(finished.count(), 0);
+        QCOMPARE(overlay.selection(), selection);
+        compareAnnotations(overlay.annotations(), annotations);
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QVERIFY(!overlay.isTextMode());
+        QCOMPARE(finished.count(), 0);
+        QTest::keyClick(&overlay, Qt::Key_Escape);
+        QCOMPARE(finished.count(), 1);
+    }
+    void ocrDialogLoadingAndEmpty()
+    {
+        auto engine = std::make_shared<OcrStub>();
+        engine->delayMs = 450;
+        engine->results = {{true, {}, {}}};
+        waibusnap::OverlayActions actions;
+        actions.recognizer = engine;
+        waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "extractAllTextButton"), Qt::LeftButton);
+        auto* dialog = overlay.findChild<waibusnap::OcrDialog*>();
+        QVERIFY(dialog);
+        QCOMPARE(dialog->findChild<QLabel*>("ocrStateLabel")->text(),
+                 QStringLiteral("正在识别文字…"));
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QCOMPARE(dialog->findChild<QLabel*>("ocrStateLabel")->text(),
+                 QStringLiteral("未识别到文字"));
+        QVERIFY(!dialog->findChild<QPushButton*>("ocrCopyButton")->isEnabled());
+        dialog->reject();
+        QCOMPARE(overlay.findChild<QLabel*>("outputStatus")->text(),
+                 QStringLiteral("未识别到文字"));
+    }
+    void ocrDialogFormats_data()
+    {
+        QTest::addColumn<QByteArray>("control");
+        QTest::addColumn<QString>("htmlMarker");
+        QTest::newRow("bold") << QByteArray("ocrBoldButton") << QString("font-weight:700");
+        QTest::newRow("italic") << QByteArray("ocrItalicButton") << QString("font-style:italic");
+        QTest::newRow("underline")
+            << QByteArray("ocrUnderlineButton") << QString("text-decoration: underline");
+        QTest::newRow("size") << QByteArray("ocrSizeCombo") << QString("font-size:22pt");
+        QTest::newRow("red") << QByteArray("ocrColorCombo")
+                             << waibusnap::annotationColors()[0].name();
+        QTest::newRow("bullets") << QByteArray("ocrBulletsButton") << QString("<ul");
+        QTest::newRow("numbers") << QByteArray("ocrNumbersButton") << QString("<ol");
+        QTest::newRow("shortcut-bold") << QByteArray("B") << QString("font-weight:700");
+        QTest::newRow("shortcut-italic") << QByteArray("I") << QString("font-style:italic");
+        QTest::newRow("shortcut-underline")
+            << QByteArray("U") << QString("text-decoration: underline");
+    }
+    void ocrDialogFormats()
+    {
+        QFETCH(QByteArray, control);
+        QFETCH(QString, htmlMarker);
+        QString html;
+        QString text;
+        QStringList mimeFormats;
+        int copies = 0;
+        waibusnap::OcrDialog dialog(nullptr,
+                                    [&](const QMimeData& mime)
+                                    {
+                                        html = mime.html();
+                                        text = mime.text();
+                                        mimeFormats = mime.formats();
+                                        ++copies;
+                                    });
+        dialog.setResult(sampleOcrResult());
+        dialog.show();
+        dialog.activateWindow();
+        auto* editor = dialog.findChild<QTextEdit*>("ocrTextEdit");
+        QVERIFY(editor->isReadOnly());
+        QVERIFY(dialog.findChild<QWidget*>("ocrFormatToolbar")->isHidden());
+        const QString original = editor->toPlainText();
+        QTest::keyClicks(editor, "blocked");
+        QCOMPARE(editor->toPlainText(), original);
+        QTest::mouseClick(dialog.findChild<QPushButton*>("ocrEditButton"), Qt::LeftButton);
+        QVERIFY(!editor->isReadOnly());
+        QVERIFY(!dialog.findChild<QWidget*>("ocrFormatToolbar")->isHidden());
+        editor->moveCursor(QTextCursor::End);
+        editor->insertPlainText(" edited");
+        editor->selectAll();
+        if (control.endsWith("Combo"))
+        {
+            auto* combo = dialog.findChild<QComboBox*>(QString::fromLatin1(control));
+            const int index = control == "ocrSizeCombo" ? 2 : 1;
+            combo->setCurrentIndex(index);
+            QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, index));
+        }
+        else if (control.size() == 1)
+        {
+            editor->setFocus();
+            QTest::keyClick(editor, Qt::Key(control[0]), Qt::ControlModifier);
+        }
+        else
+            QTest::mouseClick(dialog.findChild<QPushButton*>(QString::fromLatin1(control)),
+                              Qt::LeftButton);
+        QTest::mouseClick(dialog.findChild<QPushButton*>("ocrEditButton"), Qt::LeftButton);
+        QVERIFY(editor->isReadOnly());
+        QTest::mouseClick(dialog.findChild<QPushButton*>("ocrCopyButton"), Qt::LeftButton);
+        QCOMPARE(copies, 1);
+        QVERIFY(mimeFormats.contains("text/html"));
+        QVERIFY(mimeFormats.contains("text/plain"));
+        QVERIFY2(html.contains(htmlMarker), qPrintable(html));
+        QVERIFY(text.endsWith(" edited"));
+        QCOMPARE(text, editor->toPlainText());
+        QCOMPARE(dialog.findChild<QLabel*>("ocrCopyFeedback")->text(), QStringLiteral("已复制"));
+        QTest::mouseClick(dialog.findChild<QPushButton*>("ocrPlainCopyButton"), Qt::LeftButton);
+        QCOMPARE(copies, 2);
+        QVERIFY(!mimeFormats.contains("text/html"));
+        QCOMPARE(mimeFormats, QStringList{"text/plain"});
+        QCOMPARE(text, editor->toPlainText());
+        QTest::keyClick(&dialog, Qt::Key_Escape);
+        QCOMPARE(copies, 2);
+    }
+    void ocrPreviewLocalCopyIsPlain()
+    {
+        ClipboardRestore restore;
+        waibusnap::OcrDialog dialog;
+        dialog.setResult(sampleOcrResult());
+        dialog.show();
+        dialog.activateWindow();
+        auto* editor = dialog.findChild<QTextEdit*>("ocrTextEdit");
+        QTextCursor cursor = editor->textCursor();
+        cursor.setPosition(0);
+        cursor.setPosition(5, QTextCursor::KeepAnchor);
+        editor->setTextCursor(cursor);
+        editor->setFocus();
+        standardKey(editor, QKeySequence::Copy);
+        QCOMPARE(QApplication::clipboard()->mimeData()->text(), QString("Hello"));
+        QVERIFY(!QApplication::clipboard()->mimeData()->hasHtml());
+    }
+    void ocrInputUsesAnnotatedPixelsAndFallback()
+    {
+        auto engine = std::make_shared<OcrStub>();
+        auto result = sampleOcrResult();
+        result.lines[0].tokens.clear();
+        engine->results = {result};
+        waibusnap::OverlayActions actions;
+        actions.recognizer = engine;
+        waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        QTest::mouseClick(button(overlay, "coverToolButton"), Qt::LeftButton);
+        drag(overlay, {120, 120}, {260, 170});
+        QTest::mouseClick(button(overlay, "mosaicToolButton"), Qt::LeftButton);
+        drag(overlay, {320, 140}, {430, 210});
+        const QImage expected = waibusnap::renderAnnotatedSelection(
+            annotationFrame().pixels, overlay.annotations(), overlay.selection());
+        const auto before = overlay.annotations();
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QCOMPARE(engine->input().devicePixelRatio(), 1.0);
+        compareImagePixels(engine->input(), expected);
+        compareAnnotations(overlay.annotations(), before);
+        QTest::mouseDClick(&overlay, Qt::LeftButton, Qt::NoModifier, {125, 120});
+        QCOMPARE(overlay.selectedOcrText(), result.lines[0].text);
+        QCOMPARE(overlay.ocrHighlightBoxes(), QVector<QRectF>{result.lines[0].box});
+    }
+    void ocrTaskDestructionWaits()
+    {
+        auto engine = std::make_shared<OcrStub>();
+        engine->delayMs = 120;
+        auto task =
+            std::make_unique<waibusnap::TextRecognitionTask>(engine, sampleFrame().pixels, 1);
+        task->start();
+        QTRY_COMPARE(engine->calls.load(), 1);
+        task.reset();
+        QCOMPARE(engine->completions.load(), 1);
+    }
+
     void trayIconUsesEmbeddedPlatformAssets()
     {
         const auto icon = waibusnap::createTrayIcon();
