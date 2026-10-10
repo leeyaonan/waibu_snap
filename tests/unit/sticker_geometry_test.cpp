@@ -6,6 +6,53 @@ class StickerGeometryTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void clipboardCascade_data()
+    {
+        QTest::addColumn<QRect>("available");
+        QTest::addColumn<QSize>("windowSize");
+        QTest::addColumn<quint64>("sequence");
+        QTest::addColumn<QPoint>("expected");
+        const QRect screen(0, 30, 1000, 800);
+        QTest::newRow("center") << screen << QSize(200, 100) << quint64(0) << QPoint(400, 380);
+        QTest::newRow("second") << screen << QSize(200, 100) << quint64(1) << QPoint(424, 404);
+        QTest::newRow("third") << screen << QSize(200, 100) << quint64(2) << QPoint(448, 428);
+        QTest::newRow("last-fitting")
+            << screen << QSize(200, 100) << quint64(14) << QPoint(736, 716);
+        QTest::newRow("wrap-fitting")
+            << screen << QSize(200, 100) << quint64(15) << QPoint(400, 380);
+        QTest::newRow("repeat-wrap")
+            << screen << QSize(200, 100) << quint64(31) << QPoint(424, 404);
+        QTest::newRow("negative-screen") << QRect(-1500, -900, 1000, 800) << QSize(200, 100)
+                                         << quint64(1) << QPoint(-1076, -526);
+        QTest::newRow("too-wide") << screen << QSize(1200, 100) << quint64(0) << QPoint(24, 54);
+        QTest::newRow("too-tall") << screen << QSize(200, 900) << quint64(1) << QPoint(48, 78);
+        QTest::newRow("huge") << screen << QSize(10000, 10000) << quint64(32) << QPoint(792, 822);
+        QTest::newRow("wrap-huge")
+            << screen << QSize(10000, 10000) << quint64(33) << QPoint(24, 54);
+        QTest::newRow("exact-fit") << screen << screen.size() << quint64(1) << screen.topLeft();
+        QTest::newRow("tiny-screen")
+            << QRect(-10, -20, 12, 8) << QSize(100, 100) << quint64(1) << QPoint(1, -13);
+        QTest::newRow("large-sequence")
+            << screen << QSize(200, 100) << std::numeric_limits<quint64>::max() << QPoint(400, 380);
+        QTest::newRow("empty-screen") << QRect() << QSize(100, 100) << quint64(1) << QPoint();
+        QTest::newRow("empty-image") << screen << QSize() << quint64(1) << screen.topLeft();
+    }
+    void clipboardCascade()
+    {
+        QFETCH(QRect, available);
+        QFETCH(QSize, windowSize);
+        QFETCH(quint64, sequence);
+        QFETCH(QPoint, expected);
+        const QPoint result = clipboardStickerPosition(available, windowSize, sequence);
+        QCOMPARE(result, expected);
+        if (!available.isEmpty() && !windowSize.isEmpty())
+        {
+            QVERIFY(available.contains(result));
+            if (windowSize.width() <= available.width() &&
+                windowSize.height() <= available.height())
+                QVERIFY(available.contains(QRect(result, windowSize)));
+        }
+    }
     void scaleStepsAndClamping()
     {
         qreal scale = 1;

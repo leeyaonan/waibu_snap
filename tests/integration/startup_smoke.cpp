@@ -11,7 +11,9 @@
 #include "ui/settings_dialog.h"
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QComboBox>
+#include <QCursor>
 #include <QDir>
 #include <QEnterEvent>
 #include <QFile>
@@ -23,6 +25,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -39,6 +42,41 @@
 
 namespace
 {
+const QString clipboardToastText =
+    QStringLiteral("剪贴板中没有可用图片，请先复制图片后再试；剪贴板内容未被修改。");
+QLabel* clipboardToast()
+{
+    for (auto* widget : QApplication::topLevelWidgets())
+        if (widget->objectName() == QStringLiteral("clipboardStickerToast"))
+            return qobject_cast<QLabel*>(widget);
+    return nullptr;
+}
+QAction* clipboardAction(waibusnap::ApplicationController& controller)
+{
+    return controller.menu()->findChild<QAction*>(QStringLiteral("clipboardStickerAction"));
+}
+void compareImagePixels(const QImage& actual, const QImage& expected)
+{
+    QCOMPARE(actual.size(), expected.size());
+    for (int y = 0; y < expected.height(); ++y)
+        for (int x = 0; x < expected.width(); ++x)
+            QCOMPARE(actual.pixelColor(x, y), expected.pixelColor(x, y));
+}
+class ClipboardRestore final
+{
+  public:
+    ClipboardRestore()
+    {
+        const auto* original = QGuiApplication::clipboard()->mimeData();
+        if (original)
+            for (const QString& format : original->formats())
+                saved_->setData(format, original->data(format));
+    }
+    ~ClipboardRestore() { QGuiApplication::clipboard()->setMimeData(saved_.release()); }
+
+  private:
+    std::unique_ptr<QMimeData> saved_ = std::make_unique<QMimeData>();
+};
 waibusnap::CaptureFrame sampleFrame()
 {
     waibusnap::CaptureFrame frame;
@@ -892,12 +930,15 @@ class StartupSmokeTest final : public QObject
         using namespace waibusnap;
         ApplicationController controller(*qApp, {});
         auto* menu = controller.menu();
-        QCOMPARE(menu->actions().size(), qsizetype(5));
+        QCOMPARE(menu->actions().size(), qsizetype(6));
         QCOMPARE(menu->actions()[0]->text(), QStringLiteral("截图"));
-        QCOMPARE(menu->actions()[1]->text(), QStringLiteral("设置…"));
-        QCOMPARE(menu->actions()[4]->text(), QStringLiteral("退出"));
-        auto* hide = menu->actions()[2];
-        auto* restore = menu->actions()[3];
+        QCOMPARE(menu->actions()[1]->text(), QStringLiteral("剪贴板贴图"));
+        QCOMPARE(menu->actions()[1]->objectName(), QStringLiteral("clipboardStickerAction"));
+        QVERIFY(menu->actions()[1]->isEnabled());
+        QCOMPARE(menu->actions()[2]->text(), QStringLiteral("设置…"));
+        QCOMPARE(menu->actions()[5]->text(), QStringLiteral("退出"));
+        auto* hide = menu->actions()[3];
+        auto* restore = menu->actions()[4];
         QCOMPARE(hide->text(), QStringLiteral("隐藏全部贴图"));
         QCOMPARE(restore->text(), QStringLiteral("恢复全部贴图"));
         QCOMPARE(hide->objectName(), QStringLiteral("hideAllStickersAction"));
@@ -961,6 +1002,364 @@ class StartupSmokeTest final : public QObject
         manager.closeAll();
         verifyPopup(false, false);
         QCOMPARE(manager.count(), 0);
+    }
+    void clipboardStickerImageLifecycle_data()
+    {
+        QTest::addColumn<qreal>("sourceDpr");
+        QTest::newRow("one") << qreal(1);
+        QTest::newRow("fractional") << qreal(1.5);
+        QTest::newRow("two") << qreal(2);
+    }
+    void clipboardStickerImageLifecycle()
+    {
+        using namespace waibusnap;
+        QFETCH(qreal, sourceDpr);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        RunOptions options;
+        options.settingsFile = temporary.filePath(QStringLiteral("settings.ini"));
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        QImage source = mosaicTestImage({120, 80});
+        source.setDevicePixelRatio(sourceDpr);
+        const QImage before = source;
+        int reads = 0, summaries = 0, panels = 0;
+        StickerActions actions;
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            ++panels;
+            return temporary.filePath(QStringLiteral("剪贴板图片.png"));
+        };
+        actions.confirmQuit = [&](int count)
+        {
+            summaries = count;
+            return StickerQuitDecision::Cancel;
+        };
+        ApplicationController controller(*qApp, options, actions,
+                                         {[&]
+                                          {
+                                              ++reads;
+                                              return source;
+                                          }});
+        auto* action = clipboardAction(controller);
+        QVERIFY(action && action->isEnabled());
+        const QPoint cursor = QCursor::pos();
+        QScreen* screen = QGuiApplication::screenAt(cursor);
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen);
+        const QSize expectedSize = stickerWindowSize(source.size(), 1, screen->devicePixelRatio());
+        const auto expected = [&](quint64 sequence)
+        { return clipboardStickerPosition(screen->availableGeometry(), expectedSize, sequence); };
+        action->trigger();
+        QCOMPARE(reads, 1);
+        QCOMPARE(controller.stickers().count(), 1);
+        auto first = controller.stickers().windows().first();
+        QVERIFY(first && first->isVisible());
+        QCOMPARE(first->size(), expectedSize);
+        QCOMPARE(first->pos(), expected(0));
+        QCOMPARE(first->image().devicePixelRatio(), qreal(1));
+        compareImagePixels(first->image(), before);
+        QCOMPARE(source, before);
+        QVERIFY(!first->isSaved());
+        QVERIFY(QDir(temporary.path()).entryList(QDir::Files).isEmpty());
+        QVERIFY(!QFile::exists(options.metricsFile));
+        action->trigger();
+        QCOMPARE(reads, 2);
+        QCOMPARE(controller.stickers().count(), 2);
+        auto second = controller.stickers().windows().last();
+        QVERIFY(second && second->isVisible());
+        QCOMPARE(second->pos(), expected(1));
+        QCOMPARE(second->pos(), first->pos() + QPoint(24, 24));
+        controller.menu()->findChild<QAction*>(QStringLiteral("hideAllStickersAction"))->trigger();
+        QVERIFY(!first->isVisible() && !second->isVisible());
+        controller.quit();
+        QCOMPARE(summaries, 2);
+        QVERIFY(first && second && !first->isVisible() && !second->isVisible());
+        QVERIFY(action->isEnabled());
+        controller.menu()
+            ->findChild<QAction*>(QStringLiteral("restoreAllStickersAction"))
+            ->trigger();
+        QVERIFY(first->isVisible() && second->isVisible());
+        QVERIFY(first->saveImage());
+        QCOMPARE(panels, 1);
+        QVERIFY(first->isSaved());
+        compareImagePixels(QImage(temporary.filePath(QStringLiteral("剪贴板图片.png"))), before);
+        controller.quit();
+        QCOMPARE(summaries, 1);
+        QCOMPARE(controller.stickers().count(), 2);
+        QVERIFY(!QFile::exists(options.metricsFile));
+    }
+    void clipboardStickerEmptyToastReuseTimeoutAndCleanup()
+    {
+        using namespace waibusnap;
+        QWidget editor;
+        auto* input = new QLineEdit(&editor);
+        editor.show();
+        editor.activateWindow();
+        input->setFocus();
+        QTRY_VERIFY(input->hasFocus());
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.settingsFile = temporary.filePath(QStringLiteral("settings.ini"));
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        int reads = 0;
+        QPointer<QLabel> toast;
+        {
+            ApplicationController controller(*qApp, options, {},
+                                             {[&]
+                                              {
+                                                  ++reads;
+                                                  return QImage();
+                                              }});
+            QVERIFY(
+                controller.stickers().create(mosaicTestImage({100, 80}), {80, 90}, true).success);
+            // 先完成已有贴图夹具，再固定焦点；只测剪贴板失败提示的影响。
+            QCoreApplication::processEvents();
+            editor.activateWindow();
+            input->setFocus();
+            QTest::qWait(50);
+            QTRY_VERIFY(input->hasFocus());
+            QWidget* focused = QApplication::focusWidget();
+            QWidget* active = QApplication::activeWindow();
+            auto* action = clipboardAction(controller);
+            QVERIFY(action && action->isEnabled());
+            action->trigger();
+            QCOMPARE(reads, 1);
+            QCOMPARE(controller.stickers().count(), 1);
+            toast = clipboardToast();
+            QVERIFY(toast && toast->isVisible());
+            QCOMPARE(toast->text(), clipboardToastText);
+            QVERIFY(toast->windowFlags().testFlag(Qt::FramelessWindowHint));
+            QVERIFY(toast->windowFlags().testFlag(Qt::WindowStaysOnTopHint));
+            QVERIFY(toast->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+            QVERIFY(toast->testAttribute(Qt::WA_ShowWithoutActivating));
+            QCOMPARE(toast->focusPolicy(), Qt::NoFocus);
+            QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
+            if (!screen)
+                screen = QGuiApplication::primaryScreen();
+            QVERIFY(screen && screen->availableGeometry().contains(toast->geometry()));
+            QCoreApplication::processEvents();
+            if (QGuiApplication::platformName() == QStringLiteral("offscreen"))
+            {
+                // Qt offscreen 显示非 ToolTip 窗口必发焦点事件，忽略拒绝焦点旗标。
+                // 明确断言该后端行为后建立输入场景；真实 Cocoa 保留首次显示断言。
+                QCOMPARE(QGuiApplication::focusWindow(), toast->windowHandle());
+                editor.activateWindow();
+                input->setFocus();
+                QTRY_VERIFY(input->hasFocus());
+            }
+            else
+            {
+                QCOMPARE(QApplication::focusWidget(), focused);
+                QCOMPARE(QApplication::activeWindow(), active);
+            }
+            QTest::qWait(1500);
+            toast->setText(QStringLiteral("旧提示"));
+            action->trigger();
+            QCOMPARE(clipboardToast(), toast.data());
+            QCOMPARE(toast->text(), clipboardToastText);
+            QCOMPARE(reads, 2);
+            QCOMPARE(controller.stickers().count(), 1);
+            QTest::qWait(1500);
+            QVERIFY(toast->isVisible());
+            QCOMPARE(QApplication::focusWidget(), focused);
+            QCOMPARE(QApplication::activeWindow(), active);
+            QTRY_VERIFY_WITH_TIMEOUT(!toast->isVisible(), 1800);
+            QCOMPARE(QApplication::focusWidget(), focused);
+            QCOMPARE(QApplication::activeWindow(), active);
+            QVERIFY(!QFile::exists(options.metricsFile));
+            action->trigger();
+            QVERIFY(toast->isVisible());
+        }
+        QVERIFY(!toast);
+        QVERIFY(!clipboardToast());
+    }
+    void clipboardStickerToastClampsAtScreenEdges()
+    {
+        using namespace waibusnap;
+        QScreen* screen = QGuiApplication::primaryScreen();
+        QVERIFY(screen);
+        const QRect available = screen->availableGeometry();
+        ClipboardStickerToast toast;
+        for (QPoint cursor : {available.topLeft(), available.topRight(), available.bottomLeft(),
+                              available.bottomRight()})
+        {
+            toast.showMessage(clipboardToastText, cursor, available);
+            QVERIFY(toast.isVisible());
+            QVERIFY(available.contains(toast.geometry()));
+            QCOMPARE(toast.text(), clipboardToastText);
+        }
+    }
+    void clipboardStickerCleanupDisablesAction()
+    {
+        using namespace waibusnap;
+        int reads = 0;
+        ApplicationController controller(*qApp, {}, {},
+                                         {[&]
+                                          {
+                                              ++reads;
+                                              return QImage();
+                                          }});
+        auto* action = clipboardAction(controller);
+        action->trigger();
+        QPointer<QLabel> toast = clipboardToast();
+        QVERIFY(toast && toast->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(qApp, "aboutToQuit", Qt::DirectConnection));
+        QVERIFY(!toast);
+        QVERIFY(!action->isEnabled());
+        QVERIFY(QMetaObject::invokeMethod(controller.menu(), "aboutToShow", Qt::DirectConnection));
+        QVERIFY(!action->isEnabled());
+        action->trigger();
+        QCOMPARE(reads, 1);
+        QCOMPARE(controller.stickers().count(), 0);
+    }
+    void clipboardStickerFailureDoesNotAdvanceCascade()
+    {
+        using namespace waibusnap;
+        QImage source;
+        ApplicationController controller(*qApp, {}, {}, {[&] { return source; }});
+        auto* action = clipboardAction(controller);
+        action->trigger();
+        QCOMPARE(controller.stickers().count(), 0);
+        QVERIFY(clipboardToast() && clipboardToast()->isVisible());
+        source = mosaicTestImage({120, 80});
+        action->trigger();
+        QCOMPARE(controller.stickers().count(), 1);
+        QVERIFY(!clipboardToast()->isVisible());
+        auto first = controller.stickers().windows().first();
+        const QPoint base = first->pos();
+        source = {};
+        action->trigger();
+        QCOMPARE(controller.stickers().count(), 1);
+        source = mosaicTestImage({120, 80});
+        action->trigger();
+        QCOMPARE(controller.stickers().count(), 2);
+        QCOMPARE(controller.stickers().windows().last()->pos(), base + QPoint(24, 24));
+    }
+    void clipboardStickerMenuSessionAndQuitGuards()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.settingsFile = temporary.filePath(QStringLiteral("settings.ini"));
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        int reads = 0, summaries = 0;
+        bool quitGuarded = false;
+        ApplicationController* current = nullptr;
+        StickerActions actions;
+        actions.confirmQuit = [&](int count)
+        {
+            ++summaries;
+            quitGuarded = count == 1 && !clipboardAction(*current)->isEnabled();
+            quitGuarded &=
+                QMetaObject::invokeMethod(current->menu(), "aboutToShow", Qt::DirectConnection);
+            quitGuarded &= !clipboardAction(*current)->isEnabled();
+            clipboardAction(*current)->trigger();
+            quitGuarded &= reads == 1;
+            return StickerQuitDecision::Cancel;
+        };
+        ApplicationController controller(*qApp, options, actions,
+                                         {[&]
+                                          {
+                                              ++reads;
+                                              return mosaicTestImage({120, 80});
+                                          }});
+        current = &controller;
+        auto* action = clipboardAction(controller);
+        action->setEnabled(false);
+        controller.menu()->popup({10, 10});
+        QVERIFY(action->isEnabled());
+        controller.menu()->hide();
+        action->trigger();
+        controller.quit();
+        QCOMPARE(summaries, 1);
+        QVERIFY(quitGuarded);
+        QVERIFY(action->isEnabled());
+        bool checked = false, sessionGuarded = false;
+        QTimer::singleShot(
+            0, &controller,
+            [&]
+            {
+                sessionGuarded = controller.active() && !action->isEnabled() &&
+                                 !controller.menu()->actions()[2]->isEnabled();
+                sessionGuarded &= QMetaObject::invokeMethod(controller.menu(), "aboutToShow",
+                                                            Qt::DirectConnection);
+                sessionGuarded &= !action->isEnabled();
+                action->trigger();
+                sessionGuarded &= reads == 1;
+                checked = true;
+                sessionGuarded &=
+                    QMetaObject::invokeMethod(qApp, "screenRemoved", Qt::DirectConnection,
+                                              Q_ARG(QScreen*, QGuiApplication::primaryScreen()));
+                if (auto* dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+                    dialog->accept();
+            });
+        controller.trigger(QStringLiteral("tray"));
+        QTRY_VERIFY(checked);
+        QVERIFY(sessionGuarded);
+        QVERIFY(!controller.active());
+        QVERIFY(action->isEnabled());
+        QVERIFY(controller.menu()->actions()[2]->isEnabled());
+        QCOMPARE(controller.stickers().count(), 1);
+    }
+    void clipboardStickerReadOnly_data()
+    {
+        QTest::addColumn<bool>("hasImage");
+        QTest::newRow("bitmap") << true;
+        QTest::newRow("text") << false;
+    }
+    void clipboardStickerReadOnly()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, hasImage);
+        ClipboardRestore restore;
+        QClipboard* clipboard = QGuiApplication::clipboard();
+        const QImage expected = mosaicTestImage({120, 80});
+        const QString text = QStringLiteral("只有文字，不转换为图片");
+        if (hasImage)
+            clipboard->setImage(expected);
+        else
+            clipboard->setText(text);
+        QCoreApplication::processEvents();
+        const bool real = hasImage ? !clipboard->image().isNull() : clipboard->text() == text;
+        if (qEnvironmentVariableIsSet("WAIBUSNAP_REQUIRE_SYSTEM_CLIPBOARD"))
+            QVERIFY2(real, "本机真实剪贴板必须可用，不得切换替身");
+        ClipboardActions input;
+        int reads = 0;
+        const QImage stored = hasImage ? expected : QImage();
+        if (!real)
+        {
+            qInfo("此平台剪贴板不可用，使用只读替身并保留像素 / 内容不变断言。");
+            input.loadImage = [&]
+            {
+                ++reads;
+                return stored;
+            };
+        }
+        const QImage before = real && hasImage ? clipboard->image() : stored;
+        const QString beforeText = real && !hasImage ? clipboard->text() : text;
+        QSignalSpy changes(clipboard, &QClipboard::dataChanged);
+        ApplicationController controller(*qApp, {}, {}, input);
+        clipboardAction(controller)->trigger();
+        QCoreApplication::processEvents();
+        QCOMPARE(changes.size(), 0);
+        QCOMPARE(controller.stickers().count(), hasImage ? 1 : 0);
+        if (hasImage)
+        {
+            auto window = controller.stickers().windows().first();
+            QVERIFY(window && window->isVisible());
+            QCOMPARE(window->image().devicePixelRatio(), qreal(1));
+            compareImagePixels(window->image(), expected);
+            compareImagePixels(real ? clipboard->image() : stored, before);
+        }
+        else
+        {
+            QCOMPARE(real ? clipboard->text() : text, beforeText);
+            QVERIFY(clipboardToast() && clipboardToast()->isVisible());
+            QCOMPARE(clipboardToast()->text(), clipboardToastText);
+        }
+        if (!real)
+            QCOMPARE(reads, 1);
     }
     void stickerEditingEntrancesGesturesAndCompactTools()
     {
@@ -2791,7 +3190,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 handled = true;
             });
-        controller.menu()->actions().at(1)->trigger();
+        controller.menu()->actions().at(2)->trigger();
         QVERIFY(handled);
         QVERIFY(window->saveImage());
         QCOMPARE(panels, 1);
@@ -2823,7 +3222,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 handled = true;
             });
-        controller.menu()->actions().at(1)->trigger();
+        controller.menu()->actions().at(2)->trigger();
         QVERIFY(handled);
         QVERIFY(!window->saveImage());
         QCOMPARE(panels, 2);

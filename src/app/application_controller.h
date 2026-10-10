@@ -6,6 +6,7 @@
 #include "interfaces/presentation_observer.h"
 #include "interfaces/window_enumerator.h"
 #include "session/session_metrics.h"
+#include "ui/clipboard_sticker_toast.h"
 #include "ui/selection_overlay.h"
 #include <QApplication>
 #include <QMenu>
@@ -14,6 +15,10 @@
 #include <QTimer>
 namespace waibusnap
 {
+struct ClipboardActions
+{
+    std::function<QImage()> loadImage;
+};
 struct RunOptions
 {
     QString metricsFile;
@@ -30,7 +35,8 @@ class ApplicationController final : public QObject
     Q_OBJECT
   public:
     explicit ApplicationController(QApplication& application, RunOptions options,
-                                   StickerActions stickerActions = {});
+                                   StickerActions stickerActions = {},
+                                   ClipboardActions clipboardActions = {});
     ~ApplicationController() override;
     void start();
     void trigger(const QString& source);
@@ -47,10 +53,12 @@ class ApplicationController final : public QObject
     void startSmokeTest();
     void openSettings();
     void refreshStickerActions();
+    void pinClipboardImage();
     QString changeHotkey(const QKeySequence& sequence);
     QApplication& application_;
     RunOptions options_;
     QAction* settingsAction_ = nullptr;
+    QAction* clipboardStickerAction_ = nullptr;
     QAction* hideAllStickersAction_ = nullptr;
     QAction* restoreAllStickersAction_ = nullptr;
     QMenu menu_;
@@ -63,6 +71,9 @@ class ApplicationController final : public QObject
     std::unique_ptr<WindowEnumerator> windows_;
     std::unique_ptr<PresentationObservation> observation_;
     StickerManager stickers_;
+    ClipboardActions clipboardActions_;
+    std::unique_ptr<ClipboardStickerToast> clipboardToast_;
+    quint64 clipboardStickerSequence_ = 0;
     QPointer<SelectionOverlay> overlay_;
     SessionMetrics metrics_;
     QTimer captureTimeout_;
