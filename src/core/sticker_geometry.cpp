@@ -53,4 +53,25 @@ QPoint recoveredStickerPosition(QRect window, const QVector<QRect>& screens, QRe
     return {std::clamp(window.x(), primary.x(), right),
             std::clamp(window.y(), primary.y(), bottom)};
 }
+QPoint clipboardStickerPosition(QRect available, QSize windowSize, quint64 sequence)
+{
+    if (available.isEmpty() || windowSize.isEmpty())
+        return available.topLeft();
+    constexpr int step = 24;
+    const bool fits =
+        windowSize.width() <= available.width() && windowSize.height() <= available.height();
+    const QPoint base =
+        available.topLeft() + (fits ? QPoint((available.width() - windowSize.width()) / 2,
+                                             (available.height() - windowSize.height()) / 2)
+                                    : QPoint(std::min(step, available.width() - 1),
+                                             std::min(step, available.height() - 1)));
+    // 放得下时保持整张可见；超大图只约束左上角。任一轴越界就回到基点。
+    const qint64 right =
+        qint64(available.x()) + available.width() - (fits ? windowSize.width() : 1);
+    const qint64 bottom =
+        qint64(available.y()) + available.height() - (fits ? windowSize.height() : 1);
+    const quint64 positions = quint64(std::min(right - base.x(), bottom - base.y()) / step + 1);
+    const int offset = int(sequence % positions) * step;
+    return base + QPoint(offset, offset);
+}
 }

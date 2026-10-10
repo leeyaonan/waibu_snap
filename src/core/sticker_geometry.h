@@ -13,4 +13,5 @@ QSizeF stickerLogicalSize(QSize pixels, qreal scale, qreal dpr);
 QSize stickerWindowSize(QSize pixels, qreal scale, qreal dpr);
 QPointF anchoredStickerPosition(QPointF position, QSizeF before, QSizeF after, QPointF anchor);
 QPoint recoveredStickerPosition(QRect window, const QVector<QRect>& screens, QRect primary);
+QPoint clipboardStickerPosition(QRect available, QSize windowSize, quint64 sequence);
 }
