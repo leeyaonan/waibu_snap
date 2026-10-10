@@ -85,7 +85,7 @@
 
 macOS 使用 `VNRecognizeTextRequest` accurate 与语言校正，查询支持列表后配置 `zh-Hans`、`en-US`；不支持中文时收缩语言并明确记录，完全不支持时失败。原生调用包在 `@autoreleasepool`；行盒归一化坐标翻转 y 后映射为像素。每行复用 `core/text_layout::tokenizeLine` 的 UTF-16 范围逐词查询 `boundingBoxForRange`，一次识别内保存盒，任一查询失败清空该行 tokens，选择回落整行。只输出实际语言配置元数据，不记录识别文字、图片或盒。
 
-Windows 使用 SDK 自带 C++/WinRT 和 `windowsapp` 系统库，工作线程 MTA 以 RAII 成对初始化 / 释放 apartment；优先 `TryCreateFromUserProfileLanguages`，失败再试 `zh-Hans`。QImage 编码为内存 PNG，经 `InMemoryRandomAccessStream` / `BitmapDecoder` 转 Bgra8 `SoftwareBitmap`，`.get()` 阻塞等待识别。原生词按行文本前向搜索对齐 offset / length；任一词对齐失败整行回落，不猜测索引。语言包缺失、超出原生尺寸上限、转换与 HRESULT 错误均中文说明。图像转换 / MTA 阻塞路径由 Windows CI 编译和有语言包时的真实样本测试覆盖，目标实机行为后补。
+Windows 使用 SDK 自带 C++/WinRT 和 `windowsapp` 系统库，工作线程 MTA 以 RAII 成对初始化 / 释放 apartment，关闭前清理 C++/WinRT 激活工厂缓存，避免最后一个 MTA 关闭后的缓存失效；优先 `TryCreateFromUserProfileLanguages`，失败再试 `zh-Hans`。QImage 编码为内存 PNG，经 `InMemoryRandomAccessStream` / `BitmapDecoder` 转 Bgra8 `SoftwareBitmap`，`.get()` 阻塞等待识别。原生词按行文本前向搜索对齐 offset / length；任一词对齐失败整行回落，不猜测索引。语言包缺失、超出原生尺寸上限、转换与 HRESULT 错误均中文说明。图像转换 / MTA 阻塞路径由 Windows CI 编译和有语言包时的真实样本测试覆盖，目标实机行为后补。
 
 `core/text_layout` 不依赖视图或具体平台：连续 CJK、字母数字 / 撇号、完整 emoji 字素分词；标点空白不产词；按行高中位数与 1.6 倍相邻行间距重建段落；最近词、跨行正反区间与忠实行文本切片。跨行从首词到末词，保留中间标点、空格和换行；没有原生词盒时整行是一个选择单元。平台静态目标增加对 core 的单向链接。
 

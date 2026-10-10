@@ -7,7 +7,11 @@ namespace
 struct Mta
 {
     Mta() { winrt::init_apartment(winrt::apartment_type::multi_threaded); }
-    ~Mta() { winrt::uninit_apartment(); }
+    ~Mta()
+    {
+        winrt::clear_factory_cache();
+        winrt::uninit_apartment();
+    }
 };
 }
 QStringList ocrEngineLanguages()

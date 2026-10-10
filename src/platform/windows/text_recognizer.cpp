@@ -19,7 +19,12 @@ QString fromWinrt(const winrt::hstring& text)
 struct Apartment
 {
     Apartment() { winrt::init_apartment(winrt::apartment_type::multi_threaded); }
-    ~Apartment() { winrt::uninit_apartment(); }
+    ~Apartment()
+    {
+        // 最后一个 MTA 关闭前释放激活工厂缓存，避免下次任务使用失效 COM 对象。
+        winrt::clear_factory_cache();
+        winrt::uninit_apartment();
+    }
 };
 class WindowsTextRecognizer final : public TextRecognizer
 {
