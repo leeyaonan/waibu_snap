@@ -11,6 +11,7 @@ add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp)
 target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp ui/selection_overlay.h
+    ui/clipboard_sticker_toast.cpp ui/clipboard_sticker_toast.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h
     app/application_controller.cpp app/application_controller.h

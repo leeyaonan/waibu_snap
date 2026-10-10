@@ -1,9 +1,12 @@
 #include "app/application_controller.h"
+#include "core/sticker_geometry.h"
 #include "core/window_snapping.h"
 #include "interfaces/tray_icon.h"
 #include "session/monotonic_clock.h"
 #include "ui/settings_dialog.h"
 #include <QAction>
+#include <QClipboard>
+#include <QCursor>
 #include <QDebug>
 #include <QMessageBox>
 #include <QScopedValueRollback>
@@ -12,7 +15,8 @@
 namespace waibusnap
 {
 ApplicationController::ApplicationController(QApplication& application, RunOptions options,
-                                             StickerActions stickerActions)
+                                             StickerActions stickerActions,
+                                             ClipboardActions clipboardActions)
     : application_(application), options_(std::move(options)), hotkey_(createGlobalHotkey()),
       settings_(options_.settingsFile),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
@@ -23,8 +27,11 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                                         stickerActions.loadSavePreferences = [this]
                                                         { return settings_.loadSavePreferences(); };
                                                         return std::move(stickerActions);
-                                                    }())
+                                                    }()),
+      clipboardActions_(std::move(clipboardActions))
 {
+    if (!clipboardActions_.loadImage)
+        clipboardActions_.loadImage = [] { return QGuiApplication::clipboard()->image(); };
     application_.setQuitOnLastWindowClosed(false);
     connect(&application_, &QCoreApplication::aboutToQuit, this, &ApplicationController::cleanup);
     captureTimeout_.setSingleShot(true);
@@ -35,6 +42,9 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                     fail(6, QStringLiteral("截图会话超时，请重新尝试。"));
             });
     menu_.addAction(QStringLiteral("截图"), this, [this] { trigger(QStringLiteral("tray")); });
+    clipboardStickerAction_ = menu_.addAction(QStringLiteral("剪贴板贴图"), this,
+                                              &ApplicationController::pinClipboardImage);
+    clipboardStickerAction_->setObjectName(QStringLiteral("clipboardStickerAction"));
     settingsAction_ =
         menu_.addAction(QStringLiteral("设置…"), this, &ApplicationController::openSettings);
     hideAllStickersAction_ = menu_.addAction(QStringLiteral("隐藏全部贴图"), this,
@@ -91,6 +101,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
 ApplicationController::~ApplicationController() { cleanup(); }
 void ApplicationController::refreshStickerActions()
 {
+    clipboardStickerAction_->setEnabled(!active_ && !resolvingQuit_ && !quitting_);
     bool visible = false, hidden = false;
     for (const auto& window : stickers_.windows())
         if (window)
@@ -100,6 +111,38 @@ void ApplicationController::refreshStickerActions()
         }
     hideAllStickersAction_->setEnabled(visible);
     restoreAllStickersAction_->setEnabled(hidden);
+}
+void ApplicationController::pinClipboardImage()
+{
+    if (active_ || resolvingQuit_ || quitting_)
+        return;
+    QImage image = clipboardActions_.loadImage();
+    const QPoint cursor = QCursor::pos();
+    QScreen* screen = QGuiApplication::screenAt(cursor);
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    const QRect available = screen ? screen->availableGeometry() : QRect();
+    image.setDevicePixelRatio(1);
+    const QSize size =
+        screen ? stickerWindowSize(image.size(), 1, screen->devicePixelRatio()) : QSize();
+    if (image.isNull() || size.isEmpty() ||
+        !stickers_
+             .create(image, clipboardStickerPosition(available, size, clipboardStickerSequence_))
+             .success)
+    {
+        if (!clipboardToast_)
+            clipboardToast_ = std::make_unique<ClipboardStickerToast>();
+        clipboardToast_->showMessage(
+            QStringLiteral("剪贴板中没有可用图片，请先复制图片后再试；剪贴板内容未被修改。"),
+            cursor, available);
+    }
+    else
+    {
+        ++clipboardStickerSequence_;
+        if (clipboardToast_)
+            clipboardToast_->close();
+    }
+    refreshStickerActions();
 }
 void ApplicationController::start()
 {
@@ -158,6 +201,9 @@ void ApplicationController::trigger(const QString& source)
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
         return;
     active_ = true;
+    if (clipboardToast_)
+        clipboardToast_->close();
+    refreshStickerActions();
     settingsAction_->setEnabled(false);
     const quint64 token = ++token_;
     metrics_ = {};
@@ -290,6 +336,9 @@ void ApplicationController::finish(QRect pixels, int outcome)
     const bool written = appendMetrics(options_.metricsFile, metrics_);
     active_ = false;
     settingsAction_->setEnabled(!quitting_);
+    if (clipboardToast_)
+        clipboardToast_->close();
+    refreshStickerActions();
     if (!written)
         qCritical("无法写入会话测量日志。");
     if (options_.testMode && !quitting_)
@@ -319,6 +368,8 @@ void ApplicationController::fail(int outcome, const QString& explanation)
 void ApplicationController::cleanup()
 {
     quitting_ = true;
+    refreshStickerActions();
+    clipboardToast_.reset();
     const QPointer<SelectionOverlay> closingOverlay = overlay_;
     if (active_)
         finish({}, 9);
@@ -333,8 +384,16 @@ void ApplicationController::quit()
 {
     if (quitting_ || resolvingQuit_)
         return;
-    QScopedValueRollback<bool> resolving(resolvingQuit_, true);
-    if (!stickers_.resolveUnsavedForQuit())
+    bool resolved = false;
+    {
+        QScopedValueRollback<bool> resolving(resolvingQuit_, true);
+        refreshStickerActions();
+        if (clipboardToast_)
+            clipboardToast_->close();
+        resolved = stickers_.resolveUnsavedForQuit();
+    }
+    refreshStickerActions();
+    if (!resolved)
         return;
     cleanup();
     application_.quit();
@@ -347,11 +406,14 @@ void ApplicationController::startSmokeTest()
         [this]
         {
             if (tray_.icon().isNull() || tray_.icon().availableSizes().isEmpty() ||
-                application_.quitOnLastWindowClosed() || menu_.actions().size() != 5 ||
-                menu_.actions().at(1)->text() != QStringLiteral("设置…") ||
-                menu_.actions().at(2)->objectName() != QStringLiteral("hideAllStickersAction") ||
-                menu_.actions().at(3)->objectName() != QStringLiteral("restoreAllStickersAction") ||
-                menu_.actions().at(2)->isEnabled() || menu_.actions().at(3)->isEnabled() ||
+                application_.quitOnLastWindowClosed() || menu_.actions().size() != 6 ||
+                menu_.actions().at(1)->text() != QStringLiteral("剪贴板贴图") ||
+                menu_.actions().at(1)->objectName() != QStringLiteral("clipboardStickerAction") ||
+                !menu_.actions().at(1)->isEnabled() ||
+                menu_.actions().at(2)->text() != QStringLiteral("设置…") ||
+                menu_.actions().at(3)->objectName() != QStringLiteral("hideAllStickersAction") ||
+                menu_.actions().at(4)->objectName() != QStringLiteral("restoreAllStickersAction") ||
+                menu_.actions().at(3)->isEnabled() || menu_.actions().at(4)->isEnabled() ||
                 !QApplication::topLevelWidgets().contains(&menu_))
             {
                 application_.exit(20);
