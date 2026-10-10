@@ -1,6 +1,7 @@
 #pragma once
 #include "app/app_settings.h"
 #include "app/sticker_manager.h"
+#include "interfaces/autostart.h"
 #include "interfaces/capture_provider.h"
 #include "interfaces/global_hotkey.h"
 #include "interfaces/presentation_observer.h"
@@ -36,7 +37,8 @@ class ApplicationController final : public QObject
   public:
     explicit ApplicationController(QApplication& application, RunOptions options,
                                    StickerActions stickerActions = {},
-                                   ClipboardActions clipboardActions = {});
+                                   ClipboardActions clipboardActions = {},
+                                   AutostartActions autostartActions = {});
     ~ApplicationController() override;
     void start();
     void trigger(const QString& source);
@@ -72,6 +74,7 @@ class ApplicationController final : public QObject
     std::unique_ptr<PresentationObservation> observation_;
     StickerManager stickers_;
     ClipboardActions clipboardActions_;
+    AutostartActions autostartActions_;
     std::unique_ptr<ClipboardStickerToast> clipboardToast_;
     quint64 clipboardStickerSequence_ = 0;
     QPointer<SelectionOverlay> overlay_;
