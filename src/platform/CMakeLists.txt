@@ -14,15 +14,17 @@ qt_add_resources(waibusnap_platform waibusnap_tray_icons
 if(APPLE)
     target_sources(waibusnap_platform PRIVATE macos/platform_info.mm macos/capture_services.mm
         macos/presentation_observer.mm macos/platform_workarounds.mm macos/sticker_window_behavior.mm
-        macos/tray_icon.mm)
+        macos/tray_icon.mm macos/autostart.mm)
     target_compile_options(waibusnap_platform PRIVATE -fobjc-arc)
-    foreach(framework IN ITEMS AppKit Carbon ScreenCaptureKit CoreGraphics QuartzCore)
+    foreach(framework IN ITEMS AppKit Carbon ScreenCaptureKit CoreGraphics QuartzCore ServiceManagement)
         find_library(${framework}_FRAMEWORK ${framework} REQUIRED)
         target_link_libraries(waibusnap_platform PRIVATE "${${framework}_FRAMEWORK}")
     endforeach()
 elseif(WIN32)
     target_sources(waibusnap_platform PRIVATE windows/platform_info.cpp windows/capture_services.cpp
-        windows/platform_workarounds.cpp windows/sticker_window_behavior.cpp windows/tray_icon.cpp)
+        windows/platform_workarounds.cpp windows/sticker_window_behavior.cpp windows/tray_icon.cpp
+        windows/autostart.cpp)
+    target_link_libraries(waibusnap_platform PRIVATE Advapi32)
 endif()
 
 if(APPLE)
