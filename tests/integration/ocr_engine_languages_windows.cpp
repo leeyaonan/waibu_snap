@@ -16,8 +16,11 @@ QStringList ocrEngineLanguages()
     try
     {
         Mta apartment;
-        for (const auto& language :
-             winrt::Windows::Media::Ocr::OcrEngine::AvailableRecognizerLanguages())
+        const auto available =
+            winrt::Windows::Media::Ocr::OcrEngine::AvailableRecognizerLanguages();
+        if (!available)
+            return languages;
+        for (const auto& language : available)
         {
             const auto tag = language.LanguageTag();
             languages.append(QString::fromWCharArray(tag.c_str(), int(tag.size())));

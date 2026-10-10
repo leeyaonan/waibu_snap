@@ -121,5 +121,6 @@ elseif(WIN32)
     target_sources(text_recognizer_test PRIVATE integration/ocr_engine_languages_windows.cpp)
     target_link_libraries(text_recognizer_test PRIVATE windowsapp)
 endif()
-add_test(NAME text_recognizer_real_engine COMMAND text_recognizer_test)
+add_test(NAME text_recognizer_real_engine COMMAND text_recognizer_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/text-recognizer-output.txt,txt")
 set_tests_properties(text_recognizer_real_engine PROPERTIES TIMEOUT 120)

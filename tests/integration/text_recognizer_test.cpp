@@ -33,7 +33,9 @@ class TextRecognizerTest : public QObject
   private slots:
     void initTestCase()
     {
+        qInfo() << "正在查询系统 OCR 支持列表。";
         languages_ = ocrEngineLanguages();
+        qInfo() << "正在检查系统 OCR 引擎可用性。";
         available_ = ocrEngineAvailable();
         qInfo().noquote() << "系统 OCR 支持列表：" << languages_.join(',');
         if (ocrRequiresChinese())
