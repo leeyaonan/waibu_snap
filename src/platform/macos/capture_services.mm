@@ -42,13 +42,16 @@ quint64 layoutVersion()
 DisplayTarget targetForScreen(NSScreen* screen)
 {
     const NSRect frame = screen.frame;
+    const NSRect visible = screen.visibleFrame;
     const CGFloat primaryTop = NSMaxY(NSScreen.screens.firstObject.frame);
     // Cocoa 原点在主屏左下；Qt 原点在主屏左上，逐屏转换，允许负坐标。
     return {[screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue],
             QRect(qRound(frame.origin.x), qRound(primaryTop - NSMaxY(frame)),
                   qRound(frame.size.width), qRound(frame.size.height)),
             screen.backingScaleFactor,
-            layoutVersion()};
+            layoutVersion(),
+            QRect(qRound(visible.origin.x), qRound(primaryTop - NSMaxY(visible)),
+                  qRound(visible.size.width), qRound(visible.size.height))};
 }
 class MacDisplays final : public DisplayTopology
 {
