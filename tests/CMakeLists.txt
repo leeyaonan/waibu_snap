@@ -98,3 +98,8 @@ set_tests_properties(startup_smoke_sticker_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2"
     TIMEOUT 30
 )
+
+qt_add_executable(text_layout_test unit/text_layout_test.cpp)
+target_link_libraries(text_layout_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(text_layout_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME text_layout COMMAND text_layout_test)
