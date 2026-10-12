@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QDir>
 #include <QFocusEvent>
 #include <QInputMethod>
 #include <QKeyEvent>
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 namespace waibusnap
 {
 namespace
@@ -42,6 +44,22 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
         windows_.clear();
         snappingNotice_ = QStringLiteral("窗口吸附不可用，请手动框选");
     }
+    QVector<ShapeTemplateEntry> usable;
+    for (const auto& entry : actions_.shapeTemplates)
+    {
+        if (!entry.enabled)
+            continue;
+        QImage mask(QDir(actions_.shapeTemplateDir).filePath(entry.file));
+        if (mask.isNull())
+            actions_.shapeTemplateNotice = QStringLiteral("部分形状模板缺失或损坏，已忽略。");
+        else
+        {
+            mask.setDevicePixelRatio(1);
+            usable.append(entry);
+            templateMasks_.append(mask);
+        }
+    }
+    actions_.shapeTemplates = std::move(usable);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -206,6 +224,54 @@ void SelectionOverlay::ensureToolbar()
         ratioButtons_.append(button);
         connect(button, &QPushButton::clicked, this, [this, ratio] { chooseRatio(ratio); });
     }
+    shapeBar_ = new QWidget(this);
+    shapeBar_->setObjectName(QStringLiteral("shapeBar"));
+    QString shapeStyle = ratioBar_->styleSheet();
+    shapeStyle.replace(QStringLiteral("QWidget#ratioBar"), QStringLiteral("QWidget#shapeBar"));
+    shapeBar_->setStyleSheet(shapeStyle);
+    shapeButton_ =
+        makeButton(toolbar_, QStringLiteral("shapeButton"), QString(), ToolbarIcon::Shape);
+    shapeButton_->setCheckable(true);
+    connect(shapeButton_, &QPushButton::clicked, this,
+            [this]
+            {
+                finishText(true, false);
+                updateToolbar();
+                update();
+            });
+    for (int index = -1; index < 6 + actions_.shapeTemplates.size(); ++index)
+    {
+        const QString label = index < 0   ? QStringLiteral("自由")
+                              : index < 6 ? captureShapeLabel(static_cast<CaptureShape>(index))
+                                          : actions_.shapeTemplates[index - 6].label;
+        auto* button = new QPushButton(label, shapeBar_);
+        button->setObjectName(index < 0   ? QStringLiteral("shapeFreeButton")
+                              : index < 6 ? QStringLiteral("shapeOption%1Button").arg(index)
+                                          : QStringLiteral("shapeTemplate%1Button").arg(index - 6));
+        button->setToolTip(index < 0   ? QStringLiteral("自由（矩形输出）")
+                           : index < 6 ? QStringLiteral("使用 %1").arg(label)
+                                       : QStringLiteral("使用模板 %1").arg(label));
+        button->setAccessibleName(button->toolTip());
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setFixedHeight(28);
+        shapeButtons_.append(button);
+        connect(button, &QPushButton::clicked, this, [this, index] { chooseShape(index); });
+    }
+    shapeWhiteBackgroundButton_ = new QPushButton(QStringLiteral("白底"), shapeBar_);
+    shapeWhiteBackgroundButton_->setObjectName(QStringLiteral("shapeWhiteBackgroundButton"));
+    shapeWhiteBackgroundButton_->setToolTip(QStringLiteral("输出时在形状外补白底"));
+    shapeWhiteBackgroundButton_->setAccessibleName(shapeWhiteBackgroundButton_->toolTip());
+    shapeWhiteBackgroundButton_->setCheckable(true);
+    shapeWhiteBackgroundButton_->setFocusPolicy(Qt::NoFocus);
+    shapeWhiteBackgroundButton_->setFixedHeight(28);
+    connect(shapeWhiteBackgroundButton_, &QPushButton::clicked, this,
+            [this]
+            {
+                markDirty();
+                updateToolbar();
+            });
+    shapeBar_->hide();
     ratioBar_->hide();
     undoButton_ = actionButtons_[0];
     redoButton_ = actionButtons_[1];
@@ -283,7 +349,8 @@ void SelectionOverlay::ensureToolbar()
     status_->setStyleSheet(QStringLiteral(
         "background: #202020; color: #e8e8e8; border-radius: 8px; padding: 0 10px;"));
     status_->hide();
-    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, static_cast<QWidget*>(status_)})
+    for (auto* panel :
+         {toolbar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
     {
         panel->setCursor(Qt::ArrowCursor);
         panel->setMouseTracking(true);
@@ -314,17 +381,17 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
     QVector<QWidget*> actions;
     if (textMode_)
         actions << extractAllTextButton_ << separators_[1];
-    actions << undoButton_ << redoButton_ << separators_[2] << ratioButton_;
+    actions << undoButton_ << redoButton_ << separators_[2] << ratioButton_ << shapeButton_;
     for (int index = 2; index < actionButtons_.size(); ++index)
         actions.append(actionButtons_[index]);
-    const auto rowWidth = [](const QVector<QWidget*>& row)
+    const auto rowWidth = [](const QVector<QWidget*>& row, int gap = 4)
     {
-        int result = 16 - 4;
+        int result = 16 - gap;
         for (auto* widget : row)
-            result += (qobject_cast<QLabel*>(widget) ? 17 : 28) + 4;
+            result += (qobject_cast<QLabel*>(widget) ? 17 : 28) + gap;
         return result;
     };
-    const auto placeRow = [](const QVector<QWidget*>& row, int y)
+    const auto placeRow = [](const QVector<QWidget*>& row, int y, int gap = 4)
     {
         int x = 8;
         for (auto* widget : row)
@@ -332,7 +399,7 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
             const bool separator = qobject_cast<QLabel*>(widget);
             widget->move(x + (separator ? 8 : 0), y + (separator ? 3 : 0));
             widget->show();
-            x += (separator ? 17 : 28) + 4;
+            x += (separator ? 17 : 28) + gap;
         }
     };
     QVector<QWidget*> single = tools;
@@ -352,13 +419,15 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
     else
     {
         // 320 逻辑像素使用三列工具网格，操作组仍紧凑成行。
-        toolbar_->setFixedSize(std::max(108, rowWidth(actions)), 140);
+        // 取字多一枚操作按钮；320px 下缩小间距，保留全部 28px 按钮与三行工具。
+        const int gap = rowWidth(actions) > availableWidth ? 1 : 4;
+        toolbar_->setFixedSize(std::max(108, rowWidth(actions, gap)), 140);
         for (int index = 0; index < tools.size(); ++index)
         {
             tools[index]->move(8 + index % 3 * 32, 8 + index / 3 * 32);
             tools[index]->show();
         }
-        placeRow(actions, 104);
+        placeRow(actions, 104, gap);
     }
 }
 void SelectionOverlay::updateOptionsBar()
@@ -386,10 +455,21 @@ void SelectionOverlay::updateOptionsBar()
 }
 std::optional<AspectRatio> SelectionOverlay::dragRatio() const
 {
+    if (activeShape_ >= 0)
+    {
+        if (!shiftRatio_)
+            return {};
+        if (activeShape_ < 6)
+            return captureShapeNaturalRatio(static_cast<CaptureShape>(activeShape_));
+        const auto& mask = templateMasks_[activeShape_ - 6];
+        return AspectRatio{double(mask.width()), double(mask.height())};
+    }
     return shiftRatio_ ? actions_.ratios.quick : activeRatio_;
 }
 void SelectionOverlay::chooseRatio(std::optional<AspectRatio> ratio)
 {
+    if (activeShape_ >= 0)
+        return;
     finishText(true, false);
     if (ratio && activeRatio_ && sameAspectRatio(*ratio, *activeRatio_))
         ratio.reset();
@@ -411,6 +491,9 @@ void SelectionOverlay::updateRatioBar()
     if (actions_.ratios.quick)
         tip +=
             QStringLiteral("；按住 ⇧ 临时使用 %1").arg(formatAspectRatio(*actions_.ratios.quick));
+    ratioButton_->setEnabled(activeShape_ < 0);
+    if (activeShape_ >= 0)
+        tip = QStringLiteral("形状截图使用模板比例锁定");
     ratioButton_->setToolTip(tip);
     ratioButton_->setAccessibleName(tip);
     int naturalWidth = 4;
@@ -440,12 +523,90 @@ void SelectionOverlay::updateRatioBar()
         x += button->width() + 4;
     }
     ratioBar_->setFixedSize(width, y + 32);
-    ratioBar_->setVisible(ratioButton_->isChecked());
+    ratioBar_->setVisible(activeShape_ < 0 && ratioButton_->isChecked());
+}
+QString SelectionOverlay::shapeLabel() const
+{
+    return activeShape_ < 0   ? QStringLiteral("自由")
+           : activeShape_ < 6 ? captureShapeLabel(static_cast<CaptureShape>(activeShape_))
+                              : actions_.shapeTemplates[activeShape_ - 6].label;
+}
+void SelectionOverlay::chooseShape(int index)
+{
+    finishText(true, false);
+    activeShape_ = index == activeShape_ ? -1 : index;
+    templatePreview_ = {};
+    templatePreviewSize_ = {};
+    if (activeShape_ >= 0)
+    {
+        activeRatio_.reset();
+        ratioButton_->setChecked(false);
+    }
+    markDirty();
+    if (activeShape_ >= 0)
+        showStatus(QStringLiteral("标注超出形状的部分会在输出时裁掉。"), true);
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::updateShapeBar()
+{
+    const QString tip = QStringLiteral("选择异形形状（当前：%1）").arg(shapeLabel());
+    shapeButton_->setToolTip(tip);
+    shapeButton_->setAccessibleName(tip);
+    QVector<QPushButton*> buttons = shapeButtons_;
+    buttons.append(shapeWhiteBackgroundButton_);
+    int naturalWidth = 4;
+    for (auto* button : buttons)
+    {
+        button->ensurePolished();
+        button->setFixedWidth(
+            std::min(toolbar_->width() - 8,
+                     std::max(34, button->fontMetrics().horizontalAdvance(button->text()) + 16)));
+        naturalWidth += button->width() + 4;
+    }
+    for (int index = 0; index < shapeButtons_.size(); ++index)
+        shapeButtons_[index]->setChecked(index - 1 == activeShape_);
+    const int width = std::min(naturalWidth, toolbar_->width());
+    int x = 4;
+    int y = 4;
+    for (auto* button : buttons)
+    {
+        if (x > 4 && x + button->width() + 4 > width)
+        {
+            x = 4;
+            y += 32;
+        }
+        button->move(x, y);
+        x += button->width() + 4;
+    }
+    // 白底固定在末行右端，顺序与换行保持一致。
+    shapeWhiteBackgroundButton_->move(width - shapeWhiteBackgroundButton_->width() - 4, y);
+    shapeBar_->setFixedSize(width, y + 32);
+    shapeBar_->setVisible(shapeButton_->isChecked());
+}
+QImage SelectionOverlay::outputImage() const
+{
+    const QImage image = renderAnnotatedSelection(frame_.pixels, annotations(), selection_);
+    if (activeShape_ < 0)
+        return image;
+    QImage mask;
+    if (activeShape_ < 6)
+    {
+        mask = QImage(image.size(), QImage::Format_ARGB32_Premultiplied);
+        mask.fill(Qt::transparent);
+        QPainter painter(&mask);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.fillPath(captureShapePath(static_cast<CaptureShape>(activeShape_), mask.rect()),
+                         Qt::white);
+    }
+    else
+        mask = templateMasks_[activeShape_ - 6];
+    return applyShapeMask(image, mask, shapeWhiteBackgroundButton_->isChecked());
 }
 QRect SelectionOverlay::toolbarClusterRect() const
 {
     QRect cluster;
-    for (auto* panel : {toolbar_, optionsBar_, ratioBar_})
+    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, shapeBar_})
         if (panel && !panel->isHidden())
             cluster = cluster.united(panel->geometry());
     return cluster;
@@ -480,6 +641,7 @@ void SelectionOverlay::updateToolbar()
             toolbar_->hide();
             optionsBar_->hide();
             ratioBar_->hide();
+            shapeBar_->hide();
             status_->hide();
         }
         if (undoShortcut_)
@@ -504,8 +666,10 @@ void SelectionOverlay::updateToolbar()
     layoutToolbar(bounds.width());
     updateOptionsBar();
     updateRatioBar();
+    updateShapeBar();
     const int clusterHeight = toolbar_->height() + (optionsBar_->isHidden() ? 0 : 42) +
-                              (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6);
+                              (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6) +
+                              (shapeBar_->isHidden() ? 0 : shapeBar_->height() + 6);
     const QRectF region = logicalSelection();
     const int x = std::clamp(qRound(region.right()) - toolbar_->width(), bounds.left(),
                              std::max(bounds.left(), bounds.right() + 1 - toolbar_->width()));
@@ -520,12 +684,20 @@ void SelectionOverlay::updateToolbar()
     toolbar_->move(x, y);
     optionsBar_->move(x, y + toolbar_->height() + 6);
     ratioBar_->move(x, y + toolbar_->height() + 6 + (optionsBar_->isHidden() ? 0 : 42));
+    shapeBar_->move(x, y + toolbar_->height() + 6 + (optionsBar_->isHidden() ? 0 : 42) +
+                           (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6));
     const bool enabled = dragMode_ == DragMode::None && !saveDialogOpen_;
     toolbar_->setEnabled(enabled);
     optionsBar_->setEnabled(enabled);
     ratioBar_->setEnabled(enabled);
+    shapeBar_->setEnabled(enabled);
     toolbar_->show();
     positionStatus();
+    if (!actions_.shapeTemplateNotice.isEmpty())
+    {
+        const QString notice = std::exchange(actions_.shapeTemplateNotice, QString());
+        showStatus(notice, false);
+    }
 }
 void SelectionOverlay::showStatus(const QString& text, bool temporary)
 {
@@ -544,8 +716,7 @@ void SelectionOverlay::copySelection()
         dragMode_ != DragMode::None)
         return;
     finishText(true);
-    const ImageOutputResult result =
-        actions_.copyImage(renderAnnotatedSelection(frame_.pixels, annotations(), selection_));
+    const ImageOutputResult result = actions_.copyImage(outputImage());
     if (result.success)
         complete(copiedSessionOutcome);
     else
@@ -559,9 +730,8 @@ void SelectionOverlay::pinSelection()
         return;
     finishText(true);
     const ImageOutputResult result =
-        actions_.pinImage
-            ? actions_.pinImage(renderAnnotatedSelection(frame_.pixels, annotations(), selection_))
-            : ImageOutputResult{false, QStringLiteral("贴图管理器不可用。")};
+        actions_.pinImage ? actions_.pinImage(outputImage())
+                          : ImageOutputResult{false, QStringLiteral("贴图管理器不可用。")};
     if (result.success)
         complete(pinnedSessionOutcome);
     else
@@ -582,8 +752,12 @@ void SelectionOverlay::saveSelection()
     saveDialogOpen_ = true;
     toolbar_->setEnabled(false);
     optionsBar_->setEnabled(false);
+    ratioBar_->setEnabled(false);
+    shapeBar_->setEnabled(false);
     QPointer<SelectionOverlay> self(this);
-    const ImageSaveActions actions = actions_;
+    ImageSaveActions actions = actions_;
+    if (activeShape_ >= 0)
+        actions.forcedFormat = ImageFormat::Png;
     const auto target = chooseImageSaveTarget(
         this, actions, [self] { return self && !self->finished_; },
         [self](const QString& text)
@@ -601,8 +775,7 @@ void SelectionOverlay::saveSelection()
     activateWindow();
     setFocus(Qt::OtherFocusReason);
     if (!target.path.isEmpty())
-        finishSave(saveImageToTarget(
-            renderAnnotatedSelection(frame_.pixels, annotations(), selection_), target));
+        finishSave(saveImageToTarget(outputImage(), target));
 }
 bool SelectionOverlay::exportToPath(const QString& path)
 {
@@ -611,7 +784,7 @@ bool SelectionOverlay::exportToPath(const QString& path)
         return false;
     finishText(true);
     return finishSave(exportImageToPath(
-        renderAnnotatedSelection(frame_.pixels, annotations(), selection_), path));
+        outputImage(), activeShape_ >= 0 ? savePanelFilePath(path, ImageFormat::Png) : path));
 }
 bool SelectionOverlay::finishSave(const ImageFileResult& output)
 {
@@ -623,7 +796,9 @@ bool SelectionOverlay::finishSave(const ImageFileResult& output)
         return false;
     }
     saved_ = true;
-    showStatus(QStringLiteral("已保存：%1").arg(output.path), true);
+    showStatus((activeShape_ >= 0 ? QStringLiteral("形状截图以 PNG 保存\n") : QString()) +
+                   QStringLiteral("已保存：%1").arg(output.path),
+               true);
     return true;
 }
 void SelectionOverlay::setSelection(QRect pixels)
@@ -772,9 +947,39 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         const QRectF region = logicalSelection();
         QPainterPath shade;
         shade.addRect(rect());
+        QPainterPath outline;
         if (!selection_.isEmpty())
-            shade.addRect(region);
+        {
+            if (activeShape_ >= 0 && activeShape_ < 6)
+            {
+                outline = captureShapePath(static_cast<CaptureShape>(activeShape_), region);
+                shade = shade.subtracted(outline);
+            }
+            else
+                shade.addRect(region);
+        }
+        painter.setRenderHint(QPainter::Antialiasing, activeShape_ >= 0);
         painter.fillPath(shade, QColor(0, 0, 0, 75));
+        if (!selection_.isEmpty() && activeShape_ >= 6)
+        {
+            const QSize target(std::max(1, qRound(region.width())),
+                               std::max(1, qRound(region.height())));
+            const QSize size = target.width() > 1024 || target.height() > 1024
+                                   ? target.scaled(1024, 1024, Qt::KeepAspectRatio)
+                                   : target;
+            if (size != templatePreviewSize_)
+            {
+                templatePreviewSize_ = size;
+                templatePreview_ = QImage(size, QImage::Format_ARGB32_Premultiplied);
+                templatePreview_.fill(QColor(0, 0, 0, 75));
+                QPainter preview(&templatePreview_);
+                preview.setRenderHint(QPainter::SmoothPixmapTransform);
+                preview.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+                preview.drawImage(templatePreview_.rect(), templateMasks_[activeShape_ - 6]);
+            }
+            painter.setRenderHint(QPainter::SmoothPixmapTransform);
+            painter.drawImage(region, templatePreview_);
+        }
         if (!hoveredWindowPixels_.isEmpty())
         {
             const QRectF hover(hoveredWindowPixels_.x() / scale, hoveredWindowPixels_.y() / scale,
@@ -787,7 +992,10 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         painter.setPen(QPen(Qt::white, 1.0 / scale));
         if (!selection_.isEmpty())
         {
-            painter.drawRect(region);
+            if (activeShape_ >= 0 && activeShape_ < 6)
+                painter.drawPath(outline);
+            else
+                painter.drawRect(region);
             if (textMode_)
             {
                 QPainterPath highlight;
@@ -1017,6 +1225,9 @@ QString SelectionOverlay::selectionSizeText() const
     const auto ratio = dragging ? dragRatio() : activeRatio_;
     const QString size =
         QStringLiteral("%1 × %2 像素").arg(selection_.width()).arg(selection_.height());
+    if (activeShape_ >= 0)
+        return (dragging && shiftRatio_ ? QStringLiteral("⇧ ") : QString()) + shapeLabel() +
+               QStringLiteral(" · ") + size;
     if (!ratio)
         return size;
     return (dragging && shiftRatio_ ? QStringLiteral("⇧ ") : QString()) +
@@ -1114,7 +1325,8 @@ QRect SelectionOverlay::magnifierRect() const
                       magnifierSample_.height() * magnifierCellSize + 32);
     const QPointF anchor = QPointF(magnifierAnchor_) / frame_.display.devicePixelRatio;
     QRect obstacle;
-    for (auto* widget : {toolbar_, optionsBar_, ratioBar_, static_cast<QWidget*>(status_)})
+    for (auto* widget :
+         {toolbar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
         if (widget && widget->isVisible())
             obstacle = obstacle.united(widget->geometry());
     return placedMagnifier(anchor, panel, availableRect(), obstacle);
@@ -1288,11 +1500,12 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
 bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
 {
     if (event->type() == QEvent::MouseButtonPress &&
-        (watched == ratioButton_ ||
+        (watched == ratioButton_ || watched == shapeButton_ ||
+         (shapeBar_ && shapeBar_->isAncestorOf(qobject_cast<QWidget*>(watched))) ||
          (ratioBar_ && ratioBar_->isAncestorOf(qobject_cast<QWidget*>(watched)))))
         finishText(true, false);
     if ((watched == toolbar_ || watched == optionsBar_ || watched == ratioBar_ ||
-         qobject_cast<QLabel*>(watched)) &&
+         watched == shapeBar_ || qobject_cast<QLabel*>(watched)) &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease))
     {
         // 空白 / 提示标签提交并消化手势；比例按钮已在按下时提交，其他按钮沿用 clicked。

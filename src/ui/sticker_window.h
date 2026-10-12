@@ -126,6 +126,7 @@ class StickerWindow final : public QWidget
     QPointF geometryPosition_;
     qreal wheelRemainder_ = 0;
     qreal scale_ = 1;
+    bool transparent_ = false;
     bool saved_ = false;
     bool mosaicNoticeShown_ = false;
     bool editing_ = false;

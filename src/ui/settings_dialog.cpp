@@ -12,6 +12,7 @@
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -237,6 +238,46 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
             });
     rebuildRatioList();
     layout->addWidget(ratioGroup);
+    shapeTemplates_ = saveSettings_.shapeTemplates;
+    auto* shapeGroup = new QGroupBox(QStringLiteral("形状模板"), this);
+    auto* shapeLayout = new QVBoxLayout(shapeGroup);
+    shapeTemplateScroll_ = new QScrollArea(shapeGroup);
+    shapeTemplateScroll_->setWidgetResizable(true);
+    shapeTemplateScroll_->setMinimumHeight(70);
+    shapeTemplateScroll_->setMaximumHeight(110);
+    shapeLayout->addWidget(shapeTemplateScroll_);
+    shapeTemplateEmptyNotice_ = new QLabel(QStringLiteral("尚未导入任何模板"), shapeGroup);
+    shapeTemplateEmptyNotice_->setObjectName(QStringLiteral("shapeTemplateEmptyNotice"));
+    shapeLayout->addWidget(shapeTemplateEmptyNotice_);
+    auto* import = new QPushButton(QStringLiteral("导入 PNG…"), shapeGroup);
+    import->setObjectName(QStringLiteral("shapeTemplateImportButton"));
+    shapeLayout->addWidget(import, 0, Qt::AlignLeft);
+    auto* shapeHelp =
+        new QLabel(QStringLiteral("透明区域即镂空；超过 4096px 自动等比缩小；重名自动加序号。\n"
+                                  "启用的模板会出现在形状条；删除在保存后生效。"),
+                   shapeGroup);
+    shapeHelp->setWordWrap(true);
+    shapeLayout->addWidget(shapeHelp);
+    if (!saveSettings_.chooseShapeTemplatePaths)
+        saveSettings_.chooseShapeTemplatePaths = [](QWidget* parent)
+        {
+            return QFileDialog::getOpenFileNames(parent, QStringLiteral("导入形状模板"), QString(),
+                                                 QStringLiteral("PNG 图片 (*.png)"));
+        };
+    connect(import, &QPushButton::clicked, this,
+            [this]
+            {
+                const QStringList paths = saveSettings_.chooseShapeTemplatePaths(this);
+                if (paths.isEmpty() || !saveSettings_.importShapeTemplates)
+                    return;
+                const auto result = saveSettings_.importShapeTemplates(paths);
+                shapeTemplates_ += result.imported;
+                rebuildShapeTemplateList();
+                status_->setText(result.error);
+                status_->setVisible(!result.error.isEmpty());
+            });
+    rebuildShapeTemplateList();
+    layout->addWidget(shapeGroup);
     status_ = new QLabel(notice, this);
     status_->setObjectName(QStringLiteral("settingsStatus"));
     status_->setTextFormat(Qt::PlainText);
@@ -251,6 +292,54 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     layout->addWidget(buttons);
     connect(saveButton, &QPushButton::clicked, this, &SettingsDialog::save);
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+}
+void SettingsDialog::rebuildShapeTemplateList()
+{
+    auto* list = new QWidget;
+    list->setObjectName(QStringLiteral("shapeTemplateList"));
+    auto* layout = new QVBoxLayout(list);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
+    for (int index = 0; index < shapeTemplates_.size(); ++index)
+    {
+        const auto entry = shapeTemplates_[index];
+        auto* row = new QHBoxLayout;
+        auto* thumbnail = new QLabel(list);
+        thumbnail->setFixedSize(28, 28);
+        thumbnail->setPixmap(QPixmap(QDir(saveSettings_.shapeTemplateDir).filePath(entry.file))
+                                 .scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        row->addWidget(thumbnail);
+        auto* name = new QLabel(entry.label, list);
+        name->setTextFormat(Qt::PlainText);
+        name->setWordWrap(true);
+        row->addWidget(name, 1);
+        auto* toggle = new QCheckBox(QStringLiteral("启用"), list);
+        toggle->setObjectName(QStringLiteral("shapeTemplateToggle%1").arg(index));
+        toggle->setChecked(entry.enabled);
+        row->addWidget(toggle);
+        connect(toggle, &QCheckBox::toggled, this,
+                [this, index](bool enabled) { shapeTemplates_[index].enabled = enabled; });
+        auto* remove = new QPushButton(QStringLiteral("删除"), list);
+        remove->setObjectName(QStringLiteral("shapeTemplateDelete%1").arg(index));
+        row->addWidget(remove);
+        connect(remove, &QPushButton::clicked, this,
+                [this, index]
+                {
+                    shapeTemplates_.removeAt(index);
+                    rebuildShapeTemplateList();
+                });
+        layout->addLayout(row);
+    }
+    layout->addStretch();
+    // 延迟销毁旧行，避免 clicked 栈内删除发送控件。
+    if (QWidget* old = shapeTemplateScroll_->takeWidget())
+    {
+        old->setParent(nullptr);
+        old->hide();
+        old->deleteLater();
+    }
+    shapeTemplateScroll_->setWidget(list);
+    shapeTemplateEmptyNotice_->setVisible(shapeTemplates_.isEmpty());
 }
 CaptureRatioSettings SettingsDialog::collectRatios() const
 {
@@ -368,6 +457,8 @@ void SettingsDialog::save()
         error = autostartActions_.setEnabled(autostartCheck_->isChecked());
     if (error.isEmpty() && saveSettings_.saveRatios)
         error = saveSettings_.saveRatios(collectRatios());
+    if (error.isEmpty() && saveSettings_.saveShapeTemplates)
+        error = saveSettings_.saveShapeTemplates(shapeTemplates_);
     if (!error.isEmpty())
     {
         status_->setText(error);

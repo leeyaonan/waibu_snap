@@ -143,6 +143,21 @@ static void drawIcon(QPainter& p, int id, const QRectF& box, const QColor& fg, c
         arrowHead(p, QPointF(5.5, 9), pi, 3.2);
         arrowHead(p, QPointF(12.5, 9), 0.0, 3.2);
         break;
+    case 20: // 形状（五角星描边）
+    {
+        QPainterPath star;
+        const QPointF c(9, 9.4);
+        for (int i = 0; i < 10; ++i)
+        {
+            const qreal r = (i % 2 == 0) ? 6.4 : 2.9;
+            const qreal a = -pi / 2 + i * pi / 5;
+            const QPointF pt = c + QPointF(std::cos(a), std::sin(a)) * r;
+            i == 0 ? star.moveTo(pt) : star.lineTo(pt);
+        }
+        star.closeSubpath();
+        p.drawPath(star);
+        break;
+    }
     }
     p.restore();
 }

@@ -1,4 +1,5 @@
 #include "ui/sticker_window.h"
+#include "core/shape_mask.h"
 #include "core/sticker_geometry.h"
 #include "output/annotation_renderer.h"
 #include "ui/annotation_text_edit.h"
@@ -39,7 +40,11 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_MacAlwaysShowToolWindow);
     setAttribute(Qt::WA_DeleteOnClose);
-    setAttribute(Qt::WA_OpaquePaintEvent);
+    transparent_ = hasTransparentPixels(image_);
+    if (transparent_)
+        setAttribute(Qt::WA_TranslucentBackground);
+    else
+        setAttribute(Qt::WA_OpaquePaintEvent);
     setFocusPolicy(Qt::NoFocus);
     setMouseTracking(true);
     setCursor(Qt::SizeAllCursor);
@@ -265,7 +270,8 @@ bool StickerWindow::event(QEvent* event)
 void StickerWindow::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
-    painter.fillRect(rect(), Qt::black);
+    if (!transparent_)
+        painter.fillRect(rect(), Qt::black);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, scale_ != 1);
     const qreal factor = scale_ / screenDpr();
     painter.scale(factor, factor);

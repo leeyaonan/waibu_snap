@@ -2550,6 +2550,482 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(summaries, 2);
         QVERIFY(windows.first());
     }
+    void shapeToolbarButtonAndBar()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {250, 200});
+        auto* shape = button(overlay, "shapeButton");
+        auto* bar = overlay.findChild<QWidget*>(QStringLiteral("shapeBar"));
+        QVERIFY(shape && bar && shape->isCheckable());
+        QCOMPARE(shape->iconSize(), QSize(18, 18));
+        QVERIFY(!shape->icon().isNull());
+        QVERIFY(!shape->isChecked() && !bar->isVisible());
+        QCOMPARE(shape->toolTip(), QStringLiteral("选择异形形状（当前：自由）"));
+        QTest::mouseClick(shape, Qt::LeftButton);
+        QVERIFY(shape->isChecked() && bar->isVisible());
+        QCOMPARE(bar->findChildren<QPushButton*>().size(), 8);
+        QVERIFY(button(overlay, "shapeFreeButton")->isChecked());
+        QCOMPARE(button(overlay, "shapeFreeButton")->toolTip(), QStringLiteral("自由（矩形输出）"));
+        const QRect original = overlay.selection();
+        for (int i = 0; i < 6; ++i)
+        {
+            auto* option =
+                button(overlay, qPrintable(QStringLiteral("shapeOption%1Button").arg(i)));
+            QCOMPARE(option->text(), captureShapeLabel(static_cast<CaptureShape>(i)));
+            QTest::mouseClick(option, Qt::LeftButton);
+            QVERIFY(option->isChecked());
+            QCOMPARE(overlay.selection(), original);
+            QVERIFY(shape->toolTip().contains(option->text()));
+            QCOMPARE(overlay.selectionSizeText(),
+                     option->text() + QStringLiteral(" · 300 × 200 像素"));
+            QTest::mouseClick(option, Qt::LeftButton);
+            QVERIFY(button(overlay, "shapeFreeButton")->isChecked());
+        }
+        auto* white = button(overlay, "shapeWhiteBackgroundButton");
+        QVERIFY(white && white->isCheckable() && !white->isChecked());
+        QTest::mouseClick(white, Qt::LeftButton);
+        QVERIFY(white->isChecked());
+        QTest::mouseClick(shape, Qt::LeftButton);
+        QVERIFY(!bar->isVisible());
+        SelectionOverlay next(annotationFrame());
+        next.show();
+        dragLogical(next, {100, 100}, {250, 200});
+        QVERIFY(!button(next, "shapeButton")->isChecked());
+        QVERIFY(!button(next, "shapeWhiteBackgroundButton")->isChecked());
+        QVERIFY(button(next, "shapeFreeButton")->isChecked());
+    }
+    void shapeRatioExclusion()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {250, 200});
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "ratioOption1Button"), Qt::LeftButton);
+        const QRect ratioSelection = overlay.selection();
+        QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "shapeOption2Button"), Qt::LeftButton);
+        QCOMPARE(overlay.selection(), ratioSelection);
+        QVERIFY(!button(overlay, "ratioButton")->isEnabled());
+        QVERIFY(!button(overlay, "ratioButton")->isChecked());
+        QVERIFY(!overlay.findChild<QWidget*>(QStringLiteral("ratioBar"))->isVisible());
+        QVERIFY(button(overlay, "ratioFreeButton")->isChecked());
+        QVERIFY(!button(overlay, "ratioOption1Button")->isChecked());
+        QCOMPARE(button(overlay, "ratioButton")->toolTip(),
+                 QStringLiteral("形状截图使用模板比例锁定"));
+        QTest::mouseClick(button(overlay, "shapeFreeButton"), Qt::LeftButton);
+        QVERIFY(button(overlay, "ratioButton")->isEnabled());
+        QCOMPARE(overlay.selection(), ratioSelection);
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QVERIFY(overlay.findChild<QWidget*>(QStringLiteral("ratioBar"))->isVisible());
+        QVERIFY(button(overlay, "ratioFreeButton")->isChecked());
+    }
+    void shapeShiftRatioLock_data()
+    {
+        QTest::addColumn<bool>("useTemplate");
+        QTest::addColumn<qreal>("scale");
+        for (bool useTemplate : {false, true})
+            for (qreal scale : {1.0, 1.25, 2.0})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(useTemplate).arg(scale)))
+                    << useTemplate << scale;
+    }
+    void shapeShiftRatioLock()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, useTemplate);
+        QFETCH(qreal, scale);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QImage mask(90, 60, QImage::Format_ARGB32);
+        mask.fill(Qt::white);
+        QVERIFY(mask.save(temporary.filePath(QStringLiteral("wide.png"))));
+        OverlayActions actions;
+        actions.ratios.quick = AspectRatio{9, 16};
+        actions.shapeTemplates = {{QStringLiteral("wide.png"), QStringLiteral("宽模板"), true}};
+        actions.shapeTemplateDir = temporary.path();
+        auto frame = annotationFrame();
+        frame.display.devicePixelRatio = scale;
+        frame.pixels = QImage(qRound(800 * scale), qRound(600 * scale), QImage::Format_RGB32);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(scale);
+        SelectionOverlay overlay(frame, actions);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {250, 180});
+        QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
+        QTest::mouseClick(
+            button(overlay, useTemplate ? "shapeTemplate0Button" : "shapeOption2Button"),
+            Qt::LeftButton);
+        const AspectRatio expected = useTemplate ? AspectRatio{3, 2} : AspectRatio{1, 1};
+        ratioMouse(overlay, QEvent::MouseButtonPress, {420, 100});
+        ratioMouse(overlay, QEvent::MouseMove, {580, 160});
+        const QRect normal = overlay.selection();
+        QTest::keyPress(&overlay, Qt::Key_Shift);
+        verifySelectionRatio(overlay.selection(), expected, frame.pixels.size());
+        QVERIFY(overlay.selectionSizeText().startsWith(QStringLiteral("⇧ ")));
+        QTest::keyRelease(&overlay, Qt::Key_Shift);
+        QCOMPARE(overlay.selection(), normal);
+        ratioMouse(overlay, QEvent::MouseMove, {580, 160}, Qt::ShiftModifier);
+        verifySelectionRatio(overlay.selection(), expected, frame.pixels.size());
+        ratioMouse(overlay, QEvent::MouseButtonRelease, {580, 160}, Qt::ShiftModifier);
+        QVERIFY(!overlay.selectionSizeText().startsWith(QStringLiteral("⇧ ")));
+        const QRect initial = overlay.selection();
+        const QPoint corner(qRound((initial.x() + initial.width()) / scale),
+                            qRound((initial.y() + initial.height()) / scale));
+        ratioMouse(overlay, QEvent::MouseButtonPress, corner);
+        ratioMouse(overlay, QEvent::MouseMove, corner + QPoint(20, 10));
+        const QRect resized = overlay.selection();
+        QTest::keyPress(&overlay, Qt::Key_Shift);
+        verifySelectionRatio(overlay.selection(), expected, frame.pixels.size());
+        QTest::keyRelease(&overlay, Qt::Key_Shift);
+        QCOMPARE(overlay.selection(), resized);
+        ratioMouse(overlay, QEvent::MouseMove, corner + QPoint(20, 10), Qt::ShiftModifier);
+        verifySelectionRatio(overlay.selection(), expected, frame.pixels.size());
+        ratioMouse(overlay, QEvent::MouseMove, corner + QPoint(20, 10));
+        QCOMPARE(overlay.selection(), resized);
+        ratioMouse(overlay, QEvent::MouseButtonRelease, corner + QPoint(20, 10));
+        // 键盘 Shift 扩边保持逐像素语义，不锁定形状比例。
+        overlay.activateWindow();
+        overlay.setFocus();
+        QTRY_VERIFY(overlay.hasFocus());
+        const QRect before = overlay.selection();
+        QTest::keyClick(&overlay, Qt::Key_Right, Qt::ShiftModifier);
+        QCOMPARE(overlay.selection().size(), QSize(before.width() + 1, before.height()));
+    }
+    void shapeOutputPixels_data()
+    {
+        QTest::addColumn<int>("shape");
+        QTest::addColumn<bool>("white");
+        for (int shape = 0; shape < 6; ++shape)
+            for (bool white : {false, true})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(shape).arg(white)))
+                    << shape << white;
+    }
+    void shapeOutputPixels()
+    {
+        using namespace waibusnap;
+        QFETCH(int, shape);
+        QFETCH(bool, white);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QImage copied, pinned;
+        OverlayActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{false, {}};
+        };
+        actions.pinImage = [&](const QImage& image)
+        {
+            pinned = image;
+            return ImageOutputResult{false, {}};
+        };
+        actions.loadSavePreferences = [&]
+        { return SavePreferences{temporary.path(), ImageFormat::Jpeg}; };
+        SelectionOverlay overlay(annotationFrame(), actions);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {250, 200});
+        QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
+        QTest::mouseClick(
+            button(overlay, qPrintable(QStringLiteral("shapeOption%1Button").arg(shape))),
+            Qt::LeftButton);
+        if (white)
+            QTest::mouseClick(button(overlay, "shapeWhiteBackgroundButton"), Qt::LeftButton);
+        const QString path = temporary.filePath(QStringLiteral("explicit.jpg"));
+        QVERIFY(overlay.exportToPath(path));
+        QVERIFY(!QFileInfo::exists(path));
+        const QImage saved(temporary.filePath(QStringLiteral("explicit.png")));
+        QCOMPARE(saved.size(), QSize(300, 200));
+        QCOMPARE(saved.devicePixelRatio(), 1.0);
+        QCOMPARE(saved.pixelColor(0, 0).alpha(), white ? 255 : 0);
+        if (white)
+            QCOMPARE(saved.pixelColor(0, 0), QColor(Qt::white));
+        QCOMPARE(saved.pixelColor(150, 100).alpha(), 255);
+        QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "pinButton"), Qt::LeftButton);
+        QCOMPARE(copied.convertToFormat(QImage::Format_ARGB32),
+                 saved.convertToFormat(QImage::Format_ARGB32));
+        QCOMPARE(pinned.convertToFormat(QImage::Format_ARGB32),
+                 saved.convertToFormat(QImage::Format_ARGB32));
+        QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
+        const auto files = QDir(temporary.path()).entryList({QStringLiteral("*.png")}, QDir::Files);
+        QCOMPARE(files.size(), 2);
+        QVERIFY(QDir(temporary.path()).entryList({QStringLiteral("*.jpg")}, QDir::Files).isEmpty());
+        QVERIFY(overlay.findChild<QLabel*>(QStringLiteral("outputStatus"))
+                    ->text()
+                    .contains(QStringLiteral("形状截图以 PNG 保存")));
+    }
+    void shapeTemplateRoundTrip()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        AppSettings settings(temporary.filePath(QStringLiteral("settings.ini")));
+        QVERIFY(settings.loadShapeTemplates().isEmpty());
+        QImage mask(90, 60, QImage::Format_ARGB32);
+        mask.fill(Qt::transparent);
+        mask.setPixelColor(45, 30, QColor(255, 255, 255, 128));
+        const QString input = temporary.filePath(QStringLiteral("圆环.png"));
+        QVERIFY(mask.save(input));
+        auto imported = settings.importShapeTemplates({input, input});
+        QVERIFY(imported.error.isEmpty());
+        QCOMPARE(imported.imported.size(), 2);
+        QCOMPARE(imported.imported[1].file, QStringLiteral("圆环-2.png"));
+        QVERIFY(settings.saveShapeTemplates(imported.imported).isEmpty());
+        QCOMPARE(settings.loadShapeTemplates().size(), 2);
+        mask.fill(Qt::transparent);
+        const QString empty = temporary.filePath(QStringLiteral("empty.png"));
+        QVERIFY(mask.save(empty));
+        QCOMPARE(settings.importShapeTemplates({empty}).error,
+                 QStringLiteral("模板没有任何可见像素，已忽略。"));
+        QFile broken(temporary.filePath(QStringLiteral("broken.png")));
+        QVERIFY(broken.open(QIODevice::WriteOnly));
+        broken.write("invalid");
+        broken.close();
+        QCOMPARE(settings.importShapeTemplates({broken.fileName()}).error,
+                 QStringLiteral("模板导入失败：不是有效的 PNG。"));
+        const QString fake = temporary.filePath(QStringLiteral("fake.png"));
+        mask.fill(Qt::white);
+        QVERIFY(mask.save(fake, "BMP"));
+        QCOMPARE(settings.importShapeTemplates({fake}).error,
+                 QStringLiteral("模板导入失败：不是有效的 PNG。"));
+        QImage huge(5000, 100, QImage::Format_RGB32);
+        huge.fill(Qt::white);
+        const QString large = temporary.filePath(QStringLiteral("large.png"));
+        QVERIFY(huge.save(large));
+        auto resized = settings.importShapeTemplates({large});
+        QVERIFY(resized.error.isEmpty());
+        QImage down(QDir(settings.shapeTemplateDir()).filePath(resized.imported[0].file));
+        QCOMPARE(down.width(), 4096);
+        QVERIFY(std::abs(down.height() - 4096.0 / 50) <= 1);
+        int saves = 0;
+        SaveSettingsActions actions;
+        actions.shapeTemplates = settings.loadShapeTemplates();
+        actions.shapeTemplateDir = settings.shapeTemplateDir();
+        actions.importShapeTemplates = [&](const QStringList& paths)
+        { return settings.importShapeTemplates(paths); };
+        actions.chooseShapeTemplatePaths = [&](QWidget*) { return QStringList{large}; };
+        actions.saveShapeTemplates = [&](const QVector<ShapeTemplateEntry>& entries)
+        {
+            ++saves;
+            return settings.saveShapeTemplates(entries);
+        };
+        AutostartActions startup{[] { return AutostartState{}; }, [](bool) { return QString(); }};
+        SettingsDialog dialog(
+            QKeySequence(Qt::Key_F1), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions, startup);
+        dialog.show();
+        QVERIFY(dialog.findChild<QWidget*>(QStringLiteral("shapeTemplateList")));
+        QApplication::processEvents();
+        auto* saveControl = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
+        QVERIFY(dialog.rect().contains(
+            QRect(saveControl->mapTo(&dialog, QPoint()), saveControl->size())));
+        const QString evidence = qEnvironmentVariable("WAIBUSNAP_SHAPE_EVIDENCE_DIR");
+        if (!evidence.isEmpty())
+        {
+            QApplication::processEvents();
+            QVERIFY(
+                dialog.grab().save(QDir(evidence).filePath(QStringLiteral("shape-settings.png"))));
+        }
+        auto* emptyNotice = dialog.findChild<QLabel*>(QStringLiteral("shapeTemplateEmptyNotice"));
+        QVERIFY(emptyNotice && !emptyNotice->isVisible());
+        dialog.findChild<QCheckBox*>(QStringLiteral("shapeTemplateToggle0"))->setChecked(false);
+        dialog.findChild<QPushButton*>(QStringLiteral("shapeTemplateDelete1"))->click();
+        // 删除暂存，取消前不得删文件或写配置。
+        QVERIFY(QFileInfo::exists(
+            QDir(settings.shapeTemplateDir()).filePath(imported.imported[1].file)));
+        dialog.findChild<QPushButton*>(QStringLiteral("shapeTemplateImportButton"))->click();
+        QCOMPARE(saves, 0);
+        dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"))->click();
+        QCOMPARE(saves, 1);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        const auto loaded = settings.loadShapeTemplates();
+        QCOMPARE(loaded.size(), 2);
+        QVERIFY(!loaded[0].enabled);
+        QVERIFY(loaded[1].enabled);
+        QVERIFY(!QFileInfo::exists(
+            QDir(settings.shapeTemplateDir()).filePath(imported.imported[1].file)));
+        actions.shapeTemplates = loaded;
+        SettingsDialog cancel(
+            QKeySequence(Qt::Key_F1), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions, startup);
+        cancel.show();
+        cancel.findChild<QPushButton*>(QStringLiteral("shapeTemplateDelete0"))->click();
+        cancel.findChild<QPushButton*>(QStringLiteral("shapeTemplateImportButton"))->click();
+        QVERIFY(QFileInfo::exists(
+            QDir(settings.shapeTemplateDir()).filePath(QStringLiteral("large-3.png"))));
+        cancel.findChild<QPushButton*>(QStringLiteral("cancelSettingsButton"))->click();
+        QCOMPARE(saves, 1);
+        QCOMPARE(settings.loadShapeTemplates().size(), 2);
+        QVERIFY(QFileInfo::exists(QDir(settings.shapeTemplateDir()).filePath(loaded[0].file)));
+        QVERIFY(settings.removeShapeTemplate(loaded[0].file).isEmpty());
+        QCOMPARE(settings.loadShapeTemplates().size(), 1);
+        QVERIFY(!QFileInfo::exists(QDir(settings.shapeTemplateDir()).filePath(loaded[0].file)));
+        QVERIFY(QFile::remove(QDir(settings.shapeTemplateDir()).filePath(loaded[1].file)));
+        QString notice;
+        QVERIFY(settings.loadShapeTemplates(&notice).isEmpty());
+        QVERIFY(!notice.isEmpty());
+        QFile stored(temporary.filePath(QStringLiteral("settings.ini")));
+        QVERIFY(stored.open(QIODevice::ReadOnly));
+        const QByteArray beforeRead = stored.readAll();
+        stored.close();
+        settings.loadShapeTemplates();
+        QVERIFY(stored.open(QIODevice::ReadOnly));
+        QCOMPARE(stored.readAll(), beforeRead);
+        SaveSettingsActions failure;
+        failure.saveShapeTemplates = [](const QVector<ShapeTemplateEntry>&)
+        { return QStringLiteral("模板写入失败"); };
+        SettingsDialog failed(
+            QKeySequence(Qt::Key_F1), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            failure, startup);
+        failed.show();
+        QVERIFY(failed.findChild<QLabel*>(QStringLiteral("shapeTemplateEmptyNotice"))->isVisible());
+        failed.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"))->click();
+        QVERIFY(failed.isVisible());
+        QCOMPARE(failed.findChild<QLabel*>(QStringLiteral("settingsStatus"))->text(),
+                 QStringLiteral("模板写入失败"));
+        QVERIFY(failed.findChild<QLabel*>(QStringLiteral("settingsStatus"))->isVisible());
+    }
+    void shapeBarLayoutAndPreview_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::addColumn<bool>("options");
+        for (int width : {320, 480, 597, 598, 650, 651, 800})
+            for (bool options : {false, true})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(width).arg(options)))
+                    << width << options;
+    }
+    void shapeBarLayoutAndPreview()
+    {
+        using namespace waibusnap;
+        QFETCH(int, width);
+        QFETCH(bool, options);
+        auto frame = annotationFrame();
+        frame.display.logicalGeometry = {0, 0, width, 600};
+        frame.display.availableLogicalGeometry = {0, 25, width, 550};
+        frame.pixels = QImage(width * 2, 1200, QImage::Format_RGB32);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(2);
+        OverlayActions actions;
+        actions.recognizer = std::make_shared<OcrStub>();
+        SelectionOverlay overlay(frame, actions);
+        overlay.show();
+        dragLogical(overlay, {40, 70}, {width - 30, 280});
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
+        if (options)
+            QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
+        auto* ratio = overlay.findChild<QWidget*>(QStringLiteral("ratioBar"));
+        auto* shape = overlay.findChild<QWidget*>(QStringLiteral("shapeBar"));
+        const QRect bounds(0, 25, width, 550);
+        QVERIFY(bounds.contains(toolbar->geometry()));
+        QVERIFY(bounds.contains(shape->geometry()));
+        QCOMPARE(shape->x(), toolbar->x());
+        QCOMPARE(shape->y(), ratio->y() + ratio->height() + 6);
+        QVERIFY(shape->width() <= toolbar->width());
+        for (auto* control : shape->findChildren<QPushButton*>())
+            QVERIFY(shape->rect().contains(control->geometry()));
+        const QRect selection = overlay.selection();
+        QTest::mouseClick(shape, Qt::LeftButton, Qt::NoModifier, {2, 2});
+        QCOMPARE(overlay.selection(), selection);
+        QCOMPARE(shape->cursor().shape(), Qt::ArrowCursor);
+        QTest::mouseClick(button(overlay, "shapeOption2Button"), Qt::LeftButton);
+        QImage painted(overlay.size(), QImage::Format_ARGB32);
+        overlay.render(&painted);
+        QCOMPARE(painted.pixelColor(width / 2, 170), QColor(Qt::white));
+        QCOMPARE(painted.pixelColor(50, 110), QColor(180, 180, 180));
+        if (options)
+            QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        overlay.activateWindow();
+        overlay.setFocus();
+        QTRY_VERIFY(overlay.hasFocus());
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QVERIFY(!overlay.magnifierRect().intersects(shape->geometry()));
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QVERIFY(bounds.contains(toolbar->geometry()));
+        QVERIFY(bounds.contains(shape->geometry()));
+        auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
+        if (status->isVisible())
+            QVERIFY(!status->geometry().intersects(shape->geometry()));
+        const QString evidence = qEnvironmentVariable("WAIBUSNAP_SHAPE_EVIDENCE_DIR");
+        if (width == 800 && options && !evidence.isEmpty())
+        {
+            QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+            QVERIFY(
+                overlay.grab().save(QDir(evidence).filePath(QStringLiteral("shape-overlay.png"))));
+        }
+    }
+    void shapeTemplateOutputAndOcr()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QImage mask(300, 200, QImage::Format_ARGB32);
+        mask.fill(Qt::transparent);
+        {
+            QPainter painter(&mask);
+            painter.fillRect(QRect(40, 40, 220, 120), QColor(255, 255, 255, 128));
+        }
+        QVERIFY(mask.save(temporary.filePath(QStringLiteral("alpha.png"))));
+        auto engine = std::make_shared<OcrStub>();
+        OverlayActions actions;
+        actions.recognizer = engine;
+        actions.shapeTemplates = {{QStringLiteral("alpha.png"), QStringLiteral("半透明模板"), true},
+                                  {QStringLiteral("alpha.png"), QStringLiteral("停用模板"), false}};
+        actions.shapeTemplateDir = temporary.path();
+        SelectionOverlay overlay(annotationFrame(), actions);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {250, 200});
+        QTest::mouseClick(button(overlay, "coverToolButton"), Qt::LeftButton);
+        dragLogical(overlay, {110, 110}, {240, 190});
+        QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
+        QVERIFY(button(overlay, "shapeTemplate0Button"));
+        QVERIFY(!button(overlay, "shapeTemplate1Button"));
+        QTest::mouseClick(button(overlay, "shapeTemplate0Button"), Qt::LeftButton);
+        const auto annotated = renderAnnotatedSelection(annotationFrame().pixels,
+                                                        overlay.annotations(), overlay.selection());
+        QVERIFY(overlay.exportToPath(temporary.filePath(QStringLiteral("output.png"))));
+        const QImage saved(temporary.filePath(QStringLiteral("output.png")));
+        QCOMPARE(saved.pixelColor(0, 0).alpha(), 0);
+        QCOMPARE(saved.pixelColor(150, 100).alpha(), 128);
+        QCOMPARE(saved.convertToFormat(QImage::Format_ARGB32),
+                 applyShapeMask(annotated, mask, false).convertToFormat(QImage::Format_ARGB32));
+        QImage painted(overlay.size(), QImage::Format_ARGB32);
+        overlay.render(&painted);
+        QCOMPARE(painted.pixelColor(105, 105), QColor(180, 180, 180));
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QCOMPARE(engine->input(), annotated);
+        QCOMPARE(engine->input().pixelColor(0, 0).alpha(), 255);
+    }
+    void shapeStickerTransparency()
+    {
+        using namespace waibusnap;
+        QImage image(50, 40, QImage::Format_ARGB32);
+        image.fill(Qt::white);
+        StickerWindow opaque(image, {0, 0}, true);
+        QVERIFY(opaque.testAttribute(Qt::WA_OpaquePaintEvent));
+        QVERIFY(!opaque.testAttribute(Qt::WA_TranslucentBackground));
+        image.setPixelColor(49, 39, Qt::transparent);
+        StickerWindow transparent(image, {0, 0}, true);
+        QVERIFY(!transparent.testAttribute(Qt::WA_OpaquePaintEvent));
+        QVERIFY(transparent.testAttribute(Qt::WA_TranslucentBackground));
+        transparent.show();
+        transparent.setEditing(true);
+        transparent.setScale(2, transparent.mapToGlobal(QPoint(10, 10)));
+        transparent.hide();
+        transparent.show();
+        QVERIFY(transparent.testAttribute(Qt::WA_TranslucentBackground));
+        QCOMPARE(transparent.renderedImage().pixelColor(49, 39).alpha(), 0);
+        QTemporaryDir temporary;
+        QVERIFY(transparent.exportToPath(temporary.filePath(QStringLiteral("sticker.png"))));
+        QCOMPARE(
+            QImage(temporary.filePath(QStringLiteral("sticker.png"))).pixelColor(49, 39).alpha(),
+            0);
+    }
     void ratioToolbarButtonAndBar()
     {
         using namespace waibusnap;
@@ -2757,7 +3233,7 @@ class StartupSmokeTest final : public QObject
     {
         QTest::addColumn<int>("width");
         QTest::addColumn<bool>("options");
-        for (int width : {320, 480, 565, 566, 618, 619, 800})
+        for (int width : {320, 480, 565, 566, 597, 598, 618, 619, 650, 651, 800})
             for (bool options : {false, true})
                 QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(width).arg(options)))
                     << width << options;
@@ -3285,8 +3761,8 @@ class StartupSmokeTest final : public QObject
     void coverOverlayToolbarFitsNarrowScreens_data()
     {
         QTest::addColumn<int>("screenWidth");
-        for (int width :
-             {320, 480, 533, 534, 559, 560, 565, 566, 586, 587, 618, 619, 639, 640, 720, 800})
+        for (int width : {320, 480, 533, 534, 559, 560, 565, 566, 586, 587,
+                          597, 598, 618, 619, 639, 640, 650, 651, 720, 800})
             QTest::newRow(qPrintable(QString::number(width))) << width;
     }
     void coverOverlayToolbarFitsNarrowScreens()
@@ -3337,11 +3813,11 @@ class StartupSmokeTest final : public QObject
         auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
         QVERIFY(status->isVisible());
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
-        QCOMPARE(toolbar->height(), screenWidth >= 566 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 598 ? 44 : screenWidth > 320 ? 76 : 140);
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
         QTRY_VERIFY(!overlay.isRecognizingText());
         QVERIFY(button(overlay, "extractAllTextButton")->isVisible());
-        QCOMPARE(toolbar->height(), screenWidth >= 619 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 651 ? 44 : screenWidth > 320 ? 76 : 140);
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
         for (auto* control : toolbar->findChildren<QPushButton*>())
         {

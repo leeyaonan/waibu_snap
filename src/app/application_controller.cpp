@@ -194,17 +194,25 @@ void ApplicationController::openSettings()
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
         return;
     settingsOpen_ = true;
+    QString shapeNotice;
+    const auto templates = settings_.loadShapeTemplates(&shapeNotice);
     SettingsDialog dialog(
         hotkeySettings_.currentSequence(),
         [this](const QKeySequence& sequence) { return changeHotkey(sequence); },
-        hotkeySettings_.enabled() ? QString() : hotkeySettings_.explanation(), nullptr,
+        (hotkeySettings_.enabled() ? QString() : hotkeySettings_.explanation()) + shapeNotice,
+        nullptr,
         {settings_.loadSavePreferences(),
          [this](const SavePreferences& preferences)
          { return settings_.saveSavePreferences(preferences); },
          {},
          settings_.loadCaptureRatios(),
-         [this](const CaptureRatioSettings& ratios)
-         { return settings_.saveCaptureRatios(ratios); }},
+         [this](const CaptureRatioSettings& ratios) { return settings_.saveCaptureRatios(ratios); },
+         templates,
+         settings_.shapeTemplateDir(),
+         [this](const QVector<ShapeTemplateEntry>& entries)
+         { return settings_.saveShapeTemplates(entries); },
+         [this](const QStringList& paths) { return settings_.importShapeTemplates(paths); },
+         {}},
         autostartActions_);
     dialog.exec();
     settingsOpen_ = false;
@@ -272,6 +280,8 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
         localWindowRects(listed.windows, result.frame.display.logicalGeometry);
     OverlayActions actions;
     actions.ratios = settings_.loadCaptureRatios();
+    actions.shapeTemplates = settings_.loadShapeTemplates(&actions.shapeTemplateNotice);
+    actions.shapeTemplateDir = settings_.shapeTemplateDir();
     actions.loadSavePreferences = [this] { return settings_.loadSavePreferences(); };
     actions.pinImage = [this](const QImage& image)
     {
