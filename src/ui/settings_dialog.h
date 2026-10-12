@@ -33,6 +33,7 @@ class SettingsDialog final : public QDialog
                             AutostartActions autostartActions = {});
 
   protected:
+    bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
   private:

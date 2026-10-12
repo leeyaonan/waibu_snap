@@ -322,6 +322,24 @@ void SettingsDialog::rebuildRatioList()
     ratioScroll_->setWidget(list);
     refreshQuickRatios();
 }
+bool SettingsDialog::event(QEvent* event)
+{
+    const bool handled = QDialog::event(event);
+    if (layout() && (event->type() == QEvent::Show || event->type() == QEvent::Resize ||
+                     event->type() == QEvent::LayoutRequest))
+    {
+        // 普通最小高度不计实际宽度下的文本换行，首屏或错误提示可能挤占底部按钮。
+        const int height =
+            std::max(layout()->minimumSize().height(), layout()->minimumHeightForWidth(width()));
+        if (minimumHeight() != height)
+        {
+            setMinimumHeight(height);
+            layout()->invalidate();
+            layout()->activate();
+        }
+    }
+    return handled;
+}
 bool SettingsDialog::eventFilter(QObject* watched, QEvent* event)
 {
     if (event->type() == QEvent::KeyPress &&

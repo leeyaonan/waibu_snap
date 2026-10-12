@@ -2880,6 +2880,12 @@ class StartupSmokeTest final : public QObject
         auto* scroll = qobject_cast<QScrollArea*>(list->parentWidget()->parentWidget());
         QVERIFY(scroll);
         QVERIFY(!scroll->geometry().intersects(wide->geometry()));
+        auto* group = scroll->parentWidget();
+        const QRect groupRect(group->mapTo(&dialog, QPoint()), group->size());
+        auto* saveButton = findButton("saveSettingsButton");
+        const QRect saveRect(saveButton->mapTo(&dialog, QPoint()), saveButton->size());
+        QVERIFY(dialog.rect().contains(groupRect));
+        QVERIFY(!groupRect.intersects(saveRect));
         QCOMPARE(quick->count(), 8);
         QCOMPARE(quick->currentText(), QStringLiteral("1:1"));
         QCOMPARE(wide->minimum(), 0.01);
