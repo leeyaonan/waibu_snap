@@ -1,5 +1,6 @@
 #pragma once
 #include "core/aspect_ratio.h"
+#include "core/shape_mask.h"
 #include "interfaces/autostart.h"
 #include "output/image_output.h"
 #include <QDialog>
@@ -21,6 +22,11 @@ struct SaveSettingsActions
     std::function<QString(QWidget*, const QString&)> chooseDirectory;
     CaptureRatioSettings ratios{defaultCaptureRatios(), {}, AspectRatio{1, 1}};
     std::function<QString(const CaptureRatioSettings&)> saveRatios;
+    QVector<ShapeTemplateEntry> shapeTemplates;
+    QString shapeTemplateDir;
+    std::function<QString(const QVector<ShapeTemplateEntry>&)> saveShapeTemplates;
+    std::function<ShapeTemplateImport(const QStringList&)> importShapeTemplates;
+    std::function<QStringList(QWidget*)> chooseShapeTemplatePaths;
 };
 class SettingsDialog final : public QDialog
 {
@@ -39,6 +45,7 @@ class SettingsDialog final : public QDialog
   private:
     void save();
     void rebuildRatioList();
+    void rebuildShapeTemplateList();
     void refreshQuickRatios();
     CaptureRatioSettings collectRatios() const;
     struct RatioRow
@@ -46,6 +53,9 @@ class SettingsDialog final : public QDialog
         AspectRatio ratio;
         bool enabled = true;
     };
+    QVector<ShapeTemplateEntry> shapeTemplates_;
+    QScrollArea* shapeTemplateScroll_ = nullptr;
+    QLabel* shapeTemplateEmptyNotice_ = nullptr;
     QVector<RatioRow> ratioRows_;
     std::optional<AspectRatio> quickRatio_;
     QScrollArea* ratioScroll_ = nullptr;

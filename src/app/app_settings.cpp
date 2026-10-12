@@ -1,10 +1,15 @@
 #include "app/app_settings.h"
 #include "app/hotkey_rules.h"
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
+#include <QRegularExpression>
+#include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
+#include <algorithm>
 namespace waibusnap
 {
 namespace
@@ -67,6 +72,126 @@ CaptureRatioSettings AppSettings::loadCaptureRatios() const
     return sanitizedRatioSettings(
         {parseRatioList(listText(enabledKey)), parseRatioList(listText(disabledKey)),
          parseAspectRatio(settings.value(QStringLiteral("capture/ratio.quick")).toString())});
+}
+QString AppSettings::shapeTemplateDir() const
+{
+    return QDir(QFileInfo(filePath_).absolutePath()).filePath(QStringLiteral("shapes"));
+}
+QVector<ShapeTemplateEntry> AppSettings::loadShapeTemplates(QString* notice) const
+{
+    QSettings settings(filePath_, QSettings::IniFormat);
+    const auto value = settings.value(QStringLiteral("capture/shape.templates"));
+    const QString text = value.metaType().id() == QMetaType::QStringList
+                             ? value.toStringList().join(QLatin1Char(','))
+                             : value.toString();
+    QVector<ShapeTemplateEntry> result;
+    bool ignored = settings.status() != QSettings::NoError;
+    for (const auto& entry : parseShapeTemplates(text))
+    {
+        QImageReader reader(QDir(shapeTemplateDir()).filePath(entry.file));
+        reader.setDecideFormatFromContent(true);
+        if (reader.format() == QByteArray("png") && !reader.read().isNull())
+            result.append(entry);
+        else
+            ignored = true;
+    }
+    if (notice)
+        *notice = ignored ? QStringLiteral("部分形状模板缺失或损坏，已忽略。") : QString();
+    return result;
+}
+ShapeTemplateImport AppSettings::importShapeTemplates(const QStringList& paths) const
+{
+    ShapeTemplateImport result;
+    QStringList errors;
+    for (const QString& path : paths)
+    {
+        QImageReader reader(path);
+        reader.setDecideFormatFromContent(true);
+        QImage image;
+        if (reader.format() == QByteArray("png"))
+            image = reader.read();
+        if (image.isNull())
+        {
+            errors.append(QStringLiteral("模板导入失败：不是有效的 PNG。"));
+            continue;
+        }
+        const QImage pixels = image.convertToFormat(QImage::Format_ARGB32);
+        bool visible = false;
+        for (int y = 0; y < pixels.height() && !visible; ++y)
+        {
+            const auto* row = reinterpret_cast<const QRgb*>(pixels.constScanLine(y));
+            for (int x = 0; x < pixels.width(); ++x)
+                if (qAlpha(row[x]) != 0)
+                {
+                    visible = true;
+                    break;
+                }
+        }
+        if (!visible)
+        {
+            errors.append(QStringLiteral("模板没有任何可见像素，已忽略。"));
+            continue;
+        }
+        if (!QDir().mkpath(shapeTemplateDir()))
+        {
+            errors.append(QStringLiteral("模板导入失败：无法创建模板目录。"));
+            continue;
+        }
+        if (image.width() > 4096 || image.height() > 4096)
+            image = image.scaled(4096, 4096, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        image.setDevicePixelRatio(1);
+        QString base = QFileInfo(path).completeBaseName().trimmed();
+        base.replace(QRegularExpression(QStringLiteral(R"([<>:"/\\|?*,])")), QStringLiteral("_"));
+        if (base.isEmpty())
+            base = QStringLiteral("template");
+        QString file = base + QStringLiteral(".png");
+        int suffix = 2;
+        const QDir directory(shapeTemplateDir());
+        while (QFileInfo::exists(directory.filePath(file)) ||
+               QFileInfo(directory.filePath(file)).isSymLink())
+            file = base + QStringLiteral("-%1.png").arg(suffix++);
+        QSaveFile output(directory.filePath(file));
+        if (!output.open(QIODevice::WriteOnly) || !image.save(&output, "PNG") || !output.commit())
+        {
+            errors.append(QStringLiteral("模板导入失败：无法写入模板文件。"));
+            continue;
+        }
+        result.imported.append({file, QFileInfo(file).completeBaseName(), true});
+    }
+    errors.removeDuplicates();
+    result.error = errors.join(QLatin1Char('\n'));
+    return result;
+}
+QString AppSettings::saveShapeTemplates(const QVector<ShapeTemplateEntry>& entries) const
+{
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()))
+        return QStringLiteral("无法创建设置目录。形状模板重启后可能无法保留，请重试保存。");
+    const auto previous = loadShapeTemplates();
+    const QString serialized = serializeShapeTemplates(entries);
+    const auto clean = parseShapeTemplates(serialized);
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.setValue(QStringLiteral("capture/shape.templates"), serialized);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return QStringLiteral("形状模板写入失败，重启后可能无法保留，请重试保存。");
+    for (const auto& old : previous)
+        if (std::none_of(clean.begin(), clean.end(), [&old](const ShapeTemplateEntry& entry)
+                         { return entry.file == old.file; }))
+        {
+            const QString path = QDir(shapeTemplateDir()).filePath(old.file);
+            if (QFileInfo::exists(path) && !QFile::remove(path))
+                return QStringLiteral("模板列表已保存，但模板文件删除失败，文件已保留。");
+        }
+    return {};
+}
+QString AppSettings::removeShapeTemplate(const QString& file) const
+{
+    auto entries = loadShapeTemplates();
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                 [&file](const ShapeTemplateEntry& entry)
+                                 { return entry.file == file; }),
+                  entries.end());
+    return saveShapeTemplates(entries);
 }
 QString AppSettings::saveCaptureRatios(const CaptureRatioSettings& ratios) const
 {

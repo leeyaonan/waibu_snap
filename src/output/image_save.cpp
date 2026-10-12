@@ -11,17 +11,20 @@ const QString pngFilter = QStringLiteral("PNG 图片 (*.png)");
 const QString jpegFilter = QStringLiteral("JPEG 图片（有损）(*.jpg *.jpeg)");
 QString chooseNativePath(QWidget* parent, QString suggestion,
                          const std::function<bool()>& canContinue,
-                         const std::function<void(const QString&)>& showNotice)
+                         const std::function<void(const QString&)>& showNotice,
+                         std::optional<ImageFormat> forcedFormat)
 {
     QString selected = imageFormatForPath(suggestion) == ImageFormat::Jpeg ? jpegFilter : pngFilter;
     while (true)
     {
         const QString chosen = QFileDialog::getSaveFileName(
-            parent, QStringLiteral("保存图片"), suggestion, imageSaveFilters(), &selected);
+            parent, QStringLiteral("保存图片"), suggestion,
+            forcedFormat == ImageFormat::Png ? pngFilter : imageSaveFilters(), &selected);
         if (!canContinue() || chosen.isEmpty())
             return {};
-        const QString path = savePanelFilePath(chosen, selected == jpegFilter ? ImageFormat::Jpeg
-                                                                              : ImageFormat::Png);
+        const QString path = savePanelFilePath(
+            chosen,
+            forcedFormat.value_or(selected == jpegFilter ? ImageFormat::Jpeg : ImageFormat::Png));
         if (path == chosen || (!QFileInfo::exists(path) && !QFileInfo(path).isSymLink()))
             return path;
         // 规范化后的另一个已有目标尚未获覆盖确认，重新交给原生面板。
@@ -49,8 +52,10 @@ ImageSaveTarget chooseImageSaveTarget(QWidget* parent, const ImageSaveActions& a
                                       const std::function<bool()>& canContinue,
                                       const std::function<void(const QString&)>& showNotice)
 {
-    const auto preferences =
+    auto preferences =
         actions.loadSavePreferences ? actions.loadSavePreferences() : SavePreferences{};
+    if (actions.forcedFormat)
+        preferences.format = *actions.forcedFormat;
     const auto timestamp =
         actions.saveTimestamp ? actions.saveTimestamp() : QDateTime::currentDateTime();
     const QFileInfo quick(preferences.quickDirectory);
@@ -66,11 +71,13 @@ ImageSaveTarget chooseImageSaveTarget(QWidget* parent, const ImageSaveActions& a
     {
         const QString chosen = actions.chooseSavePath
                                    ? actions.chooseSavePath(parent, suggestion)
-                                   : chooseNativePath(parent, suggestion, canContinue, showNotice);
+                                   : chooseNativePath(parent, suggestion, canContinue, showNotice,
+                                                      actions.forcedFormat);
         if (!canContinue() || chosen.isEmpty())
             return {};
-        const auto format = imageFormatForPath(chosen);
-        const QString path = imageFilePath(chosen, format);
+        const auto format = actions.forcedFormat.value_or(imageFormatForPath(chosen));
+        const QString path = actions.forcedFormat ? savePanelFilePath(chosen, format)
+                                                  : imageFilePath(chosen, format);
         if (path == chosen || (!QFileInfo::exists(path) && !QFileInfo(path).isSymLink()))
             return {path, {}, format, timestamp};
         // 注入缝仍接收原签名，补后缀产生的冲突也必须确认最终路径。

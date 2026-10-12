@@ -1,6 +1,7 @@
 #pragma once
 #include "output/image_output.h"
 #include <functional>
+#include <optional>
 class QWidget;
 namespace waibusnap
 {
@@ -10,6 +11,7 @@ struct ImageSaveActions
     std::function<SavePreferences()> loadSavePreferences;
     // 默认取当前时刻；固定时刻便于稳定验证连续保存与命名冲突。
     std::function<QDateTime()> saveTimestamp;
+    std::optional<ImageFormat> forcedFormat;
 };
 struct ImageSaveTarget
 {

@@ -74,6 +74,8 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     toolbarStatusPillTimesOut
     coverOverlayToolbarFitsNarrowScreens annotationStylesUndoRedoAndDirtyState
     toolbarBackgroundCommitsAndClearsPreedit
+    shapeToolbarButtonAndBar shapeRatioExclusion shapeShiftRatioLock shapeOutputPixels
+    shapeTemplateRoundTrip shapeStickerTransparency shapeBarLayoutAndPreview shapeTemplateOutputAndOcr
     ratioToolbarButtonAndBar ratioConstrainsDragAndResize ratioQuickRatioWithShift
     ratioSelectionImmediateAdjust ratioSizeTextFormats ratioKeyboardAndWindowSnap
     ratioBarLayoutAndPanelGestures ratioAllDisabledOnlyFree ratioSettingsDialogRoundTrip
@@ -140,3 +142,8 @@ qt_add_executable(aspect_ratio_test unit/aspect_ratio_test.cpp)
 target_link_libraries(aspect_ratio_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(aspect_ratio_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME aspect_ratio COMMAND aspect_ratio_test)
+
+qt_add_executable(shape_mask_test unit/shape_mask_test.cpp)
+target_link_libraries(shape_mask_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(shape_mask_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME shape_mask COMMAND shape_mask_test)

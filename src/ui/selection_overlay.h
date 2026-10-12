@@ -2,6 +2,7 @@
 #include "core/annotation.h"
 #include "core/aspect_ratio.h"
 #include "core/selection_geometry.h"
+#include "core/shape_mask.h"
 #include "core/text_layout.h"
 #include "interfaces/capture_provider.h"
 #include "output/annotation_renderer.h"
@@ -23,6 +24,9 @@ class OcrDialog;
 struct OverlayActions : ImageSaveActions
 {
     CaptureRatioSettings ratios{defaultCaptureRatios(), {}, AspectRatio{1, 1}};
+    QVector<ShapeTemplateEntry> shapeTemplates;
+    QString shapeTemplateDir;
+    QString shapeTemplateNotice;
     std::shared_ptr<const TextRecognizer> recognizer;
     std::function<void(const QString&)> setClipboardText;
     std::function<ImageOutputResult(const QImage&)> copyImage;
@@ -97,6 +101,10 @@ class SelectionOverlay final : public QWidget
     void layoutToolbar(int availableWidth);
     void updateOptionsBar();
     void updateRatioBar();
+    void updateShapeBar();
+    void chooseShape(int index);
+    QString shapeLabel() const;
+    QImage outputImage() const;
     void chooseRatio(std::optional<AspectRatio> ratio);
     std::optional<AspectRatio> dragRatio() const;
     QRect toolbarClusterRect() const;
@@ -128,6 +136,14 @@ class SelectionOverlay final : public QWidget
     QWidget* toolbar_ = nullptr;
     QWidget* optionsBar_ = nullptr;
     QWidget* ratioBar_ = nullptr;
+    QWidget* shapeBar_ = nullptr;
+    QPushButton* shapeButton_ = nullptr;
+    QPushButton* shapeWhiteBackgroundButton_ = nullptr;
+    QVector<QPushButton*> shapeButtons_;
+    QVector<QImage> templateMasks_;
+    QImage templatePreview_;
+    QSize templatePreviewSize_;
+    int activeShape_ = -1;
     QPushButton* ratioButton_ = nullptr;
     QVector<QPushButton*> ratioButtons_;
     std::optional<AspectRatio> activeRatio_;
