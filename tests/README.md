@@ -239,7 +239,7 @@ OCR 人工核对仍需完成：
 
 本机 MacBook M3 Pro / arm64、macOS **27.0.1（26A434）**、Qt **6.11.2 Release**、Xcode SDK **26.2**：构建与 `WaibuSnap Dev` / `local.waibusnap.dev` 原证书叶 requirement 校验通过；**14 项 CTest**（含真实 OCR 引擎）、clang-format **18.1.8**、`git diff --check` 通过。主冒烟 **288 → 321**、独立 `QT_SCALE_FACTOR=2` 子集 **221 → 254**，零失败 / 零跳过；新增 `aspect_ratio` 单元 **352 项**通过。新增比例用例在真实 Cocoa 后端 **31 项**通过（含初始化 / 清理）。沙箱首轮真实 Vision 失败，放开系统服务访问后成功；签名也在可访问钥匙串的环境中恢复原开发身份，不修改权限或安装依赖。
 
-独立 `open -W -n` / LaunchServices 受控进程使用临时 INI / JSONL，参数 `--test-mode --test-count 2 --test-stable-ms 3000 --test-interval-ms 500 --test-hold-ms 250`。两条依次 cold=true / false，均 **outcome=2**、冻结帧 **1920×1080**、选区 **0×0**，`visible_proxy_ns` / `interactive_ns` 非零，进程正常退出。运行时已有普通实例，保持其状态；受控实例 F1 返回系统错误 **-9878**，注入路径正常完成。仅核对协议与无回归，不替代性能正式采样或真实 F1 验收；原始日志和合成控件渲染图保留本机临时目录，不入库。
+独立 `open -W -n` / LaunchServices 受控进程使用临时 INI / JSONL，参数 `--test-mode --test-count 2 --test-stable-ms 3000 --test-interval-ms 500 --test-hold-ms 250`。两条依次 cold=true / false，均 **outcome=2**、最终冻结帧 **3024×1964**、选区 **0×0**，`visible_proxy_ns` / `interactive_ns` 非零，进程正常退出。运行时已有普通实例，保持其状态；受控实例 F1 返回系统错误 **-9878**，注入路径正常完成。仅核对协议与无回归，不替代性能正式采样或真实 F1 验收；原始日志和合成控件渲染图保留本机临时目录，不入库。
 
 首次设置页渲染核对发现滚动列表与添加行重叠，新增几何断言先失败，分组布局传递最小尺寸后复验。宽屏单行、参数 / 比例双条、320px 换行用实际控件渲染核对；程序化 Cocoa 事件与合成图不能替代用户的拖拽手感、桌面视觉和重启验收。双端 CI 证据见本功能 PR 的检查页；Windows 原生整体实机仍待补齐。
 
