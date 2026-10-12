@@ -74,6 +74,10 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     toolbarStatusPillTimesOut
     coverOverlayToolbarFitsNarrowScreens annotationStylesUndoRedoAndDirtyState
     toolbarBackgroundCommitsAndClearsPreedit
+    ratioToolbarButtonAndBar ratioConstrainsDragAndResize ratioQuickRatioWithShift
+    ratioSelectionImmediateAdjust ratioSizeTextFormats ratioKeyboardAndWindowSnap
+    ratioBarLayoutAndPanelGestures ratioAllDisabledOnlyFree ratioSettingsDialogRoundTrip
+    ratioSettingsCancelEmptyAndSaveFailure
     trayIconUsesEmbeddedPlatformAssets
     ocrModeLifecycle ocrSelection ocrCopyDispatchAndSavedState
     ocrDelayedProgressExitAndStaleResult ocrDialogEscAndRetry ocrDialogLoadingAndEmpty
@@ -131,3 +135,8 @@ endif()
 add_test(NAME text_recognizer_real_engine COMMAND text_recognizer_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/text-recognizer-output.txt,txt")
 set_tests_properties(text_recognizer_real_engine PROPERTIES TIMEOUT 120)
+
+qt_add_executable(aspect_ratio_test unit/aspect_ratio_test.cpp)
+target_link_libraries(aspect_ratio_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(aspect_ratio_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME aspect_ratio COMMAND aspect_ratio_test)

@@ -49,6 +49,40 @@ SavePreferences AppSettings::loadSavePreferences() const
     // 非法键独立回退；读取不修复文件，也不触碰热键键。
     return preferences;
 }
+CaptureRatioSettings AppSettings::loadCaptureRatios() const
+{
+    QSettings settings(filePath_, QSettings::IniFormat);
+    const QString enabledKey = QStringLiteral("capture/ratio.enabled");
+    const QString disabledKey = QStringLiteral("capture/ratio.disabled");
+    if (!settings.contains(enabledKey) && !settings.contains(disabledKey))
+        return {defaultCaptureRatios(), {}, AspectRatio{1, 1}};
+    const auto listText = [&settings](const QString& key)
+    {
+        const auto value = settings.value(key);
+        // 手写 INI 未加引号的逗号列表会被 QSettings 解析为 QStringList。
+        return value.metaType().id() == QMetaType::QStringList
+                   ? value.toStringList().join(QLatin1Char(','))
+                   : value.toString();
+    };
+    return sanitizedRatioSettings(
+        {parseRatioList(listText(enabledKey)), parseRatioList(listText(disabledKey)),
+         parseAspectRatio(settings.value(QStringLiteral("capture/ratio.quick")).toString())});
+}
+QString AppSettings::saveCaptureRatios(const CaptureRatioSettings& ratios) const
+{
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()))
+        return QStringLiteral("无法创建设置目录。截图比例重启后可能无法保留，请重试保存。");
+    const auto clean = sanitizedRatioSettings(ratios);
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.setValue(QStringLiteral("capture/ratio.enabled"), serializeRatioList(clean.enabled));
+    settings.setValue(QStringLiteral("capture/ratio.disabled"), serializeRatioList(clean.disabled));
+    settings.setValue(QStringLiteral("capture/ratio.quick"),
+                      clean.quick ? formatAspectRatio(*clean.quick) : QString());
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return QStringLiteral("截图比例写入失败，重启后可能无法保留，请重试保存。");
+    return {};
+}
 QString AppSettings::saveSavePreferences(const SavePreferences& preferences) const
 {
     if (!preferences.quickDirectory.isEmpty() && !QDir::isAbsolutePath(preferences.quickDirectory))

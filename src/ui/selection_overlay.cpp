@@ -91,6 +91,14 @@ void SelectionOverlay::ensureToolbar()
     toolbar_->setObjectName(QStringLiteral("selectionToolbar"));
     optionsBar_ = new QWidget(this);
     optionsBar_->setObjectName(QStringLiteral("annotationOptionsBar"));
+    ratioBar_ = new QWidget(this);
+    ratioBar_->setObjectName(QStringLiteral("ratioBar"));
+    ratioBar_->setStyleSheet(QStringLiteral(
+        "QWidget#ratioBar { background: #202020; border: 1px solid #3a3a3a; border-radius: 8px; }"
+        "QPushButton { background: transparent; color: #f2f2f2; border: none; border-radius: 6px; "
+        "padding: 0 8px; font-size: 12px; }"
+        "QPushButton:hover { background: #3a3a3a; }"
+        "QPushButton:checked { background: #a65316; color: white; }"));
     const QString buttonsStyle = QStringLiteral(
         "QPushButton { background: transparent; padding: 0; border: none; border-radius: 6px; }"
         "QPushButton:hover { background: #3a3a3a; }"
@@ -171,6 +179,34 @@ void SelectionOverlay::ensureToolbar()
     for (int index = 0; index < 6; ++index)
         actionButtons_.append(makeButton(toolbar_, actionObjects[index], actionTips[index],
                                          static_cast<ToolbarIcon>(12 + index)));
+    ratioButton_ =
+        makeButton(toolbar_, QStringLiteral("ratioButton"), QString(), ToolbarIcon::Ratio);
+    ratioButton_->setCheckable(true);
+    connect(ratioButton_, &QPushButton::clicked, this,
+            [this]
+            {
+                finishText(true, false);
+                updateToolbar();
+                update();
+            });
+    for (int index = -1; index < actions_.ratios.enabled.size(); ++index)
+    {
+        const auto ratio =
+            index < 0 ? std::nullopt : std::optional<AspectRatio>(actions_.ratios.enabled[index]);
+        const QString text = ratio ? formatAspectRatio(*ratio) : QStringLiteral("自由");
+        auto* button = new QPushButton(text, ratioBar_);
+        button->setObjectName(index < 0 ? QStringLiteral("ratioFreeButton")
+                                        : QStringLiteral("ratioOption%1Button").arg(index));
+        button->setToolTip(ratio ? QStringLiteral("使用 %1").arg(text)
+                                 : QStringLiteral("自由（不限制比例）"));
+        button->setAccessibleName(button->toolTip());
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setFixedHeight(28);
+        ratioButtons_.append(button);
+        connect(button, &QPushButton::clicked, this, [this, ratio] { chooseRatio(ratio); });
+    }
+    ratioBar_->hide();
     undoButton_ = actionButtons_[0];
     redoButton_ = actionButtons_[1];
     extractAllTextButton_ = makeButton(toolbar_, QStringLiteral("extractAllTextButton"),
@@ -247,7 +283,7 @@ void SelectionOverlay::ensureToolbar()
     status_->setStyleSheet(QStringLiteral(
         "background: #202020; color: #e8e8e8; border-radius: 8px; padding: 0 10px;"));
     status_->hide();
-    for (auto* panel : {toolbar_, optionsBar_, static_cast<QWidget*>(status_)})
+    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, static_cast<QWidget*>(status_)})
     {
         panel->setCursor(Qt::ArrowCursor);
         panel->setMouseTracking(true);
@@ -278,7 +314,7 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
     QVector<QWidget*> actions;
     if (textMode_)
         actions << extractAllTextButton_ << separators_[1];
-    actions << undoButton_ << redoButton_ << separators_[2];
+    actions << undoButton_ << redoButton_ << separators_[2] << ratioButton_;
     for (int index = 2; index < actionButtons_.size(); ++index)
         actions.append(actionButtons_[index]);
     const auto rowWidth = [](const QVector<QWidget*>& row)
@@ -348,6 +384,72 @@ void SelectionOverlay::updateOptionsBar()
     optionsBar_->setFixedSize(widths || sizes ? 217 : 100, 36);
     optionsBar_->setVisible(colors);
 }
+std::optional<AspectRatio> SelectionOverlay::dragRatio() const
+{
+    return shiftRatio_ ? actions_.ratios.quick : activeRatio_;
+}
+void SelectionOverlay::chooseRatio(std::optional<AspectRatio> ratio)
+{
+    finishText(true, false);
+    if (ratio && activeRatio_ && sameAspectRatio(*ratio, *activeRatio_))
+        ratio.reset();
+    activeRatio_ = ratio;
+    if (ratio && !selection_.isEmpty() && dragMode_ == DragMode::None)
+    {
+        setSelection(ratioAdjustedSelection(selection_, *ratio, frame_.pixels.size()));
+        if (textMode_)
+            startOcrRecognition();
+    }
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::updateRatioBar()
+{
+    QString tip =
+        QStringLiteral("选择截图比例（当前：%1）")
+            .arg(activeRatio_ ? formatAspectRatio(*activeRatio_) : QStringLiteral("自由"));
+    if (actions_.ratios.quick)
+        tip +=
+            QStringLiteral("；按住 ⇧ 临时使用 %1").arg(formatAspectRatio(*actions_.ratios.quick));
+    ratioButton_->setToolTip(tip);
+    ratioButton_->setAccessibleName(tip);
+    int naturalWidth = 4;
+    for (int index = 0; index < ratioButtons_.size(); ++index)
+    {
+        auto* button = ratioButtons_[index];
+        button->ensurePolished();
+        button->setFixedWidth(
+            std::max(34, button->fontMetrics().horizontalAdvance(button->text()) + 16));
+        button->setChecked(
+            index == 0 ? !activeRatio_
+                       : activeRatio_ &&
+                             sameAspectRatio(*activeRatio_, actions_.ratios.enabled[index - 1]));
+        naturalWidth += button->width() + 4;
+    }
+    const int width = std::min(naturalWidth, toolbar_->width());
+    int x = 4;
+    int y = 4;
+    for (auto* button : ratioButtons_)
+    {
+        if (x > 4 && x + button->width() + 4 > width)
+        {
+            x = 4;
+            y += 32;
+        }
+        button->move(x, y);
+        x += button->width() + 4;
+    }
+    ratioBar_->setFixedSize(width, y + 32);
+    ratioBar_->setVisible(ratioButton_->isChecked());
+}
+QRect SelectionOverlay::toolbarClusterRect() const
+{
+    QRect cluster;
+    for (auto* panel : {toolbar_, optionsBar_, ratioBar_})
+        if (panel && !panel->isHidden())
+            cluster = cluster.united(panel->geometry());
+    return cluster;
+}
 void SelectionOverlay::positionStatus()
 {
     if (status_->isHidden())
@@ -362,8 +464,7 @@ void SelectionOverlay::positionStatus()
     status_->setFixedHeight(pillHeight);
     const int x = std::clamp(toolbar_->geometry().right() + 1 - pillWidth, bounds.left(),
                              std::max(bounds.left(), bounds.right() + 1 - pillWidth));
-    const int clusterBottom =
-        optionsBar_->isHidden() ? toolbar_->geometry().bottom() : optionsBar_->geometry().bottom();
+    const int clusterBottom = toolbarClusterRect().bottom();
     int y = clusterBottom + 11;
     if (y + pillHeight > bounds.bottom() + 1)
         y = toolbar_->y() - pillHeight - 10;
@@ -378,6 +479,7 @@ void SelectionOverlay::updateToolbar()
         {
             toolbar_->hide();
             optionsBar_->hide();
+            ratioBar_->hide();
             status_->hide();
         }
         if (undoShortcut_)
@@ -401,7 +503,9 @@ void SelectionOverlay::updateToolbar()
     const QRect bounds = availableRect();
     layoutToolbar(bounds.width());
     updateOptionsBar();
-    const int clusterHeight = toolbar_->height() + (optionsBar_->isHidden() ? 0 : 42);
+    updateRatioBar();
+    const int clusterHeight = toolbar_->height() + (optionsBar_->isHidden() ? 0 : 42) +
+                              (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6);
     const QRectF region = logicalSelection();
     const int x = std::clamp(qRound(region.right()) - toolbar_->width(), bounds.left(),
                              std::max(bounds.left(), bounds.right() + 1 - toolbar_->width()));
@@ -415,9 +519,11 @@ void SelectionOverlay::updateToolbar()
     y = std::clamp(y, bounds.top(), std::max(bounds.top(), bounds.bottom() + 1 - clusterHeight));
     toolbar_->move(x, y);
     optionsBar_->move(x, y + toolbar_->height() + 6);
+    ratioBar_->move(x, y + toolbar_->height() + 6 + (optionsBar_->isHidden() ? 0 : 42));
     const bool enabled = dragMode_ == DragMode::None && !saveDialogOpen_;
     toolbar_->setEnabled(enabled);
     optionsBar_->setEnabled(enabled);
+    ratioBar_->setEnabled(enabled);
     toolbar_->show();
     positionStatus();
 }
@@ -597,6 +703,8 @@ void SelectionOverlay::updateCursor(QPointF position)
 }
 void SelectionOverlay::dragTo(QPointF position)
 {
+    lastDragPosition_ = position;
+    const auto ratio = dragRatio();
     if (dragMode_ != DragMode::Annotate)
         showMouseMagnifier(position);
     maximumPressDistance_ = std::max(
@@ -606,15 +714,22 @@ void SelectionOverlay::dragTo(QPointF position)
     else if (dragMode_ == DragMode::Create)
     {
         if (pressedWindow_ < 0 || maximumPressDistance_ > windowClickDistance)
-            setSelection(normalizedPixelSelection(press_, position, frame_.display.devicePixelRatio,
-                                                  frame_.pixels.size()));
+            setSelection(
+                ratio ? ratioCreatedSelection(press_, position, *ratio,
+                                              frame_.display.devicePixelRatio, frame_.pixels.size())
+                      : normalizedPixelSelection(press_, position, frame_.display.devicePixelRatio,
+                                                 frame_.pixels.size()));
     }
     else if (dragMode_ == DragMode::Move)
         setSelection(movedPixelSelection(initialSelection_, position - press_,
                                          frame_.display.devicePixelRatio, frame_.pixels.size()));
     else if (dragMode_ == DragMode::Resize)
-        setSelection(resizedPixelSelection(initialSelection_, resizeEdges_, position - press_,
-                                           frame_.display.devicePixelRatio, frame_.pixels.size()));
+        setSelection(
+            ratio
+                ? ratioResizedSelection(initialSelection_, resizeEdges_, position - press_, *ratio,
+                                        frame_.display.devicePixelRatio, frame_.pixels.size())
+                : resizedPixelSelection(initialSelection_, resizeEdges_, position - press_,
+                                        frame_.display.devicePixelRatio, frame_.pixels.size()));
     updateCursor(position);
     updateToolbar();
     update();
@@ -741,6 +856,8 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
     finishText(true);
     setFocus(Qt::MouseFocusReason);
     press_ = event->position();
+    lastDragPosition_ = press_;
+    shiftRatio_ = event->modifiers().testFlag(Qt::ShiftModifier);
     if (activeTool_ && !selection_.isEmpty())
     {
         if (*activeTool_ == AnnotationType::Text)
@@ -759,7 +876,8 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
     }
     initialSelection_ = selection_;
     maximumPressDistance_ = 0;
-    pressedWindow_ = selection_.isEmpty() ? windowAt(windows_, press_) : -1;
+    // 选定比例后已有选区，选区外单击仍需能吸附到窗口内接矩形。
+    pressedWindow_ = selection_.isEmpty() || activeRatio_ ? windowAt(windows_, press_) : -1;
     hoveredWindowPixels_ = {};
     resizeEdges_ = edgesAt(press_);
     if (resizeEdges_)
@@ -788,7 +906,10 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
         return;
     }
     if (dragMode_ != DragMode::None)
+    {
+        shiftRatio_ = event->modifiers().testFlag(Qt::ShiftModifier);
         dragTo(event->position());
+    }
     else
     {
         updateHover(event->position());
@@ -809,11 +930,15 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
     if (finished_ || saveDialogOpen_ || dragMode_ == DragMode::None ||
         event->button() != Qt::LeftButton)
         return;
+    shiftRatio_ = event->modifiers().testFlag(Qt::ShiftModifier);
     dragTo(event->position());
     if (dragMode_ == DragMode::Create && pressedWindow_ >= 0 &&
         maximumPressDistance_ <= windowClickDistance)
-        setSelection(windowPixelSelection(windows_[pressedWindow_], frame_.display.devicePixelRatio,
-                                          frame_.pixels.size()));
+    {
+        const QRect window = windowPixelSelection(
+            windows_[pressedWindow_], frame_.display.devicePixelRatio, frame_.pixels.size());
+        setSelection(activeRatio_ ? largestInscribedRatioRect(window, *activeRatio_) : window);
+    }
     if (dragMode_ == DragMode::Annotate && draft_)
     {
         if (history_.add(std::move(*draft_)))
@@ -821,6 +946,7 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         draft_.reset();
     }
     dragMode_ = DragMode::None;
+    shiftRatio_ = false;
     hideMagnifier();
     updateHover(event->position());
     updateCursor(event->position());
@@ -842,6 +968,13 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
         // 焦点层即使有事件泄漏到覆盖层，也不能取消会话或撤销已提交标注。
         if (event->key() == Qt::Key_Escape && !textEditor_->isComposing())
             finishText(false);
+        event->accept();
+    }
+    else if (event->key() == Qt::Key_Shift &&
+             (dragMode_ == DragMode::Create || dragMode_ == DragMode::Resize))
+    {
+        shiftRatio_ = true;
+        dragTo(lastDragPosition_);
         event->accept();
     }
     else if (event->key() == Qt::Key_Escape)
@@ -866,9 +999,28 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
     else
         QWidget::keyPressEvent(event);
 }
+void SelectionOverlay::keyReleaseEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Shift && !event->isAutoRepeat() && !finished_ && !saveDialogOpen_ &&
+        (dragMode_ == DragMode::Create || dragMode_ == DragMode::Resize))
+    {
+        shiftRatio_ = false;
+        dragTo(lastDragPosition_);
+        event->accept();
+        return;
+    }
+    QWidget::keyReleaseEvent(event);
+}
 QString SelectionOverlay::selectionSizeText() const
 {
-    return QStringLiteral("%1 × %2 像素").arg(selection_.width()).arg(selection_.height());
+    const bool dragging = dragMode_ == DragMode::Create || dragMode_ == DragMode::Resize;
+    const auto ratio = dragging ? dragRatio() : activeRatio_;
+    const QString size =
+        QStringLiteral("%1 × %2 像素").arg(selection_.width()).arg(selection_.height());
+    if (!ratio)
+        return size;
+    return (dragging && shiftRatio_ ? QStringLiteral("⇧ ") : QString()) +
+           formatAspectRatio(*ratio) + QStringLiteral(" · ") + size;
 }
 bool SelectionOverlay::nudgeSelection(QKeyEvent* event)
 {
@@ -900,7 +1052,10 @@ bool SelectionOverlay::nudgeSelection(QKeyEvent* event)
     const auto mode = modifiers == Qt::ShiftModifier ? SelectionNudge::Expand
                       : modifiers == Qt::AltModifier ? SelectionNudge::Shrink
                                                      : SelectionNudge::Move;
-    setSelection(nudgedPixelSelection(selection_, edge, mode, frame_.pixels.size()));
+    setSelection(
+        activeRatio_ && mode != SelectionNudge::Move
+            ? ratioNudgedSelection(selection_, edge, mode, *activeRatio_, frame_.pixels.size())
+            : nudgedPixelSelection(selection_, edge, mode, frame_.pixels.size()));
     updateToolbar();
     showMagnifier(selectionNudgeAnchor(selection_, edge, mode), true);
     updateCursor(mapFromGlobal(QCursor::pos()));
@@ -959,7 +1114,7 @@ QRect SelectionOverlay::magnifierRect() const
                       magnifierSample_.height() * magnifierCellSize + 32);
     const QPointF anchor = QPointF(magnifierAnchor_) / frame_.display.devicePixelRatio;
     QRect obstacle;
-    for (auto* widget : {toolbar_, optionsBar_, static_cast<QWidget*>(status_)})
+    for (auto* widget : {toolbar_, optionsBar_, ratioBar_, static_cast<QWidget*>(status_)})
         if (widget && widget->isVisible())
             obstacle = obstacle.united(widget->geometry());
     return placedMagnifier(anchor, panel, availableRect(), obstacle);
@@ -1132,10 +1287,15 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
 }
 bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
 {
-    if ((watched == toolbar_ || watched == optionsBar_ || qobject_cast<QLabel*>(watched)) &&
+    if (event->type() == QEvent::MouseButtonPress &&
+        (watched == ratioButton_ ||
+         (ratioBar_ && ratioBar_->isAncestorOf(qobject_cast<QWidget*>(watched)))))
+        finishText(true, false);
+    if ((watched == toolbar_ || watched == optionsBar_ || watched == ratioBar_ ||
+         qobject_cast<QLabel*>(watched)) &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease))
     {
-        // 空白 / 提示标签提交当前编辑并消化手势；按钮在 clicked 中提交，避免按下时移动工具栏。
+        // 空白 / 提示标签提交并消化手势；比例按钮已在按下时提交，其他按钮沿用 clicked。
         if (event->type() == QEvent::MouseButtonPress)
             finishText(true, false);
         event->accept();
