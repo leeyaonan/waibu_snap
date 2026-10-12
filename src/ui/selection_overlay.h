@@ -1,5 +1,6 @@
 #pragma once
 #include "core/annotation.h"
+#include "core/aspect_ratio.h"
 #include "core/selection_geometry.h"
 #include "core/text_layout.h"
 #include "interfaces/capture_provider.h"
@@ -21,6 +22,7 @@ class AnnotationTextEdit;
 class OcrDialog;
 struct OverlayActions : ImageSaveActions
 {
+    CaptureRatioSettings ratios{defaultCaptureRatios(), {}, AspectRatio{1, 1}};
     std::shared_ptr<const TextRecognizer> recognizer;
     std::function<void(const QString&)> setClipboardText;
     std::function<ImageOutputResult(const QImage&)> copyImage;
@@ -64,6 +66,7 @@ class SelectionOverlay final : public QWidget
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
+    void keyReleaseEvent(QKeyEvent*) override;
     void closeEvent(QCloseEvent*) override;
     void leaveEvent(QEvent*) override;
     bool eventFilter(QObject*, QEvent*) override;
@@ -93,6 +96,10 @@ class SelectionOverlay final : public QWidget
     void updateToolbar();
     void layoutToolbar(int availableWidth);
     void updateOptionsBar();
+    void updateRatioBar();
+    void chooseRatio(std::optional<AspectRatio> ratio);
+    std::optional<AspectRatio> dragRatio() const;
+    QRect toolbarClusterRect() const;
     QRect availableRect() const;
     void positionStatus();
     void markDirty();
@@ -120,6 +127,12 @@ class SelectionOverlay final : public QWidget
     OverlayActions actions_;
     QWidget* toolbar_ = nullptr;
     QWidget* optionsBar_ = nullptr;
+    QWidget* ratioBar_ = nullptr;
+    QPushButton* ratioButton_ = nullptr;
+    QVector<QPushButton*> ratioButtons_;
+    std::optional<AspectRatio> activeRatio_;
+    bool shiftRatio_ = false;
+    QPointF lastDragPosition_;
     QVector<QPushButton*> colorButtons_;
     QVector<QPushButton*> widthButtons_;
     QVector<QPushButton*> textSizeButtons_;

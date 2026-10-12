@@ -19,6 +19,7 @@
 #include <QComboBox>
 #include <QCursor>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QEnterEvent>
 #include <QFile>
@@ -38,6 +39,7 @@
 #include <QProcessEnvironment>
 #include <QPushButton>
 #include <QScreen>
+#include <QScrollArea>
 #include <QSignalSpy>
 #include <QString>
 #include <QTemporaryDir>
@@ -48,6 +50,7 @@
 #include <QWindow>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 
 namespace
 {
@@ -203,6 +206,27 @@ void dragLogical(waibusnap::SelectionOverlay& overlay, QPoint first, QPoint last
                           index == 2 ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(&overlay, &event);
     }
+}
+QPointF selectionCenter(QRect rect)
+{
+    return {rect.x() + rect.width() / 2.0, rect.y() + rect.height() / 2.0};
+}
+void verifySelectionRatio(QRect rect, waibusnap::AspectRatio ratio, QSize bounds)
+{
+    QVERIFY(!rect.isEmpty());
+    QVERIFY(QRect(QPoint(), bounds).contains(rect));
+    const double r = ratio.width / ratio.height;
+    QVERIFY(std::min(std::abs(rect.width() - rect.height() * r),
+                     std::abs(rect.height() - rect.width() / r)) <= 1.0 + 1e-8);
+}
+void ratioMouse(waibusnap::SelectionOverlay& overlay, QEvent::Type type, QPoint position,
+                Qt::KeyboardModifiers modifiers = Qt::NoModifier)
+{
+    QMouseEvent event(type, position, overlay.mapToGlobal(position),
+                      type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                      type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                      modifiers);
+    QApplication::sendEvent(&overlay, &event);
 }
 void stickerClick(waibusnap::StickerWindow& sticker, const char* name)
 {
@@ -2526,6 +2550,469 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(summaries, 2);
         QVERIFY(windows.first());
     }
+    void ratioToolbarButtonAndBar()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        auto* ratio = button(overlay, "ratioButton");
+        auto* bar = overlay.findChild<QWidget*>(QStringLiteral("ratioBar"));
+        QVERIFY(ratio && bar);
+        QVERIFY(ratio->isCheckable());
+        QVERIFY(!ratio->isChecked());
+        QVERIFY(!bar->isVisible());
+        QCOMPARE(ratio->iconSize(), QSize(18, 18));
+        QCOMPARE(bar->findChildren<QPushButton*>().size(), 9);
+        QCOMPARE(ratio->toolTip(),
+                 QStringLiteral("选择截图比例（当前：自由）；按住 ⇧ 临时使用 1:1"));
+        QTest::mouseClick(ratio, Qt::LeftButton);
+        QVERIFY(ratio->isChecked() && bar->isVisible());
+        QVERIFY(button(overlay, "ratioFreeButton")->isChecked());
+        QCOMPARE(button(overlay, "ratioFreeButton")->toolTip(),
+                 QStringLiteral("自由（不限制比例）"));
+        auto* wide = button(overlay, "ratioOption1Button");
+        QCOMPARE(wide->text(), QStringLiteral("16:9"));
+        QCOMPARE(wide->toolTip(), QStringLiteral("使用 16:9"));
+        QTest::mouseClick(wide, Qt::LeftButton);
+        QVERIFY(wide->isChecked() && !button(overlay, "ratioFreeButton")->isChecked());
+        QTest::mouseClick(wide, Qt::LeftButton);
+        QVERIFY(!wide->isChecked() && button(overlay, "ratioFreeButton")->isChecked());
+        QTest::mouseClick(wide, Qt::LeftButton);
+        QTest::mouseClick(ratio, Qt::LeftButton);
+        QVERIFY(!ratio->isChecked() && !bar->isVisible());
+        QVERIFY(overlay.selectionSizeText().startsWith(QStringLiteral("16:9 · ")));
+        const QRect selection = overlay.selection();
+        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        QTest::mouseClick(ratio, Qt::LeftButton);
+        QVERIFY(overlay.activeTool() == AnnotationType::Rectangle);
+        QCOMPARE(overlay.selection(), selection);
+        QTest::mouseClick(button(overlay, "cancelButton"), Qt::LeftButton);
+        QVERIFY(!bar->isVisible());
+        SelectionOverlay next(annotationFrame());
+        next.show();
+        dragLogical(next, {100, 100}, {300, 250});
+        QVERIFY(!next.selectionSizeText().contains(QStringLiteral(" · ")));
+        QVERIFY(!button(next, "ratioButton")->isChecked());
+    }
+    void ratioConstrainsDragAndResize_data()
+    {
+        QTest::addColumn<qreal>("scale");
+        for (qreal scale : {1.0, 1.25, 1.5, 2.0})
+            QTest::newRow(qPrintable(QString::number(scale))) << scale;
+    }
+    void ratioConstrainsDragAndResize()
+    {
+        using namespace waibusnap;
+        QFETCH(qreal, scale);
+        auto frame = annotationFrame();
+        frame.display.devicePixelRatio = scale;
+        frame.pixels = mosaicTestImage(QSize(800, 600) * scale);
+        frame.pixels.setDevicePixelRatio(scale);
+        SelectionOverlay overlay(frame);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {250, 180});
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "ratioOption1Button"), Qt::LeftButton);
+        dragLogical(overlay, {420, 100}, {590, 200});
+        verifySelectionRatio(overlay.selection(), {16, 9}, frame.pixels.size());
+        QCOMPARE(overlay.selection().topLeft(), QPoint(qRound(420 * scale), qRound(100 * scale)));
+        const QRect initial = overlay.selection();
+        QPoint corner(qRound((initial.x() + initial.width()) / scale),
+                      qRound((initial.y() + initial.height()) / scale));
+        dragLogical(overlay, corner, corner + QPoint(30, 15));
+        verifySelectionRatio(overlay.selection(), {16, 9}, frame.pixels.size());
+        QCOMPARE(overlay.selection().topLeft(), initial.topLeft());
+        const QRect beforeEdge = overlay.selection();
+        const QPoint edge(qRound((beforeEdge.x() + beforeEdge.width()) / scale),
+                          qRound((beforeEdge.y() + beforeEdge.height() / 2.0) / scale));
+        dragLogical(overlay, edge, edge + QPoint(30, 80));
+        verifySelectionRatio(overlay.selection(), {16, 9}, frame.pixels.size());
+        QCOMPARE(overlay.selection().x(), beforeEdge.x());
+        QVERIFY(std::abs(selectionCenter(overlay.selection()).y() -
+                         selectionCenter(beforeEdge).y()) <= 0.5);
+        QCOMPARE(overlay.selection().width(), beforeEdge.width() + qRound(30 * scale));
+    }
+    void ratioQuickRatioWithShift_data()
+    {
+        QTest::addColumn<bool>("active");
+        QTest::addColumn<bool>("quick");
+        for (bool active : {false, true})
+            for (bool quick : {false, true})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(active).arg(quick)))
+                    << active << quick;
+    }
+    void ratioQuickRatioWithShift()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, active);
+        QFETCH(bool, quick);
+        OverlayActions actions;
+        if (!quick)
+            actions.ratios.quick.reset();
+        SelectionOverlay overlay(annotationFrame(), actions);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {250, 180});
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        if (active)
+            QTest::mouseClick(button(overlay, "ratioOption1Button"), Qt::LeftButton);
+        ratioMouse(overlay, QEvent::MouseButtonPress, {420, 100});
+        ratioMouse(overlay, QEvent::MouseMove, {580, 160});
+        const QRect normal = overlay.selection();
+        QTest::keyPress(&overlay, Qt::Key_Shift);
+        if (quick)
+        {
+            QCOMPARE(overlay.selection().width(), overlay.selection().height());
+            QVERIFY(overlay.selectionSizeText().startsWith(QStringLiteral("⇧ 1:1 · ")));
+        }
+        else
+        {
+            QCOMPARE(overlay.selection().size(), QSize(320, 120));
+            QVERIFY(!overlay.selectionSizeText().contains(QStringLiteral(" · ")));
+        }
+        QTest::keyRelease(&overlay, Qt::Key_Shift);
+        QCOMPARE(overlay.selection(), normal);
+        ratioMouse(overlay, QEvent::MouseMove, {580, 160}, Qt::ShiftModifier);
+        if (quick)
+            QCOMPARE(overlay.selection().width(), overlay.selection().height());
+        else
+            QCOMPARE(overlay.selection().size(), QSize(320, 120));
+        ratioMouse(overlay, QEvent::MouseButtonRelease, {580, 160}, Qt::ShiftModifier);
+        QVERIFY(!overlay.selectionSizeText().startsWith(QStringLiteral("⇧")));
+        // 调整时 Shift 同样使用按下快照，松开后恢复原来拖动结果。
+        const QRect initial = overlay.selection();
+        const QPoint corner((initial.x() + initial.width()) / 2,
+                            (initial.y() + initial.height()) / 2);
+        ratioMouse(overlay, QEvent::MouseButtonPress, corner);
+        ratioMouse(overlay, QEvent::MouseMove, corner + QPoint(20, 10));
+        const QRect resized = overlay.selection();
+        QTest::keyPress(&overlay, Qt::Key_Shift);
+        if (quick)
+            QCOMPARE(overlay.selection().width(), overlay.selection().height());
+        QCOMPARE(overlay.selection().topLeft(), initial.topLeft());
+        QTest::keyRelease(&overlay, Qt::Key_Shift);
+        QCOMPARE(overlay.selection(), resized);
+        ratioMouse(overlay, QEvent::MouseButtonRelease, corner + QPoint(20, 10));
+    }
+    void ratioSelectionImmediateAdjust()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        const QRect initial = overlay.selection();
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "ratioOption1Button"), Qt::LeftButton);
+        const QRect adjusted = overlay.selection();
+        verifySelectionRatio(adjusted, {16, 9}, {1600, 1200});
+        QVERIFY(std::abs(selectionCenter(initial).x() - selectionCenter(adjusted).x()) <= 0.5);
+        QVERIFY(std::abs(selectionCenter(initial).y() - selectionCenter(adjusted).y()) <= 0.5);
+        QCOMPARE(adjusted.width(), initial.width());
+        QTest::mouseClick(button(overlay, "ratioFreeButton"), Qt::LeftButton);
+        QCOMPARE(overlay.selection(), adjusted);
+        QVERIFY(!overlay.selectionSizeText().contains(QStringLiteral(" · ")));
+    }
+    void ratioSizeTextFormats()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        QCOMPARE(overlay.selectionSizeText(), QStringLiteral("400 × 300 像素"));
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "ratioOption1Button"), Qt::LeftButton);
+        QCOMPARE(overlay.selectionSizeText(), QStringLiteral("16:9 · 400 × 225 像素"));
+        ratioMouse(overlay, QEvent::MouseButtonPress, {420, 100});
+        ratioMouse(overlay, QEvent::MouseMove, {580, 160}, Qt::ShiftModifier);
+        QCOMPARE(overlay.selectionSizeText(), QStringLiteral("⇧ 1:1 · 320 × 320 像素"));
+        QTest::keyRelease(&overlay, Qt::Key_Shift);
+        QCOMPARE(overlay.selectionSizeText(), QStringLiteral("16:9 · 320 × 180 像素"));
+        ratioMouse(overlay, QEvent::MouseButtonRelease, {580, 160});
+    }
+    void ratioKeyboardAndWindowSnap()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame(), {}, {{400, 100, 200, 200}});
+        overlay.show();
+        overlay.activateWindow();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "ratioOption1Button"), Qt::LeftButton);
+        QTRY_VERIFY(overlay.hasFocus());
+        const auto size = overlay.selection().size();
+        const QPoint origin = overlay.selection().topLeft();
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QCOMPARE(overlay.selection().size(), size);
+        QCOMPARE(overlay.selection().topLeft(), origin + QPoint(1, 0));
+        QTest::keyClick(&overlay, Qt::Key_Right, Qt::ShiftModifier);
+        QCOMPARE(overlay.selection().width(), size.width() + 1);
+        verifySelectionRatio(overlay.selection(), {16, 9}, {1600, 1200});
+        QTest::keyClick(&overlay, Qt::Key_Right, Qt::AltModifier);
+        QCOMPARE(overlay.selection().size(), size);
+        ratioMouse(overlay, QEvent::MouseButtonPress, {450, 150}, Qt::ShiftModifier);
+        ratioMouse(overlay, QEvent::MouseButtonRelease, {450, 150}, Qt::ShiftModifier);
+        QCOMPARE(overlay.selection(), largestInscribedRatioRect({800, 200, 400, 400}, {16, 9}));
+    }
+    void ratioBarLayoutAndPanelGestures_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::addColumn<bool>("options");
+        for (int width : {320, 480, 565, 566, 618, 619, 800})
+            for (bool options : {false, true})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(width).arg(options)))
+                    << width << options;
+    }
+    void ratioBarLayoutAndPanelGestures()
+    {
+        using namespace waibusnap;
+        QFETCH(int, width);
+        QFETCH(bool, options);
+        auto frame = annotationFrame();
+        frame.display.logicalGeometry = {0, 0, width, 600};
+        frame.display.availableLogicalGeometry = {0, 25, width, 550};
+        frame.pixels = mosaicTestImage({width * 2, 1200});
+        frame.pixels.setDevicePixelRatio(2);
+        OverlayActions actions;
+        actions.recognizer = std::make_shared<OcrStub>();
+        SelectionOverlay overlay(frame, actions);
+        overlay.show();
+        dragLogical(overlay, {0, 0}, {width, 600});
+        if (options)
+            QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
+        auto* optionBar = overlay.findChild<QWidget*>(QStringLiteral("annotationOptionsBar"));
+        auto* bar = overlay.findChild<QWidget*>(QStringLiteral("ratioBar"));
+        QVERIFY(bar->isVisible());
+        QVERIFY(bar->width() <= toolbar->width());
+        QCOMPARE(bar->y(), toolbar->y() + toolbar->height() + 6 + (options ? 42 : 0));
+        QCOMPARE(bar->x(), toolbar->x());
+        const QRect bounds(0, 25, width, 550);
+        QVERIFY(bounds.contains(toolbar->geometry()));
+        QVERIFY(bounds.contains(bar->geometry()));
+        if (options)
+            QVERIFY(bounds.contains(optionBar->geometry()));
+        for (auto* control : bar->findChildren<QPushButton*>())
+        {
+            QCOMPARE(control->height(), 28);
+            QVERIFY(bar->rect().contains(control->geometry()));
+        }
+        if (width == 320)
+            QVERIFY(bar->height() > 36);
+        const QRect selected = overlay.selection();
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, {2, 2});
+        QCOMPARE(overlay.selection(), selected);
+        QCOMPARE(bar->cursor().shape(), Qt::ArrowCursor);
+        if (options)
+        {
+            QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+            QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {40, 40});
+            auto* edit =
+                overlay.findChild<AnnotationTextEdit*>(QStringLiteral("annotationTextEditor"));
+            QVERIFY(edit && edit->isVisible());
+            edit->setPlainText(QStringLiteral("比例面板提交文本"));
+            QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, {2, 2});
+            QVERIFY(!edit->isVisible());
+            QCOMPARE(overlay.annotations().last().text, QStringLiteral("比例面板提交文本"));
+            QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        }
+        overlay.activateWindow();
+        overlay.setFocus();
+        QTRY_VERIFY(overlay.hasFocus());
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        QVERIFY(overlay.magnifierVisible());
+        QVERIFY(!overlay.magnifierRect().intersects(bar->geometry()));
+        QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        QVERIFY(bar->isVisible());
+        QTest::mouseClick(button(overlay, "ratioOption1Button"), Qt::LeftButton);
+        QVERIFY(overlay.isTextMode());
+        QTRY_VERIFY(!overlay.isRecognizingText());
+        auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
+        if (status->isVisible())
+        {
+            QVERIFY(!status->geometry().intersects(toolbar->geometry()));
+            QVERIFY(!status->geometry().intersects(bar->geometry()));
+        }
+    }
+    void ratioAllDisabledOnlyFree()
+    {
+        using namespace waibusnap;
+        OverlayActions actions;
+        actions.ratios = {{}, defaultCaptureRatios(), {}};
+        SelectionOverlay overlay(annotationFrame(), actions);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        auto* bar = overlay.findChild<QWidget*>(QStringLiteral("ratioBar"));
+        QCOMPARE(bar->findChildren<QPushButton*>().size(), 1);
+        QVERIFY(button(overlay, "ratioFreeButton")->isChecked());
+        QVERIFY(!button(overlay, "ratioButton")->toolTip().contains(QStringLiteral("按住")));
+        ratioMouse(overlay, QEvent::MouseButtonPress, {420, 100}, Qt::ShiftModifier);
+        ratioMouse(overlay, QEvent::MouseButtonRelease, {580, 160}, Qt::ShiftModifier);
+        QCOMPARE(overlay.selection().size(), QSize(320, 120));
+        QVERIFY(bar->isVisible());
+    }
+    void ratioSettingsDialogRoundTrip()
+    {
+        using namespace waibusnap;
+        AutostartStub autostart;
+        CaptureRatioSettings saved;
+        int saves = 0;
+        SaveSettingsActions actions;
+        actions.saveRatios = [&](const CaptureRatioSettings& ratios)
+        {
+            ++saves;
+            saved = ratios;
+            return QString();
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions, autostart.actions());
+        dialog.show();
+        const auto findButton = [&dialog](const char* name)
+        { return dialog.findChild<QPushButton*>(QString::fromLatin1(name)); };
+        auto* quick = dialog.findChild<QComboBox*>(QStringLiteral("quickRatioCombo"));
+        auto* wide = dialog.findChild<QDoubleSpinBox*>(QStringLiteral("ratioWidthInput"));
+        auto* high = dialog.findChild<QDoubleSpinBox*>(QStringLiteral("ratioHeightInput"));
+        auto* status = dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"));
+        auto* list = dialog.findChild<QWidget*>(QStringLiteral("ratioList"));
+        auto* scroll = qobject_cast<QScrollArea*>(list->parentWidget()->parentWidget());
+        QVERIFY(scroll);
+        QVERIFY(!scroll->geometry().intersects(wide->geometry()));
+        auto* group = scroll->parentWidget();
+        const QRect groupRect(group->mapTo(&dialog, QPoint()), group->size());
+        auto* saveButton = findButton("saveSettingsButton");
+        const QRect saveRect(saveButton->mapTo(&dialog, QPoint()), saveButton->size());
+        QVERIFY(dialog.rect().contains(groupRect));
+        QVERIFY(!groupRect.intersects(saveRect));
+        QCOMPARE(quick->count(), 8);
+        QCOMPARE(quick->currentText(), QStringLiteral("1:1"));
+        QCOMPARE(wide->minimum(), 0.01);
+        QCOMPARE(wide->maximum(), 999.99);
+        QCOMPARE(wide->decimals(), 2);
+        QCOMPARE(wide->singleStep(), 0.1);
+        wide->setValue(32);
+        high->setValue(18);
+        QTest::mouseClick(findButton("ratioAddButton"), Qt::LeftButton);
+        QCOMPARE(status->text(), QStringLiteral("该比例已存在。"));
+        wide->setValue(5);
+        high->setValue(4);
+        QTest::mouseClick(findButton("ratioAddButton"), Qt::LeftButton);
+        QCOMPARE(quick->count(), 9);
+        wide->setValue(7);
+        high->setValue(4);
+        QTest::mouseClick(findButton("ratioAddButton"), Qt::LeftButton);
+        QCOMPARE(quick->count(), 10);
+        // 模拟未完成的输入，避免 spinbox 在失焦时先自动纠正为合法值。
+        wide->findChild<QLineEdit*>()->setText(QStringLiteral(""));
+        findButton("ratioAddButton")->click();
+        QCOMPARE(status->text(), QStringLiteral("比例数值需为 0.01–999.99。"));
+        wide->setValue(1);
+        dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle0"))->setChecked(false);
+        QCOMPARE(quick->currentText(), QStringLiteral("16:9"));
+        quick->setCurrentText(QStringLiteral("3:4"));
+        dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle4"))->setChecked(false);
+        QCOMPARE(quick->currentText(), QStringLiteral("16:9"));
+        QTest::mouseClick(findButton("ratioDelete1"), Qt::LeftButton);
+        QCOMPARE(quick->currentText(), QStringLiteral("9:16"));
+        // 5:4、7:4 的添加顺序以及各自启停在恢复默认时保持。
+        dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle7"))->setChecked(false);
+        QTest::mouseClick(findButton("ratioRestoreButton"), Qt::LeftButton);
+        QCOMPARE(quick->count(), 9);
+        QVERIFY(dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle0"))->isChecked());
+        QVERIFY(dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle1"))->isChecked());
+        QVERIFY(!dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle8"))->isChecked());
+        quick->setCurrentText(QStringLiteral("7:4"));
+        QCOMPARE(saves, 0);
+        QTest::mouseClick(findButton("saveSettingsButton"), Qt::LeftButton);
+        QCOMPARE(saves, 1);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QCOMPARE(serializeRatioList(saved.enabled),
+                 QStringLiteral("1:1,16:9,9:16,4:3,3:4,3:2,2:3,2.35:1,7:4"));
+        QCOMPARE(serializeRatioList(saved.disabled), QStringLiteral("5:4"));
+        QCOMPARE(formatAspectRatio(*saved.quick), QStringLiteral("7:4"));
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        QCOMPARE(serializeRatioList(settings.loadCaptureRatios().enabled),
+                 serializeRatioList(defaultCaptureRatios()));
+        QVERIFY(!QFileInfo::exists(path));
+        QVERIFY(settings.saveHotkey(QKeySequence(Qt::Key_F2)).isEmpty());
+        QVERIFY(settings.saveCaptureRatios(saved).isEmpty());
+        const auto loaded = settings.loadCaptureRatios();
+        QCOMPARE(serializeRatioList(loaded.enabled), serializeRatioList(saved.enabled));
+        QCOMPARE(serializeRatioList(loaded.disabled), serializeRatioList(saved.disabled));
+        QCOMPARE(formatAspectRatio(*loaded.quick), QStringLiteral("7:4"));
+        QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("[capture]\nratio.enabled=bad,1:1,16:9,32:18,1.001:1\nratio.disabled=2:2,3:4,0:"
+                   "1\nratio.quick=3:4\n");
+        file.close();
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray damaged = file.readAll();
+        file.close();
+        const auto repaired = settings.loadCaptureRatios();
+        QCOMPARE(serializeRatioList(repaired.enabled), QStringLiteral("1:1,16:9"));
+        QCOMPARE(serializeRatioList(repaired.disabled), QStringLiteral("3:4"));
+        QCOMPARE(formatAspectRatio(*repaired.quick), QStringLiteral("1:1"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), damaged);
+        file.close();
+        QVERIFY(settings.saveCaptureRatios({{}, {{1, 1}}, {}}).isEmpty());
+        QVERIFY(settings.loadCaptureRatios().enabled.isEmpty());
+        QVERIFY(!settings.loadCaptureRatios().quick);
+        const auto blocked = temporary.filePath(QStringLiteral("blocked"));
+        QFile blocker(blocked);
+        QVERIFY(blocker.open(QIODevice::WriteOnly));
+        blocker.close();
+        QVERIFY(AppSettings(QDir(blocked).filePath(QStringLiteral("settings.ini")))
+                    .saveCaptureRatios(saved)
+                    .contains(QStringLiteral("重启后可能无法保留")));
+    }
+    void ratioSettingsCancelEmptyAndSaveFailure()
+    {
+        using namespace waibusnap;
+        AutostartStub autostart;
+        int saves = 0;
+        SaveSettingsActions actions;
+        actions.ratios = {{}, {{16, 9}}, {}};
+        actions.saveRatios = [&](const CaptureRatioSettings&)
+        {
+            ++saves;
+            return QStringLiteral("比例写入失败");
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions, autostart.actions());
+        dialog.show();
+        auto* quick = dialog.findChild<QComboBox*>(QStringLiteral("quickRatioCombo"));
+        auto* empty = dialog.findChild<QLabel*>(QStringLiteral("ratioEmptyNotice"));
+        QVERIFY(!quick->isEnabled() && empty->isVisible());
+        dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle0"))->setChecked(true);
+        QVERIFY(quick->isEnabled() && !empty->isVisible());
+        QCOMPARE(quick->currentText(), QStringLiteral("16:9"));
+        QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                          Qt::LeftButton);
+        QCOMPARE(saves, 1);
+        QVERIFY(dialog.isVisible());
+        QCOMPARE(dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"))->text(),
+                 QStringLiteral("比例写入失败"));
+        QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("cancelSettingsButton")),
+                          Qt::LeftButton);
+        QCOMPARE(saves, 1);
+        QCOMPARE(dialog.result(), int(QDialog::Rejected));
+        SettingsDialog cancel(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions, autostart.actions());
+        cancel.show();
+        cancel.findChild<QCheckBox*>(QStringLiteral("ratioToggle0"))->setChecked(true);
+        QTest::keyClick(&cancel, Qt::Key_Escape);
+        QCOMPARE(saves, 1);
+        QCOMPARE(cancel.result(), int(QDialog::Rejected));
+    }
     void toolbarStaysReachableWithSystemChrome_data()
     {
         QTest::addColumn<QRect>("available");
@@ -2798,7 +3285,8 @@ class StartupSmokeTest final : public QObject
     void coverOverlayToolbarFitsNarrowScreens_data()
     {
         QTest::addColumn<int>("screenWidth");
-        for (int width : {320, 480, 533, 534, 559, 560, 586, 587, 639, 640, 720, 800})
+        for (int width :
+             {320, 480, 533, 534, 559, 560, 565, 566, 586, 587, 618, 619, 639, 640, 720, 800})
             QTest::newRow(qPrintable(QString::number(width))) << width;
     }
     void coverOverlayToolbarFitsNarrowScreens()
@@ -2849,11 +3337,11 @@ class StartupSmokeTest final : public QObject
         auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
         QVERIFY(status->isVisible());
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
-        QCOMPARE(toolbar->height(), screenWidth >= 534 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 566 ? 44 : screenWidth > 320 ? 76 : 140);
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
         QTRY_VERIFY(!overlay.isRecognizingText());
         QVERIFY(button(overlay, "extractAllTextButton")->isVisible());
-        QCOMPARE(toolbar->height(), screenWidth >= 587 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 619 ? 44 : screenWidth > 320 ? 76 : 140);
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
         for (auto* control : toolbar->findChildren<QPushButton*>())
         {

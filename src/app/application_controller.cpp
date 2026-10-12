@@ -201,7 +201,10 @@ void ApplicationController::openSettings()
         {settings_.loadSavePreferences(),
          [this](const SavePreferences& preferences)
          { return settings_.saveSavePreferences(preferences); },
-         {}},
+         {},
+         settings_.loadCaptureRatios(),
+         [this](const CaptureRatioSettings& ratios)
+         { return settings_.saveCaptureRatios(ratios); }},
         autostartActions_);
     dialog.exec();
     settingsOpen_ = false;
@@ -268,6 +271,7 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     const auto localWindows =
         localWindowRects(listed.windows, result.frame.display.logicalGeometry);
     OverlayActions actions;
+    actions.ratios = settings_.loadCaptureRatios();
     actions.loadSavePreferences = [this] { return settings_.loadSavePreferences(); };
     actions.pinImage = [this](const QImage& image)
     {

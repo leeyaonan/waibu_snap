@@ -137,6 +137,12 @@ static void drawIcon(QPainter& p, int id, const QRectF& box, const QColor& fg, c
             arrowHead(p, b, std::atan2(b.y() - a.y(), b.x() - a.x()), 3.6);
         }
         break;
+    case 19: // 比例（圆角矩形 + 水平双向箭头）
+        p.drawRoundedRect(QRectF(2.5, 4.5, 13, 9), 2, 2);
+        p.drawLine(QPointF(6.2, 9), QPointF(11.8, 9));
+        arrowHead(p, QPointF(5.5, 9), pi, 3.2);
+        arrowHead(p, QPointF(12.5, 9), 0.0, 3.2);
+        break;
     }
     p.restore();
 }
