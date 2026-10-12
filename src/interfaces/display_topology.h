@@ -11,6 +11,8 @@ struct DisplayTarget
     QRect logicalGeometry;
     qreal devicePixelRatio = 1.0;
     quint64 layoutVersion = 0;
+    // 捕获时刻的系统可用区；空值回退为 logicalGeometry。
+    QRect availableLogicalGeometry;
 };
 struct DisplayResult
 {

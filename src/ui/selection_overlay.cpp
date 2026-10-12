@@ -1,19 +1,18 @@
 #include "ui/selection_overlay.h"
 #include "core/selection_assistance.h"
 #include "core/window_snapping.h"
+#include "interfaces/overlay_window_behavior.h"
 #include "output/annotation_renderer.h"
 #include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
 #include "ui/annotation_text_edit.h"
 #include "ui/ocr_dialog.h"
 #include "ui/text_recognition_task.h"
+#include "ui/toolbar_icons.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
-#include <QComboBox>
 #include <QFocusEvent>
-#include <QGridLayout>
-#include <QHBoxLayout>
 #include <QInputMethod>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -22,7 +21,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QShortcut>
-#include <QVBoxLayout>
+#include <QShowEvent>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -73,6 +72,15 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
     magnifierTimeout_.setTimerType(Qt::PreciseTimer);
     connect(&magnifierTimeout_, &QTimer::timeout, this, &SelectionOverlay::hideMagnifier);
 }
+void SelectionOverlay::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (!overlayLevelRaised_)
+    {
+        raiseOverlayAboveSystemChrome(windowHandle());
+        overlayLevelRaised_ = true;
+    }
+}
 void SelectionOverlay::ensureToolbar()
 {
     if (toolbar_)
@@ -81,19 +89,45 @@ void SelectionOverlay::ensureToolbar()
     // 选区成立后才创建工具和快捷键，未选区首帧不初始化标注控件 / 文本排版。
     toolbar_ = new QWidget(this);
     toolbar_->setObjectName(QStringLiteral("selectionToolbar"));
-    toolbar_->setCursor(Qt::ArrowCursor);
-    toolbar_->setFixedWidth(std::min(720, width()));
-    toolbar_->setStyleSheet(QStringLiteral(
-        "QWidget#selectionToolbar { background: #202020; border-radius: 6px; }"
-        "QPushButton { color: white; background: #404040; padding: 6px; border-radius: 4px; }"
-        "QPushButton:hover { background: #705030; }"
+    optionsBar_ = new QWidget(this);
+    optionsBar_->setObjectName(QStringLiteral("annotationOptionsBar"));
+    const QString buttonsStyle = QStringLiteral(
+        "QPushButton { background: transparent; padding: 0; border: none; border-radius: 6px; }"
+        "QPushButton:hover { background: #3a3a3a; }"
         "QPushButton:checked { background: #a65316; }"
-        "QPushButton:disabled { color: #888888; background: #303030; }"
-        "QComboBox { color: white; background: #404040; padding: 3px; }"
-        "QComboBox QAbstractItemView { color: white; background: #303030; }"
-        "QLabel { color: white; }"));
-    auto* layout = new QVBoxLayout(toolbar_);
-    auto* tools = new QGridLayout;
+        "QPushButton:disabled { background: transparent; }");
+    toolbar_->setStyleSheet(
+        QStringLiteral("QWidget#selectionToolbar { background: #202020; border: 1px solid "
+                       "#3a3a3a; border-radius: 10px; }") +
+        buttonsStyle);
+    optionsBar_->setStyleSheet(
+        QStringLiteral("QWidget#annotationOptionsBar { background: #202020; border: 1px solid "
+                       "#3a3a3a; border-radius: 8px; }") +
+        buttonsStyle);
+    const auto makeButton =
+        [](QWidget* parent, const QString& object, const QString& tip, ToolbarIcon icon)
+    {
+        auto* button = new QPushButton(parent);
+        button->setText(QString());
+        button->setObjectName(object);
+        button->setToolTip(tip);
+        button->setAccessibleName(tip);
+        button->setIcon(toolbarIcon(icon));
+        button->setIconSize(QSize(18, 18));
+        button->setFixedSize(28, 28);
+        button->setFocusPolicy(Qt::NoFocus);
+        return button;
+    };
+    const auto makeSeparator = [](QWidget* parent)
+    {
+        auto* separator = new QLabel(parent);
+        separator->setStyleSheet(QStringLiteral("background: #4a4a4a; border: none;"));
+        separator->setFixedSize(1, 22);
+        return separator;
+    };
+    for (int index = 0; index < 3; ++index)
+        separators_.append(makeSeparator(toolbar_));
+    optionsSeparator_ = makeSeparator(optionsBar_);
     const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
                              QStringLiteral("直线"), QStringLiteral("箭头"),
                              QStringLiteral("画笔"), QStringLiteral("文本"),
@@ -103,132 +137,249 @@ void SelectionOverlay::ensureToolbar()
         QStringLiteral("lineToolButton"),      QStringLiteral("arrowToolButton"),
         QStringLiteral("freehandToolButton"),  QStringLiteral("textToolButton"),
         QStringLiteral("coverToolButton"),     QStringLiteral("mosaicToolButton")};
-    const int columns = width() >= 640 ? 9 : 3;
     for (int index = 0; index < 8; ++index)
     {
-        auto* button = new QPushButton(names[index], toolbar_);
-        button->setObjectName(objects[index]);
-        button->setToolTip(names[index] + QStringLiteral("：点击启用，再次点击恢复选区调整"));
+        QString tip = names[index] + QStringLiteral("：点击启用，再次点击恢复选区调整");
         if (index == static_cast<int>(AnnotationType::Mosaic))
-        {
-            const auto notice = QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖");
-            button->setToolTip(notice);
-            button->setAccessibleName(notice);
-        }
+            tip = QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖");
+        auto* button = makeButton(toolbar_, objects[index], tip, static_cast<ToolbarIcon>(index));
         button->setCheckable(true);
-        button->setFocusPolicy(Qt::NoFocus);
         toolButtons_.append(button);
-        tools->addWidget(button, index / columns, index % columns);
         connect(button, &QPushButton::clicked, this,
                 [this, index] { activateTool(static_cast<AnnotationType>(index)); });
     }
-    ocrButton_ = new QPushButton(QStringLiteral("取字"), toolbar_);
-    ocrButton_->setObjectName(QStringLiteral("ocrToolButton"));
-    ocrButton_->setToolTip(QStringLiteral("取字（文字识别）"));
+    ocrButton_ = makeButton(toolbar_, QStringLiteral("ocrToolButton"),
+                            QStringLiteral("取字（文字识别）"), ToolbarIcon::Ocr);
     ocrButton_->setCheckable(true);
-    ocrButton_->setFocusPolicy(Qt::NoFocus);
-    tools->addWidget(ocrButton_, 8 / columns, 8 % columns);
     connect(ocrButton_, &QPushButton::clicked, this, &SelectionOverlay::toggleTextMode);
-    layout->addLayout(tools);
-    auto* options = new QHBoxLayout;
-    auto* colors = new QComboBox(toolbar_);
-    colors->setObjectName(QStringLiteral("annotationColorCombo"));
-    colors->setAccessibleName(QStringLiteral("标注颜色"));
-    colors->setToolTip(QStringLiteral("标注颜色"));
-    const QString colorNames[] = {QStringLiteral("红"), QStringLiteral("黄"), QStringLiteral("蓝")};
-    for (int index = 0; index < 3; ++index)
-    {
-        QPixmap swatch(14, 14);
-        swatch.fill(annotationColors()[index]);
-        colors->addItem(QIcon(swatch), QStringLiteral("颜色：") + colorNames[index]);
-    }
-    auto* widths = new QComboBox(toolbar_);
-    widths->setObjectName(QStringLiteral("annotationWidthCombo"));
-    widths->setAccessibleName(QStringLiteral("图形线宽（物理像素）"));
-    widths->setToolTip(QStringLiteral("图形线宽（物理像素）"));
-    const QString levels[] = {QStringLiteral("细"), QStringLiteral("中"), QStringLiteral("粗")};
-    for (int index = 0; index < 3; ++index)
-        widths->addItem(
-            QStringLiteral("%1 %2px").arg(levels[index]).arg(annotationLineWidths[index]));
-    widths->setCurrentIndex(1);
-    auto* sizes = new QComboBox(toolbar_);
-    sizes->setObjectName(QStringLiteral("annotationTextSizeCombo"));
-    sizes->setAccessibleName(QStringLiteral("文本字号（物理像素）"));
-    sizes->setToolTip(QStringLiteral("文本字号（物理像素）"));
-    for (int size : annotationTextSizes)
-        sizes->addItem(QStringLiteral("字 %1px").arg(size));
-    sizes->setCurrentIndex(1);
-    sizes->setEnabled(false);
-    options->addWidget(colors);
-    options->addWidget(widths);
-    options->addWidget(sizes);
-    layout->addLayout(options);
-    connect(colors, &QComboBox::currentIndexChanged, this,
-            [this](int index) { style_.color = annotationColors()[index]; });
-    connect(widths, &QComboBox::currentIndexChanged, this,
-            [this](int index) { style_.lineWidth = annotationLineWidths[index]; });
-    connect(sizes, &QComboBox::currentIndexChanged, this,
-            [this](int index) { style_.textSize = annotationTextSizes[index]; });
-    const auto makeButton = [this](const QString& name, const QString& object)
-    {
-        auto* button = new QPushButton(name, toolbar_);
-        button->setObjectName(object);
-        button->setFocusPolicy(Qt::NoFocus);
-        return button;
-    };
-    auto* buttons = new QHBoxLayout;
-    undoButton_ = makeButton(QStringLiteral("撤销"), QStringLiteral("undoAnnotationButton"));
-    redoButton_ = makeButton(QStringLiteral("重做"), QStringLiteral("redoAnnotationButton"));
-    auto* copy = makeButton(QStringLiteral("复制"), QStringLiteral("copyButton"));
-    auto* save = makeButton(QStringLiteral("保存"), QStringLiteral("saveButton"));
-    auto* pin = makeButton(QStringLiteral("钉到屏幕"), QStringLiteral("pinButton"));
-    auto* cancel = makeButton(QStringLiteral("取消"), QStringLiteral("cancelButton"));
-    for (auto* button : {undoButton_, redoButton_, copy, save, pin, cancel})
-        buttons->addWidget(button);
-    extractAllTextButton_ =
-        makeButton(QStringLiteral("提取全文"), QStringLiteral("extractAllTextButton"));
+    const QString actionObjects[] = {QStringLiteral("undoAnnotationButton"),
+                                     QStringLiteral("redoAnnotationButton"),
+                                     QStringLiteral("copyButton"),
+                                     QStringLiteral("saveButton"),
+                                     QStringLiteral("pinButton"),
+                                     QStringLiteral("cancelButton")};
+    const QString actionTips[] = {
+        QStringLiteral("撤销标注（%1）")
+            .arg(QKeySequence(QKeySequence::Undo).toString(QKeySequence::NativeText)),
+        QStringLiteral("重做标注（%1）")
+            .arg(QKeySequence(QKeySequence::Redo).toString(QKeySequence::NativeText)),
+        QStringLiteral("复制（%1）")
+            .arg(QKeySequence(QKeySequence::Copy).toString(QKeySequence::NativeText)),
+        QStringLiteral("保存（快速保存）"),
+        QStringLiteral("钉到屏幕"),
+        QStringLiteral("取消（Esc）")};
+    for (int index = 0; index < 6; ++index)
+        actionButtons_.append(makeButton(toolbar_, actionObjects[index], actionTips[index],
+                                         static_cast<ToolbarIcon>(12 + index)));
+    undoButton_ = actionButtons_[0];
+    redoButton_ = actionButtons_[1];
+    extractAllTextButton_ = makeButton(toolbar_, QStringLiteral("extractAllTextButton"),
+                                       QStringLiteral("提取全文"), ToolbarIcon::ExtractAllText);
     extractAllTextButton_->hide();
-    buttons->addWidget(extractAllTextButton_);
     connect(extractAllTextButton_, &QPushButton::clicked, this, &SelectionOverlay::openOcrDialog);
-    layout->addLayout(buttons);
     copyShortcut_ = new QShortcut(QKeySequence::Copy, this);
     connect(copyShortcut_, &QShortcut::activated, this, &SelectionOverlay::copyShortcut);
     undoShortcut_ = new QShortcut(QKeySequence::Undo, this);
     redoShortcut_ = new QShortcut(QKeySequence::Redo, this);
-    undoButton_->setToolTip(
-        QStringLiteral("撤销标注（%1）")
-            .arg(QKeySequence(QKeySequence::Undo).toString(QKeySequence::NativeText)));
-    redoButton_->setToolTip(
-        QStringLiteral("重做标注（%1）")
-            .arg(QKeySequence(QKeySequence::Redo).toString(QKeySequence::NativeText)));
     connect(undoShortcut_, &QShortcut::activated, this, &SelectionOverlay::undoAnnotation);
     connect(redoShortcut_, &QShortcut::activated, this, &SelectionOverlay::redoAnnotation);
     connect(undoButton_, &QPushButton::clicked, this, &SelectionOverlay::undoAnnotation);
     connect(redoButton_, &QPushButton::clicked, this, &SelectionOverlay::redoAnnotation);
-    status_ = new QLabel(toolbar_);
+    connect(actionButtons_[2], &QPushButton::clicked, this, &SelectionOverlay::copySelection);
+    connect(actionButtons_[3], &QPushButton::clicked, this, &SelectionOverlay::saveSelection);
+    connect(actionButtons_[4], &QPushButton::clicked, this, &SelectionOverlay::pinSelection);
+    connect(actionButtons_[5], &QPushButton::clicked, this,
+            [this] { complete(cancelledSessionOutcome); });
+    const QString colorNames[] = {QStringLiteral("红"), QStringLiteral("黄"), QStringLiteral("蓝")};
+    const QString levels[] = {QStringLiteral("细"), QStringLiteral("中"), QStringLiteral("粗")};
+    const QString sizeNames[] = {QStringLiteral("小"), QStringLiteral("中"), QStringLiteral("大")};
+    for (int index = 0; index < 3; ++index)
+    {
+        auto* color = makeButton(optionsBar_, QStringLiteral("annotationColor%1Button").arg(index),
+                                 colorNames[index], ToolbarIcon::Color);
+        color->setIcon(toolbarIcon(ToolbarIcon::Color, annotationColors()[index]));
+        auto* width = makeButton(
+            optionsBar_, QStringLiteral("annotationWidth%1Button").arg(index),
+            QStringLiteral("%1 %2 像素").arg(levels[index]).arg(annotationLineWidths[index]),
+            ToolbarIcon::LineWidth);
+        width->setIcon(toolbarIcon(ToolbarIcon::LineWidth, {}, annotationLineWidths[index] / 2.0));
+        auto* size = makeButton(
+            optionsBar_, QStringLiteral("annotationTextSize%1Button").arg(index),
+            QStringLiteral("%1 %2 像素").arg(sizeNames[index]).arg(annotationTextSizes[index]),
+            ToolbarIcon::TextSize);
+        const qreal scales[] = {0.72, 0.86, 1.0};
+        size->setIcon(toolbarIcon(ToolbarIcon::TextSize, {}, scales[index]));
+        for (auto* button : {color, width, size})
+        {
+            button->setCheckable(true);
+            button->setFocusPolicy(Qt::StrongFocus);
+        }
+        colorButtons_.append(color);
+        widthButtons_.append(width);
+        textSizeButtons_.append(size);
+        connect(color, &QPushButton::clicked, this,
+                [this, index]
+                {
+                    finishText(true, false);
+                    style_.color = annotationColors()[index];
+                    updateToolbar();
+                });
+        connect(width, &QPushButton::clicked, this,
+                [this, index]
+                {
+                    style_.lineWidth = annotationLineWidths[index];
+                    updateToolbar();
+                });
+        connect(size, &QPushButton::clicked, this,
+                [this, index]
+                {
+                    finishText(true, false);
+                    style_.textSize = annotationTextSizes[index];
+                    updateToolbar();
+                });
+    }
+    optionsBar_->hide();
+    status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("outputStatus"));
     status_->setWordWrap(true);
     status_->setTextFormat(Qt::PlainText);
+    status_->setIndent(0);
+    status_->setStyleSheet(QStringLiteral(
+        "background: #202020; color: #e8e8e8; border-radius: 8px; padding: 0 10px;"));
     status_->hide();
-    layout->addWidget(status_);
-    connect(copy, &QPushButton::clicked, this, &SelectionOverlay::copySelection);
-    connect(save, &QPushButton::clicked, this, &SelectionOverlay::saveSelection);
-    connect(pin, &QPushButton::clicked, this, &SelectionOverlay::pinSelection);
-    connect(cancel, &QPushButton::clicked, this, [this] { complete(cancelledSessionOutcome); });
-    for (QWidget* widget : toolbar_->findChildren<QWidget*>())
+    for (auto* panel : {toolbar_, optionsBar_, static_cast<QWidget*>(status_)})
     {
-        widget->setMouseTracking(true);
-        widget->installEventFilter(this);
+        panel->setCursor(Qt::ArrowCursor);
+        panel->setMouseTracking(true);
+        panel->installEventFilter(this);
+        for (QWidget* widget : panel->findChildren<QWidget*>())
+        {
+            widget->setMouseTracking(true);
+            widget->installEventFilter(this);
+        }
     }
-    toolbar_->setMouseTracking(true);
-    toolbar_->installEventFilter(this);
+}
+QRect SelectionOverlay::availableRect() const
+{
+    const QRect available = frame_.display.availableLogicalGeometry.isEmpty()
+                                ? frame_.display.logicalGeometry
+                                : frame_.display.availableLogicalGeometry;
+    const QRect local = available.translated(-frame_.display.logicalGeometry.topLeft()) & rect();
+    return local.isEmpty() ? rect() : local;
+}
+void SelectionOverlay::layoutToolbar(int availableWidth)
+{
+    for (auto* separator : separators_)
+        separator->hide();
+    QVector<QWidget*> tools;
+    for (auto* tool : toolButtons_)
+        tools.append(tool);
+    tools.append(ocrButton_);
+    QVector<QWidget*> actions;
+    if (textMode_)
+        actions << extractAllTextButton_ << separators_[1];
+    actions << undoButton_ << redoButton_ << separators_[2];
+    for (int index = 2; index < actionButtons_.size(); ++index)
+        actions.append(actionButtons_[index]);
+    const auto rowWidth = [](const QVector<QWidget*>& row)
+    {
+        int result = 16 - 4;
+        for (auto* widget : row)
+            result += (qobject_cast<QLabel*>(widget) ? 17 : 28) + 4;
+        return result;
+    };
+    const auto placeRow = [](const QVector<QWidget*>& row, int y)
+    {
+        int x = 8;
+        for (auto* widget : row)
+        {
+            const bool separator = qobject_cast<QLabel*>(widget);
+            widget->move(x + (separator ? 8 : 0), y + (separator ? 3 : 0));
+            widget->show();
+            x += (separator ? 17 : 28) + 4;
+        }
+    };
+    QVector<QWidget*> single = tools;
+    single << separators_[0];
+    single += actions;
+    if (rowWidth(single) <= availableWidth)
+    {
+        toolbar_->setFixedSize(rowWidth(single), 44);
+        placeRow(single, 8);
+    }
+    else if (availableWidth > 320 && rowWidth(tools) <= availableWidth)
+    {
+        toolbar_->setFixedSize(std::max(rowWidth(tools), rowWidth(actions)), 76);
+        placeRow(tools, 8);
+        placeRow(actions, 40);
+    }
+    else
+    {
+        // 320 逻辑像素使用三列工具网格，操作组仍紧凑成行。
+        toolbar_->setFixedSize(std::max(108, rowWidth(actions)), 140);
+        for (int index = 0; index < tools.size(); ++index)
+        {
+            tools[index]->move(8 + index % 3 * 32, 8 + index / 3 * 32);
+            tools[index]->show();
+        }
+        placeRow(actions, 104);
+    }
+}
+void SelectionOverlay::updateOptionsBar()
+{
+    const bool colors = !textMode_ && activeTool_ && activeTool_ != AnnotationType::Mosaic;
+    const bool widths =
+        colors && activeTool_ != AnnotationType::Text && activeTool_ != AnnotationType::Cover;
+    const bool sizes = colors && activeTool_ == AnnotationType::Text;
+    for (int index = 0; index < 3; ++index)
+    {
+        colorButtons_[index]->setVisible(colors);
+        widthButtons_[index]->setVisible(widths);
+        textSizeButtons_[index]->setVisible(sizes);
+        colorButtons_[index]->setChecked(style_.color == annotationColors()[index]);
+        widthButtons_[index]->setChecked(style_.lineWidth == annotationLineWidths[index]);
+        textSizeButtons_[index]->setChecked(style_.textSize == annotationTextSizes[index]);
+        colorButtons_[index]->move(4 + index * 32, 4);
+        widthButtons_[index]->move(121 + index * 32, 4);
+        textSizeButtons_[index]->move(121 + index * 32, 4);
+    }
+    optionsSeparator_->setVisible(widths || sizes);
+    optionsSeparator_->move(108, 7);
+    optionsBar_->setFixedSize(widths || sizes ? 217 : 100, 36);
+    optionsBar_->setVisible(colors);
+}
+void SelectionOverlay::positionStatus()
+{
+    if (status_->isHidden())
+        return;
+    const QRect bounds = availableRect();
+    const int maximumWidth = std::min(toolbar_->width(), bounds.width());
+    const int naturalWidth = status_->fontMetrics().horizontalAdvance(status_->text()) + 20;
+    const int pillWidth = std::min(maximumWidth, naturalWidth);
+    status_->setFixedWidth(pillWidth);
+    // 由 QLabel 按实际样式计算换行高度，避免字体度量与控件排版差异裁掉末行。
+    const int pillHeight = std::max(26, status_->heightForWidth(pillWidth) + 8);
+    status_->setFixedHeight(pillHeight);
+    const int x = std::clamp(toolbar_->geometry().right() + 1 - pillWidth, bounds.left(),
+                             std::max(bounds.left(), bounds.right() + 1 - pillWidth));
+    const int clusterBottom =
+        optionsBar_->isHidden() ? toolbar_->geometry().bottom() : optionsBar_->geometry().bottom();
+    int y = clusterBottom + 11;
+    if (y + pillHeight > bounds.bottom() + 1)
+        y = toolbar_->y() - pillHeight - 10;
+    y = std::clamp(y, bounds.top(), std::max(bounds.top(), bounds.bottom() + 1 - pillHeight));
+    status_->move(x, y);
 }
 void SelectionOverlay::updateToolbar()
 {
     if (finished_ || selection_.isEmpty() || dragMode_ == DragMode::Create)
     {
         if (toolbar_)
+        {
             toolbar_->hide();
+            optionsBar_->hide();
+            status_->hide();
+        }
         if (undoShortcut_)
         {
             undoShortcut_->setEnabled(false);
@@ -247,24 +398,28 @@ void SelectionOverlay::updateToolbar()
     copyShortcut_->setEnabled(!editingText && !saveDialogOpen_ && !ocrDialog_);
     ocrButton_->setChecked(textMode_);
     extractAllTextButton_->setVisible(textMode_);
-    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"))
-        ->setEnabled(!textMode_ && activeTool_ == AnnotationType::Text);
-    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationWidthCombo"))
-        ->setEnabled(!textMode_ && activeTool_ != AnnotationType::Text &&
-                     activeTool_ != AnnotationType::Cover && activeTool_ != AnnotationType::Mosaic);
-    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationColorCombo"))
-        ->setEnabled(!textMode_ && activeTool_ != AnnotationType::Mosaic);
-    toolbar_->adjustSize();
+    const QRect bounds = availableRect();
+    layoutToolbar(bounds.width());
+    updateOptionsBar();
+    const int clusterHeight = toolbar_->height() + (optionsBar_->isHidden() ? 0 : 42);
     const QRectF region = logicalSelection();
-    const int x = std::clamp(qRound(region.right()) - toolbar_->width(), 0,
-                             std::max(0, width() - toolbar_->width()));
+    const int x = std::clamp(qRound(region.right()) - toolbar_->width(), bounds.left(),
+                             std::max(bounds.left(), bounds.right() + 1 - toolbar_->width()));
     int y = qRound(region.bottom()) + 10;
-    if (y + toolbar_->height() > height())
-        y = qRound(region.top()) - toolbar_->height() - 10;
-    y = std::clamp(y, 0, std::max(0, height() - toolbar_->height()));
+    if (y + clusterHeight > bounds.bottom() + 1)
+    {
+        y = qRound(region.top()) - clusterHeight - 10;
+        if (y < bounds.top())
+            y = bounds.bottom() + 1 - clusterHeight - 10;
+    }
+    y = std::clamp(y, bounds.top(), std::max(bounds.top(), bounds.bottom() + 1 - clusterHeight));
     toolbar_->move(x, y);
-    toolbar_->setEnabled(dragMode_ == DragMode::None && !saveDialogOpen_);
+    optionsBar_->move(x, y + toolbar_->height() + 6);
+    const bool enabled = dragMode_ == DragMode::None && !saveDialogOpen_;
+    toolbar_->setEnabled(enabled);
+    optionsBar_->setEnabled(enabled);
     toolbar_->show();
+    positionStatus();
 }
 void SelectionOverlay::showStatus(const QString& text, bool temporary)
 {
@@ -320,6 +475,7 @@ void SelectionOverlay::saveSelection()
     hideMagnifier();
     saveDialogOpen_ = true;
     toolbar_->setEnabled(false);
+    optionsBar_->setEnabled(false);
     QPointer<SelectionOverlay> self(this);
     const ImageSaveActions actions = actions_;
     const auto target = chooseImageSaveTarget(
@@ -802,8 +958,11 @@ QRect SelectionOverlay::magnifierRect() const
     const QSize panel(magnifierSample_.width() * magnifierCellSize + 8,
                       magnifierSample_.height() * magnifierCellSize + 32);
     const QPointF anchor = QPointF(magnifierAnchor_) / frame_.display.devicePixelRatio;
-    return placedMagnifier(anchor, panel, rect(),
-                           toolbar_ && toolbar_->isVisible() ? toolbar_->geometry() : QRect());
+    QRect obstacle;
+    for (auto* widget : {toolbar_, optionsBar_, static_cast<QWidget*>(status_)})
+        if (widget && widget->isVisible())
+            obstacle = obstacle.united(widget->geometry());
+    return placedMagnifier(anchor, panel, availableRect(), obstacle);
 }
 void SelectionOverlay::paintMagnifier(QPainter& painter)
 {
@@ -881,13 +1040,6 @@ void SelectionOverlay::activateTool(AnnotationType type)
     hideMagnifier();
     for (int index = 0; index < toolButtons_.size(); ++index)
         toolButtons_[index]->setChecked(activeTool_ == static_cast<AnnotationType>(index));
-    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationTextSizeCombo"))
-        ->setEnabled(activeTool_ == AnnotationType::Text);
-    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationWidthCombo"))
-        ->setEnabled(activeTool_ != AnnotationType::Text && activeTool_ != AnnotationType::Cover &&
-                     activeTool_ != AnnotationType::Mosaic);
-    toolbar_->findChild<QComboBox*>(QStringLiteral("annotationColorCombo"))
-        ->setEnabled(activeTool_ != AnnotationType::Mosaic);
     if (activeTool_ == AnnotationType::Mosaic && !mosaicNoticeShown_)
     {
         mosaicNoticeShown_ = true;
@@ -980,7 +1132,7 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
 }
 bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
 {
-    if ((watched == toolbar_ || qobject_cast<QLabel*>(watched)) &&
+    if ((watched == toolbar_ || watched == optionsBar_ || qobject_cast<QLabel*>(watched)) &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease))
     {
         // 空白 / 提示标签提交当前编辑并消化手势；按钮在 clicked 中提交，避免按下时移动工具栏。

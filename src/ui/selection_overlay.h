@@ -58,6 +58,7 @@ class SelectionOverlay final : public QWidget
 
   protected:
     void paintEvent(QPaintEvent*) override;
+    void showEvent(QShowEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseDoubleClickEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
@@ -90,6 +91,10 @@ class SelectionOverlay final : public QWidget
     void setSelection(QRect pixels);
     void ensureToolbar();
     void updateToolbar();
+    void layoutToolbar(int availableWidth);
+    void updateOptionsBar();
+    QRect availableRect() const;
+    void positionStatus();
     void markDirty();
     void activateTool(AnnotationType type);
     void updateAnnotation(QPointF position);
@@ -114,7 +119,15 @@ class SelectionOverlay final : public QWidget
     CaptureFrame frame_;
     OverlayActions actions_;
     QWidget* toolbar_ = nullptr;
+    QWidget* optionsBar_ = nullptr;
+    QVector<QPushButton*> colorButtons_;
+    QVector<QPushButton*> widthButtons_;
+    QVector<QPushButton*> textSizeButtons_;
+    QVector<QPushButton*> actionButtons_;
+    QVector<QLabel*> separators_;
+    QLabel* optionsSeparator_ = nullptr;
     QLabel* status_ = nullptr;
+    bool overlayLevelRaised_ = false;
     QTimer statusTimeout_;
     QTimer magnifierTimeout_;
     QPoint magnifierAnchor_;
