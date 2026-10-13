@@ -141,7 +141,7 @@ void ScrollControlBar::setNotice(const QString& text)
         return;
     notice_ = text;
     noticeTimeout_.stop();
-    if (text == QStringLiteral("滚动较快，部分画面已跳过。") ||
+    if (text == QStringLiteral("画面重叠不足或内容变化，部分帧未拼接。") ||
         text.startsWith(QStringLiteral("检测到另一方向")))
         noticeTimeout_.start(2500);
     refreshStatus();

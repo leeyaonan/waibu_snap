@@ -9,13 +9,16 @@ namespace waibusnap
 {
 namespace
 {
-constexpr int downsample = 4;
-constexpr int coarseStep = 8;
+constexpr int coarseStep = 1;
+constexpr int coarseScale = 2;
 constexpr int refinementRadius = 8;
 constexpr int ambiguityRadius = 2;
+constexpr int maximumBasins = 8;
 constexpr double maximumError = 9.0;
+constexpr double smoothMaximumError = 30.0;
 constexpr double minimumSeparation = 0.8;
 constexpr double staticTolerance = 1.0;
+constexpr double referenceTolerance = 0.1;
 constexpr double confidenceRatio = 0.82;
 int length(const QImage& image, ScrollAxis axis)
 {
@@ -40,10 +43,41 @@ int luminance(const QImage& image, ScrollAxis axis, int row, int column)
 }
 QImage grayFrame(const QImage& image)
 {
-    return image
-        .scaled(std::max(1, image.width() / downsample), std::max(1, image.height() / downsample),
-                Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-        .convertToFormat(QImage::Format_Grayscale8);
+    // 保留原像素笔画；缩小平滑会使 20 / 22px 文字的假谷胜过真实位移。
+    QImage gray(image.size(), QImage::Format_Grayscale8);
+    if (gray.isNull())
+        return {};
+    const int width = image.width(), height = image.height();
+    for (int row = 0; row < height; ++row)
+    {
+        const auto* pixels = reinterpret_cast<const QRgb*>(image.constScanLine(row));
+        uchar* output = gray.scanLine(row);
+        for (int column = 0; column < width; ++column)
+            output[column] = uchar(qGray(pixels[column]));
+    }
+    return gray;
+}
+QImage coarseFrame(const QImage& gray)
+{
+    QImage coarse(std::max(1, gray.width() / coarseScale), std::max(1, gray.height() / coarseScale),
+                  QImage::Format_Grayscale8);
+    if (coarse.isNull())
+        return {};
+    const int width = coarse.width(), height = coarse.height();
+    const int sourceWidth = gray.width(), sourceHeight = gray.height();
+    for (int row = 0; row < height; ++row)
+    {
+        const uchar* first = gray.constScanLine(row * coarseScale);
+        const uchar* second = gray.constScanLine(std::min(sourceHeight - 1, row * coarseScale + 1));
+        uchar* output = coarse.scanLine(row);
+        for (int column = 0; column < width; ++column)
+        {
+            const int start = column * coarseScale;
+            const int next = std::min(sourceWidth - 1, start + 1);
+            output[column] = uchar((first[start] + first[next] + second[start] + second[next]) / 4);
+        }
+    }
+    return coarse;
 }
 std::pair<int, int> staticBands(const QImage& before, const QImage& after, ScrollAxis axis)
 {
@@ -69,7 +103,8 @@ std::pair<int, int> staticBands(const QImage& before, const QImage& after, Scrol
 }
 // 在合法重叠中取中部模板，另用整个重叠核对；避免窄模板撞上周期性行高。
 double difference(const QImage& before, const QImage& after, ScrollAxis axis, int delta,
-                  int leading, int trailing, bool wholeOverlap = false)
+                  int leading, int trailing, bool wholeOverlap = false, int columns = 64,
+                  int templateLimit = 96, int across = 0)
 {
     const int n = length(after, axis), w = breadth(after, axis);
     int start = std::max(leading, leading - delta);
@@ -78,37 +113,40 @@ double difference(const QImage& before, const QImage& after, ScrollAxis axis, in
         return std::numeric_limits<double>::infinity();
     if (!wholeOverlap)
     {
-        const int templateLength = std::min(end - start, std::clamp(n / 4, 8, 96));
+        const int templateLength = std::min(end - start, std::clamp(n / 4, 8, templateLimit));
         start += (end - start - templateLength) / 2;
         end = start + templateLength;
     }
-    double total = 0;
+    quint64 total = 0;
     int samples = 0;
-    const bool gray = before.format() == QImage::Format_Grayscale8;
-    const int rowStep = std::max(1, (end - start) / (gray ? 8 : 32));
-    const int columnStep = std::max(2, w / (gray ? 24 : 64));
+    // 沿运动轴逐行采样：稀疏行步长会与文字行距同相，整排落入笔画间隙。
+    constexpr int rowStep = 1;
+    const int columnStep = std::max(2, w / columns);
+    const int columnStart = std::max(0, -across), columnEnd = std::min(w, w - across);
+    if (columnEnd <= columnStart)
+        return std::numeric_limits<double>::infinity();
     const uchar* beforeBits = before.constBits();
     const uchar* afterBits = after.constBits();
     const qsizetype beforeStride = before.bytesPerLine();
     const qsizetype afterStride = after.bytesPerLine();
-    const bool vertical = axis == ScrollAxis::Vertical;
-    for (int row = start; row < end; row += rowStep)
-        for (int column = 0; column < w; column += columnStep)
+    if (axis == ScrollAxis::Vertical)
+        for (int row = start; row < end; row += rowStep)
         {
-            const int bx = vertical ? column : row + delta;
-            const int by = vertical ? row + delta : column;
-            const int ax = vertical ? column : row;
-            const int ay = vertical ? row : column;
-            const int first =
-                gray ? beforeBits[by * beforeStride + bx]
-                     : qGray(reinterpret_cast<const QRgb*>(beforeBits + by * beforeStride)[bx]);
-            const int second =
-                gray ? afterBits[ay * afterStride + ax]
-                     : qGray(reinterpret_cast<const QRgb*>(afterBits + ay * afterStride)[ax]);
-            total += std::abs(first - second);
-            ++samples;
+            const uchar* first = beforeBits + (row + delta) * beforeStride;
+            const uchar* second = afterBits + row * afterStride;
+            for (int column = columnStart; column < columnEnd; column += columnStep)
+                total += std::abs(int(first[column + across]) - int(second[column]));
         }
-    return total / std::max(1, samples);
+    else
+        for (int column = columnStart; column < columnEnd; column += columnStep)
+        {
+            const uchar* first = beforeBits + (column + across) * beforeStride + start + delta;
+            const uchar* second = afterBits + column * afterStride + start;
+            for (int row = 0; row < end - start; row += rowStep)
+                total += std::abs(int(first[row]) - int(second[row]));
+        }
+    samples = (end - start) * ((columnEnd - columnStart + columnStep - 1) / columnStep);
+    return double(total) / std::max(1, samples);
 }
 struct Match
 {
@@ -117,10 +155,13 @@ struct Match
     int trailing = 0;
     double error = std::numeric_limits<double>::infinity();
     bool reliable = false;
+    bool exact = false;
+    int range = 0;
 };
 Match matchFrames(const QImage& before, const QImage& after, const QImage& beforeGray,
-                  const QImage& afterGray, ScrollAxis axis, int lockedLeading, int lockedTrailing,
-                  bool locked, int previousMotion)
+                  const QImage& afterGray, const QImage& beforeCoarse, const QImage& afterCoarse,
+                  ScrollAxis axis, int lockedLeading, int lockedTrailing, bool locked,
+                  int previousMotion, int currentOffset)
 {
     auto [leading, trailing] = locked ? std::pair<int, int>{lockedLeading, lockedTrailing}
                                       : staticBands(before, after, axis);
@@ -129,70 +170,90 @@ Match matchFrames(const QImage& before, const QImage& after, const QImage& befor
     const int overlap = std::min(n / 2, std::max(96, n / 4));
     const int range = n - leading - trailing - overlap;
     Match result{0, leading, trailing};
+    result.range = range;
     if (range < 1)
         return result;
-    const double scale = double(length(afterGray, axis)) / n;
-    const int grayLeading = int(std::ceil(leading * scale));
-    const int grayTrailing = int(std::ceil(trailing * scale));
-    double coarseBest = std::numeric_limits<double>::infinity();
-    int coarseDelta = 0;
+    const double scale = double(length(afterCoarse, axis)) / n;
+    const int coarseRange = int(std::floor(range * scale));
+    const int coarseLeading = int(std::ceil(leading * scale));
+    const int coarseTrailing = int(std::ceil(trailing * scale));
     QVector<std::pair<int, double>> candidates;
-    for (int delta = -range; delta <= range; delta += coarseStep)
+    for (int delta = -coarseRange; delta <= coarseRange; delta += coarseStep)
     {
-        double score = std::numeric_limits<double>::infinity();
-        // 粗扫 8px 对应约 2 个灰度像素；检查相邻灰度位置，避免高频内容落在格点间隙。
-        for (int neighbor = -1; neighbor <= 1; ++neighbor)
-            score = std::min(score, difference(beforeGray, afterGray, axis,
-                                               qRound(delta * scale) + neighbor, grayLeading,
-                                               grayTrailing));
-        candidates.append({delta, score});
-        if (score < coarseBest)
-        {
-            coarseBest = score;
-            coarseDelta = delta;
-        }
+        // 粗扫只缩减横向样本和模板长度，沿轴逐像素搜索 / 逐行采样，避免相位混叠。
+        const double score = difference(beforeCoarse, afterCoarse, axis, delta, coarseLeading,
+                                        coarseTrailing, false, 24, 32);
+        candidates.append({qRound(delta / scale), score});
     }
-    // 静止是独立候选，不依赖粗扫的余数。
-    candidates.append({0, difference(beforeGray, afterGray, axis, 0, grayLeading, grayTrailing)});
-    if (candidates.last().second < coarseBest)
+    std::stable_sort(candidates.begin(), candidates.end(), [](const auto& first, const auto& second)
+                     { return first.second < second.second; });
+    QVector<int> basins;
+    for (const auto& candidate : candidates)
     {
-        coarseDelta = 0;
-        coarseBest = candidates.last().second;
+        if (std::all_of(basins.cbegin(), basins.cend(), [&](int delta)
+                        { return std::abs(delta - candidate.first) >= refinementRadius * 2; }))
+            basins.append(candidate.first);
+        if (basins.size() == maximumBasins)
+            break;
     }
+    // 零位移与最近速度是独立种子，避免灰度相位变化把缓慢运动挤出前八盆地。
+    for (int seed : {0, currentOffset + previousMotion})
+        if (std::abs(seed) <= range &&
+            std::all_of(basins.cbegin(), basins.cend(),
+                        [&](int delta) { return std::abs(delta - seed) > refinementRadius; }))
+            basins.append(seed);
+    // 平滑后浅底文字可能产生假谷；保留多个独立盆地，在原像素上择全局最优。
     QVector<std::pair<int, double>> refined;
-    for (int delta = std::max(-range, coarseDelta - refinementRadius);
-         delta <= std::min(range, coarseDelta + refinementRadius); ++delta)
-    {
-        const double score = difference(before, after, axis, delta, leading, trailing);
-        refined.append({delta, score});
-        if (score < result.error)
+    for (int basin : basins)
+        for (int delta = std::max(-range, basin - refinementRadius);
+             delta <= std::min(range, basin + refinementRadius); ++delta)
         {
-            result.error = score;
-            result.delta = delta;
+            const double score = difference(beforeGray, afterGray, axis, delta, leading, trailing);
+            refined.append({delta, score});
+            if (score < result.error)
+            {
+                result.error = score;
+                result.delta = delta;
+            }
         }
-    }
-    if (!result.delta || result.error > maximumError)
+    if (result.error > smoothMaximumError)
         return result;
     double second = std::numeric_limits<double>::infinity();
     for (const auto& candidate : refined)
         if (std::abs(candidate.first - result.delta) > ambiguityRadius)
             second = std::min(second, candidate.second);
-    // 除局部峰外再次精扫远处竞争峰，保留行高周期 / 相似纹理的拒绝保护。
-    for (const auto& candidate : candidates)
-        if (std::abs(candidate.first - result.delta) > refinementRadius * 2 &&
-            candidate.second < coarseBest + 3.0)
-            for (int delta = std::max(-range, candidate.first - 4);
-                 delta <= std::min(range, candidate.first + 4); ++delta)
-                second =
-                    std::min(second, difference(before, after, axis, delta, leading, trailing));
     const bool separated =
         second - result.error >= minimumSeparation && result.error <= second * confidenceRatio;
-    const bool continuous = !previousMotion ||
-                            std::abs(result.delta) <= std::max(96, std::abs(previousMotion) * 4) ||
-                            result.error < 1.0;
-    result.reliable =
-        separated && continuous &&
-        difference(before, after, axis, result.delta, leading, trailing, true) <= maximumError;
+    const bool continuous =
+        !previousMotion ||
+        std::abs(result.delta - currentOffset) <= std::max(96, std::abs(previousMotion) * 4) ||
+        result.error < 1.0;
+    const double overlapError =
+        difference(beforeGray, afterGray, axis, result.delta, leading, trailing, true);
+    const bool strict = result.error <= maximumError && overlapError <= maximumError;
+    const bool smooth = result.error <= smoothMaximumError && overlapError <= smoothMaximumError;
+    result.reliable = separated && continuous && (strict || smooth);
+    // 白底会稀释斜向误差；若另一轴移动能显著降低整段残差，拒绝一维假匹配。
+    if (result.reliable && overlapError > referenceTolerance)
+        for (int across = -32; across <= 32; ++across)
+        {
+            if (!across)
+                continue;
+            const double diagonalTemplate = difference(beforeGray, afterGray, axis, result.delta,
+                                                       leading, trailing, false, 64, 96, across);
+            if (result.error - diagonalTemplate < minimumSeparation ||
+                diagonalTemplate > result.error * confidenceRatio)
+                continue;
+            const double diagonalError = difference(beforeGray, afterGray, axis, result.delta,
+                                                    leading, trailing, true, 64, 96, across);
+            if (overlapError - diagonalError >= minimumSeparation &&
+                diagonalError <= overlapError * confidenceRatio)
+            {
+                result.reliable = false;
+                break;
+            }
+        }
+    result.exact = result.error <= referenceTolerance && overlapError <= referenceTolerance;
     return result;
 }
 }
@@ -229,6 +290,7 @@ void ScrollStitcher::initializeContent(const QImage& frame, ScrollAxis axis, int
     minimumPosition_ = 0;
     maximumPosition_ = length(frame, axis) - leading - trailing;
     currentPosition_ = 0;
+    referencePosition_ = 0;
 }
 bool ScrollStitcher::extend(const QImage& frame, int from, int count, bool prepend)
 {
@@ -289,10 +351,14 @@ ScrollFrameOutcome ScrollStitcher::addFrame(const QImage& source)
     QImage gray = grayFrame(frame);
     if (gray.isNull())
         return skip(true);
+    QImage coarse = coarseFrame(gray);
+    if (coarse.isNull())
+        return skip(true);
     if (previous_.isNull())
     {
         previous_ = frame;
         previousGray_ = gray;
+        previousCoarse_ = coarse;
         initializeContent(frame, ScrollAxis::Vertical, 0, 0);
         ++stats_.accepted;
         stats_.lastFrameReliable = true;
@@ -301,32 +367,40 @@ ScrollFrameOutcome ScrollStitcher::addFrame(const QImage& source)
                                    : ScrollFrameOutcome::Accepted;
     }
     // 重复帧不构成质量警告；不刷新接受基准，微小逐步运动可累积到可测量位移。
-    if (difference(previous_, frame, stats_.axis, 0, 0, 0, true) <= staticTolerance)
+    if (referencePosition_ == currentPosition_ &&
+        difference(previousGray_, gray, stats_.axis, 0, 0, 0, true) <= staticTolerance)
         return skip(false);
-    Match motion = matchFrames(previous_, frame, previousGray_, gray, stats_.axis, leading_,
-                               trailing_, stats_.motionDetected, previousMotion_);
+    Match motion = matchFrames(previous_, frame, previousGray_, gray, previousCoarse_, coarse,
+                               stats_.axis, leading_, trailing_, stats_.motionDetected,
+                               previousMotion_, currentPosition_ - referencePosition_);
     const ScrollAxis otherAxis =
         stats_.axis == ScrollAxis::Vertical ? ScrollAxis::Horizontal : ScrollAxis::Vertical;
     const Match orthogonal =
         !stats_.motionDetected || !motion.reliable
-            ? matchFrames(previous_, frame, previousGray_, gray, otherAxis, 0, 0, false, 0)
+            ? matchFrames(previous_, frame, previousGray_, gray, previousCoarse_, coarse, otherAxis,
+                          0, 0, false, 0, 0)
             : Match{};
+    // 亚像素运动的最佳整数位移仍为零时保留旧基准，运动可在后续帧累积。
+    if (motion.reliable && !motion.delta && referencePosition_ == currentPosition_ &&
+        (!orthogonal.reliable || !orthogonal.delta))
+        return skip(false);
     if (!stats_.motionDetected)
     {
         ScrollAxis chosenAxis = stats_.axis;
-        if (orthogonal.reliable && (!motion.reliable || orthogonal.error + 1.0 < motion.error))
+        if (orthogonal.reliable && orthogonal.delta &&
+            (!motion.reliable || orthogonal.error + 1.0 < motion.error))
         {
             motion = orthogonal;
             chosenAxis = otherAxis;
         }
-        else if (orthogonal.reliable && motion.reliable)
+        else if (orthogonal.reliable && orthogonal.delta && motion.reliable && motion.delta)
             return skip(true);
         if (!motion.reliable)
             return skip(true);
         initializeContent(previous_, chosenAxis, motion.leading, motion.trailing);
         stats_.motionDetected = true;
     }
-    else if (orthogonal.reliable && !motion.reliable)
+    else if (orthogonal.reliable && orthogonal.delta && !motion.reliable)
     {
         skip(true);
         return ScrollFrameOutcome::AxisLocked;
@@ -334,7 +408,9 @@ ScrollFrameOutcome ScrollStitcher::addFrame(const QImage& source)
     if (!motion.reliable)
         return skip(true);
     const int contentLength = length(frame, stats_.axis) - leading_ - trailing_;
-    const int position = currentPosition_ + motion.delta;
+    const int position = referencePosition_ + motion.delta;
+    if (position == currentPosition_)
+        return skip(false);
     bool extended = true;
     if (position < minimumPosition_)
     {
@@ -352,11 +428,18 @@ ScrollFrameOutcome ScrollStitcher::addFrame(const QImage& source)
     }
     if (!extended)
         return skip(true);
+    stats_.lastMotionPx = position - currentPosition_;
     currentPosition_ = position;
-    previousMotion_ = motion.delta;
-    stats_.lastMotionPx = motion.delta;
-    previous_ = std::move(frame);
-    previousGray_ = std::move(gray);
+    previousMotion_ = stats_.lastMotionPx;
+    // 软匹配逐帧取整会累积漂移；保持基准直到相位一致，预留至少两步重叠余量。
+    if (motion.exact ||
+        std::abs(motion.delta) >= motion.range - std::max(32, std::abs(stats_.lastMotionPx) * 2))
+    {
+        referencePosition_ = position;
+        previous_ = std::move(frame);
+        previousGray_ = std::move(gray);
+        previousCoarse_ = std::move(coarse);
+    }
     ++stats_.accepted;
     stats_.lastFrameReliable = true;
     skipping_ = false;
@@ -382,6 +465,7 @@ QImage ScrollStitcher::takeResult()
     image.setDevicePixelRatio(1);
     previous_ = {};
     previousGray_ = {};
+    previousCoarse_ = {};
     return image;
 }
 QImage ScrollStitcher::result() const

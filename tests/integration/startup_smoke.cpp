@@ -1242,6 +1242,7 @@ class StartupSmokeTest final : public QObject
             request, {}, std::make_unique<RegionStub>(capture),
             std::make_unique<InjectorStub>(injector), [] { return QPoint(50, 50); }));
         QSignalSpy completed(session.get(), &ScrollCaptureSession::completed);
+        QSignalSpy notices(session.get(), &ScrollCaptureSession::noticeChanged);
         session->start();
         const auto source = scrollDocument();
         capture->frame(source.copy(0, 0, 320, 400));
@@ -1259,6 +1260,14 @@ class StartupSmokeTest final : public QObject
         }
         QCOMPARE(completed.size(), 0);
         QVERIFY(session->stats().warnings > 0);
+        int gapNotices = 0;
+        for (const auto& notice : notices)
+        {
+            const QString text = notice.first().toString();
+            QVERIFY(text != QStringLiteral("滚动较快，部分画面已跳过。"));
+            gapNotices += text == QStringLiteral("画面重叠不足或内容变化，部分帧未拼接。");
+        }
+        QCOMPARE(gapNotices, 1);
         session->stop();
     }
     void ocrModeLifecycle()

@@ -54,10 +54,12 @@ class ScrollStitcher
     ScrollStitchStats stats_;
     QImage previous_;
     QImage previousGray_;
+    QImage previousCoarse_;
     QImage canvas_;
     int leading_ = 0;
     int trailing_ = 0;
     int currentPosition_ = 0;
+    int referencePosition_ = 0;
     int minimumPosition_ = 0;
     int maximumPosition_ = 0;
     int previousMotion_ = 0;
