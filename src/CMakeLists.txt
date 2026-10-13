@@ -1,6 +1,6 @@
 add_subdirectory(platform)
 
-add_library(waibusnap_core STATIC core/shape_mask.cpp core/aspect_ratio.cpp core/text_layout.cpp core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
+add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp core/aspect_ratio.cpp core/text_layout.cpp core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options)
@@ -12,10 +12,13 @@ target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp ui/selection_overlay.h
     ui/toolbar_icons.cpp ui/toolbar_icons.h
+    ui/scroll_capture_windows.cpp ui/scroll_capture_windows.h
+    ui/scroll_result_window.cpp ui/scroll_result_window.h
     ui/text_recognition_task.cpp ui/text_recognition_task.h ui/ocr_dialog.cpp ui/ocr_dialog.h
     ui/clipboard_sticker_toast.cpp ui/clipboard_sticker_toast.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h
+    app/scroll_capture.cpp app/scroll_capture.h
     app/application_controller.cpp app/application_controller.h
     app/sticker_manager.cpp app/sticker_manager.h ui/sticker_window.cpp ui/sticker_window.h)
 target_include_directories(waibusnap_ui PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

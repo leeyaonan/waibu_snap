@@ -57,6 +57,52 @@
 
 namespace waibusnap
 {
+struct OverlayScrollTestAccess
+{
+    static void enable(SelectionOverlay& overlay) { overlay.scrollSupported_ = true; }
+    static void clearSelection(SelectionOverlay& overlay) { overlay.setSelection({}); }
+};
+struct ScrollCaptureTestAccess
+{
+    static ScrollCaptureSession* create(RegionCaptureRequest request, QRect bar,
+                                        std::unique_ptr<RegionCaptureSession> capture,
+                                        std::unique_ptr<ScrollInjector> injector,
+                                        std::function<QPoint()> cursor,
+                                        ScrollStitchLimits limits = {}, QObject* parent = nullptr)
+    {
+        return new ScrollCaptureSession(request, bar, std::move(capture), std::move(injector),
+                                        std::move(cursor), limits, parent);
+    }
+    static void tick(ScrollCaptureSession& session) { session.driveAutomatic(); }
+    static void stopTimer(ScrollCaptureSession& session) { session.autoTimer_.stop(); }
+    static void ageLastMotion(ScrollCaptureSession& session) { session.lastMotionMs_ = -3000; }
+};
+class RetryDisplays final : public DisplayTopology
+{
+  public:
+    explicit RetryDisplays(DisplayTarget display) : display_(display) {}
+    DisplayResult cursorDisplay() const override { return {display_, {}}; }
+    bool stillMatches(const DisplayTarget&) const override { return true; }
+
+  private:
+    DisplayTarget display_;
+};
+class RetryCapture final : public CaptureProvider
+{
+  public:
+    explicit RetryCapture(CaptureFrame frame) : frame_(std::move(frame)) {}
+    bool hasPermission() const override { return true; }
+    bool requestPermission() override { return true; }
+    void capture(const DisplayTarget&, std::function<void(CaptureResult)> completion) override
+    {
+        const auto frame = frame_;
+        QTimer::singleShot(0, QCoreApplication::instance(),
+                           [frame, completion] { completion({frame, CaptureError::None, {}}); });
+    }
+
+  private:
+    CaptureFrame frame_;
+};
 struct ApplicationControllerTestAccess
 {
     static void seedSession(ApplicationController& controller, SelectionOverlay* overlay,
@@ -72,6 +118,61 @@ struct ApplicationControllerTestAccess
         controller.refreshStickerActions();
         controller.captureTimeout_.start(15000);
         controller.sessionWatchdog_.start();
+    }
+    static void retryDependencies(ApplicationController& controller, CaptureFrame frame)
+    {
+        controller.displays_ = std::make_unique<RetryDisplays>(frame.display);
+        controller.capture_ = std::make_unique<RetryCapture>(std::move(frame));
+        controller.overlayFactory_ =
+            [](CaptureFrame input, OverlayActions actions, QVector<QRect> windows, QString error)
+        {
+            auto* overlay = new SelectionOverlay(std::move(input), std::move(actions),
+                                                 std::move(windows), std::move(error));
+            OverlayScrollTestAccess::enable(*overlay);
+            return overlay;
+        };
+    }
+    static QPointer<SelectionOverlay> overlay(ApplicationController& controller)
+    {
+        return controller.overlay_;
+    }
+    static void connectScroll(ApplicationController& controller, DisplayTarget display)
+    {
+        controller.bindScrollOverlay(display);
+        QObject::connect(controller.overlay_, &SelectionOverlay::finished, &controller,
+                         [&controller](QRect pixels, int outcome)
+                         { controller.finish(pixels, outcome); });
+    }
+    static void
+    factory(ApplicationController& controller,
+            std::function<ScrollCaptureSession*(RegionCaptureRequest, QRect, QObject*)> factory)
+    {
+        controller.scrollFactory_ = std::move(factory);
+    }
+    static void watchdogCheck(ApplicationController& controller)
+    {
+        controller.checkSessionWatchdog();
+    }
+    static bool readyGuard(const ApplicationController& controller)
+    {
+        return controller.scrollFlowActive_ && !controller.captureTimeout_.isActive();
+    }
+    static QPointer<ScrollResultWindow> result(ApplicationController& controller)
+    {
+        return controller.scrollResults_.isEmpty() ? nullptr : controller.scrollResults_.last();
+    }
+    static QPointer<ScrollControlBar> bar(ApplicationController& controller)
+    {
+        return controller.scrollBar_;
+    }
+    static void cancel(ApplicationController& controller)
+    {
+        controller.finish({}, scrollCancelledOutcome);
+    }
+    static void changed(ApplicationController& controller) { controller.layoutChanged(); }
+    static QRect retryRegion(const ApplicationController& controller)
+    {
+        return controller.retryRegion_;
     }
     static void fail(ApplicationController& controller)
     {
@@ -207,6 +308,67 @@ class ClipboardRestore final
   private:
     std::unique_ptr<QMimeData> saved_ = std::make_unique<QMimeData>();
 };
+struct RegionStubState
+{
+    std::function<void(QImage)> frame;
+    std::function<void(QString)> error;
+    int starts = 0;
+    int stops = 0;
+};
+class RegionStub final : public waibusnap::RegionCaptureSession
+{
+  public:
+    explicit RegionStub(std::shared_ptr<RegionStubState> state) : state_(std::move(state)) {}
+    void start(std::function<void(QImage)> frame, std::function<void(QString)> error) override
+    {
+        ++state_->starts;
+        state_->frame = std::move(frame);
+        state_->error = std::move(error);
+    }
+    void stop() override { ++state_->stops; }
+
+  private:
+    std::shared_ptr<RegionStubState> state_;
+};
+struct InjectorStubState
+{
+    bool authorized = false;
+    int requested = 0;
+    QVector<waibusnap::ScrollInjection> posts;
+};
+class InjectorStub final : public waibusnap::ScrollInjector
+{
+  public:
+    explicit InjectorStub(std::shared_ptr<InjectorStubState> state) : state_(std::move(state)) {}
+    bool hasAccessibilityPermission() const override { return state_->authorized; }
+    void requestAccessibilityPermission() override { ++state_->requested; }
+    bool postScroll(waibusnap::ScrollInjection event) override
+    {
+        if (!state_->authorized)
+            return false;
+        state_->posts.append(event);
+        return true;
+    }
+
+  private:
+    std::shared_ptr<InjectorStubState> state_;
+};
+QImage scrollDocument(int width = 320, int height = 1600)
+{
+    QImage image(width, height, QImage::Format_RGB32);
+    quint32 random = 42;
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+        {
+            random = random * 1664525 + 1013904223;
+            image.setPixel(x, y, qRgb(random >> 24, (random >> 16) & 255, (random >> 8) & 255));
+        }
+    return image;
+}
+QPushButton* scrollButton(QWidget* window, const char* name)
+{
+    return window->findChild<QPushButton*>(QString::fromLatin1(name));
+}
 waibusnap::CaptureFrame sampleFrame()
 {
     waibusnap::CaptureFrame frame;
@@ -373,6 +535,732 @@ class StartupSmokeTest final : public QObject
     Q_OBJECT
   private slots:
     void initTestCase() { qApp->setQuitOnLastWindowClosed(false); }
+    void scrollEntryPreparation_data()
+    {
+        QTest::addColumn<int>("state");
+        QTest::newRow("empty") << 0;
+        QTest::newRow("small") << 1;
+        QTest::newRow("normal") << 2;
+        QTest::newRow("annotations") << 3;
+        QTest::newRow("pending-text") << 4;
+    }
+    void scrollEntryPreparation()
+    {
+        using namespace waibusnap;
+        QFETCH(int, state);
+        SelectionOverlay overlay(annotationFrame());
+        OverlayScrollTestAccess::enable(overlay);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, state == 1 ? QPoint(120, 120) : QPoint(300, 250));
+        auto* longImage = button(overlay, "longImageButton");
+        QVERIFY(longImage && longImage->isEnabled() && !longImage->icon().isNull());
+        QCOMPARE(longImage->size(), QSize(28, 28));
+        QVERIFY(longImage->x() > button(overlay, "ocrToolButton")->x());
+        if (state == 0)
+            OverlayScrollTestAccess::clearSelection(overlay);
+        if (state == 3)
+        {
+            button(overlay, "rectangleToolButton")->click();
+            dragLogical(overlay, {130, 130}, {180, 170});
+            QVERIFY(!overlay.annotations().isEmpty());
+        }
+        if (state == 4)
+        {
+            button(overlay, "textToolButton")->click();
+            QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {130, 130});
+            auto* editor = overlay.findChild<AnnotationTextEdit*>();
+            QVERIFY(editor && editor->isVisible());
+            editor->setPlainText(QStringLiteral("待提交文字"));
+        }
+        QSignalSpy ready(&overlay, &SelectionOverlay::scrollReadyChanged);
+        longImage->click();
+        auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
+        if (state < 2)
+        {
+            QVERIFY(!overlay.isScrollReady());
+            QVERIFY(status->isVisible());
+            QCOMPARE(status->text(),
+                     state == 0 ? QStringLiteral("请先框选区域再截长图。")
+                                : QStringLiteral("区域太小，请重新框选（至少 64 × 64 像素）。"));
+            QCOMPARE(ready.size(), 0);
+        }
+        else
+        {
+            QVERIFY(overlay.isScrollReady());
+            QCOMPARE(ready.size(), 1);
+            QVERIFY(overlay.annotations().isEmpty());
+            QVERIFY(!overlay.magnifierVisible());
+            QVERIFY(overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"))->isHidden());
+            auto* bar = overlay.findChild<QWidget*>(QStringLiteral("scrollReadyBar"));
+            QVERIFY(bar && bar->isVisible());
+            QVERIFY(overlay.rect().contains(bar->geometry()));
+            QCOMPARE(overlay.findChild<QLabel*>(QStringLiteral("scrollReadyTitleLabel"))->text(),
+                     QStringLiteral("截长图：选区已锁定"));
+            QCOMPARE(overlay.findChild<QLabel*>(QStringLiteral("scrollReadySizeLabel"))->text(),
+                     QStringLiteral("400 × 300 像素"));
+            if (state >= 3)
+                QCOMPARE(status->text(), QStringLiteral("已清除标注，长图结果不含标注。"));
+        }
+    }
+    void scrollReadyTransitions_data()
+    {
+        QTest::addColumn<int>("action");
+        QTest::newRow("back") << 0;
+        QTest::newRow("cancel") << 1;
+        QTest::newRow("escape") << 2;
+        QTest::newRow("start") << 3;
+        QTest::newRow("enter") << 4;
+    }
+    void scrollReadyTransitions()
+    {
+        using namespace waibusnap;
+        QFETCH(int, action);
+        SelectionOverlay overlay(annotationFrame());
+        OverlayScrollTestAccess::enable(overlay);
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        const auto rectangle = overlay.selection();
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        QSignalSpy requested(&overlay, &SelectionOverlay::scrollCaptureRequested);
+        overlay.enterScrollReady();
+        dragLogical(overlay, {150, 150}, {450, 350});
+        QTest::keyClick(&overlay, Qt::Key_Right);
+        standardKey(&overlay, QKeySequence::Copy);
+        QCOMPARE(overlay.selection(), rectangle);
+        QCOMPARE(finished.size(), 0);
+        const char* names[] = {"scrollBackButton", "scrollReadyCancelButton", "",
+                               "scrollStartButton"};
+        if (action == 2)
+            QTest::keyClick(&overlay, Qt::Key_Escape);
+        else if (action == 4)
+            QTest::keyClick(&overlay, Qt::Key_Return);
+        else
+            button(overlay, names[action])->click();
+        if (action == 0)
+        {
+            QVERIFY(!overlay.isScrollReady());
+            QVERIFY(overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"))->isVisible());
+            QCOMPARE(finished.size(), 0);
+        }
+        else if (action < 3)
+        {
+            QCOMPARE(finished.size(), 1);
+            QCOMPARE(finished.first().at(1).toInt(), scrollCancelledOutcome);
+            QCOMPARE(finished.first().at(0).toRect(), QRect());
+        }
+        else
+        {
+            QCOMPARE(requested.size(), 1);
+            QCOMPARE(requested.first().first().toRect(), rectangle);
+            QCOMPARE(finished.size(), 0);
+        }
+    }
+    void scrollPlatformAndMenu()
+    {
+        using namespace waibusnap;
+        ApplicationController controller(*qApp, {});
+        auto* action =
+            controller.menu()->findChild<QAction*>(QStringLiteral("scrollCaptureAction"));
+        QVERIFY(action);
+        QCOMPARE(controller.menu()->actions().indexOf(action), 1);
+        QCOMPARE(action->isEnabled(), regionCaptureSupported());
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        QCOMPARE(button(overlay, "longImageButton")->isEnabled(), regionCaptureSupported());
+        if (!regionCaptureSupported())
+            QCOMPARE(button(overlay, "longImageButton")->toolTip(),
+                     QStringLiteral("截长图暂不支持当前平台（Windows 后补）。"));
+    }
+    void scrollControlPlacement_data()
+    {
+        QTest::addColumn<QRect>("region");
+        QTest::newRow("below") << QRect(100, 100, 500, 200);
+        QTest::newRow("above") << QRect(100, 450, 500, 100);
+        QTest::newRow("inside") << QRect(0, 24, 800, 552);
+        QTest::newRow("narrow") << QRect(0, 24, 320, 552);
+    }
+    void scrollControlPlacement()
+    {
+        using namespace waibusnap;
+        QFETCH(QRect, region);
+        const QRect available(0, 24, region.width() == 320 ? 320 : 800, 552);
+        ScrollControlBar bar(region, available);
+        ScrollBorderWindow border(region);
+        bar.show();
+        border.show();
+        QVERIFY(available.contains(bar.geometry()));
+        QVERIFY(border.windowFlags().testFlag(Qt::WindowTransparentForInput));
+        QVERIFY(border.windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        QCOMPARE(border.geometry(), region.adjusted(-2, -2, 2, 2));
+        ScrollStitchStats stats;
+        stats.lengthPx = 1200;
+        stats.frames = 18;
+        bar.setStatistics(stats, 20000);
+        auto* label = bar.findChild<QLabel*>(QStringLiteral("scrollStatusLabel"));
+        QCOMPARE(label->toolTip(), QStringLiteral("已拼接 1200 px · 18 帧"));
+        QVERIFY(scrollButton(&bar, "scrollSpeedButton")->isHidden());
+        bar.setAutomatic(true);
+        for (auto* control : bar.findChildren<QPushButton*>())
+            if (control->isVisible())
+                QVERIFY(bar.rect().contains(control->geometry()));
+        QVERIFY(scrollButton(&bar, "scrollSpeedButton")->isVisible());
+        QVERIFY(available.contains(bar.geometry()));
+        QSignalSpy finish(&bar, &ScrollControlBar::finishRequested);
+        QSignalSpy cancel(&bar, &ScrollControlBar::cancelRequested);
+        QTest::keyClick(&bar, Qt::Key_Return);
+        QTest::keyClick(&bar, Qt::Key_Escape);
+        QCOMPARE(finish.size(), 1);
+        QCOMPARE(cancel.size(), 1);
+        bar.setNotice(QStringLiteral("自动滚动暂挂：请将鼠标移到采集区域内。"));
+        QVERIFY(label->toolTip().startsWith(QStringLiteral("自动滚动暂挂")));
+    }
+    void scrollAutomaticPermissionAndSuspension()
+    {
+        using namespace waibusnap;
+        auto capture = std::make_shared<RegionStubState>();
+        auto injector = std::make_shared<InjectorStubState>();
+        QPoint cursor(50, 50);
+        RegionCaptureRequest request{{0, {0, 0, 800, 600}, 2, 0, {}}, {0, 0, 320, 400}, {}};
+        std::unique_ptr<ScrollCaptureSession> session(ScrollCaptureTestAccess::create(
+            request, {0, 150, 160, 40}, std::make_unique<RegionStub>(capture),
+            std::make_unique<InjectorStub>(injector), [&] { return cursor; }));
+        QSignalSpy permission(session.get(), &ScrollCaptureSession::permissionMissing);
+        QSignalSpy notices(session.get(), &ScrollCaptureSession::noticeChanged);
+        session->start();
+        const auto source = scrollDocument();
+        capture->frame(source.copy(0, 0, 320, 400));
+        session->setAutomatic(true);
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(permission.size(), 1);
+        QCOMPARE(injector->posts.size(), 0);
+        QVERIFY(!session->automatic());
+        session->openAccessibilitySettings();
+        QCOMPARE(injector->requested, 1);
+        injector->authorized = true;
+        session->setAutomatic(true);
+        ScrollCaptureTestAccess::stopTimer(*session);
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(injector->posts.size(), 1);
+        QCOMPARE(injector->posts.last().dy, -60);
+        capture->frame(source.copy(0, 60, 320, 400));
+        cursor = {200, 50};
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(injector->posts.size(), 1);
+        QVERIFY(notices.last().first().toString().startsWith(QStringLiteral("自动滚动暂挂")));
+        cursor = {50, 160};
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(injector->posts.size(), 1);
+        cursor = {50, 50};
+        session->cycleSpeed();
+        session->cycleDirection();
+        session->cycleDirection();
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(injector->posts.last().dx, -120);
+        QCOMPARE(injector->posts.last().dy, 0);
+        injector->authorized = false;
+        const auto count = injector->posts.size();
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(injector->posts.size(), count);
+        QVERIFY(!session->automatic());
+        session->stop();
+        const int frames = session->stats().frames;
+        capture->frame(source.copy(0, 120, 320, 400));
+        capture->error(QStringLiteral("迟到错误"));
+        QCOMPARE(session->stats().frames, frames);
+    }
+    void scrollAutomaticProbeAndBottom()
+    {
+        using namespace waibusnap;
+        auto capture = std::make_shared<RegionStubState>();
+        auto injector = std::make_shared<InjectorStubState>();
+        injector->authorized = true;
+        RegionCaptureRequest request{{0, {0, 0, 800, 600}, 1, 0, {}}, {0, 0, 320, 400}, {}};
+        std::unique_ptr<ScrollCaptureSession> session(ScrollCaptureTestAccess::create(
+            request, {}, std::make_unique<RegionStub>(capture),
+            std::make_unique<InjectorStub>(injector), [] { return QPoint(50, 50); }));
+        QSignalSpy completed(session.get(), &ScrollCaptureSession::completed);
+        QSignalSpy notices(session.get(), &ScrollCaptureSession::noticeChanged);
+        session->start();
+        const auto source = scrollDocument();
+        const auto first = source.copy(0, 0, 320, 400);
+        capture->frame(first);
+        session->setAutomatic(true);
+        ScrollCaptureTestAccess::stopTimer(*session);
+        for (int index = 0; index < 11; ++index)
+        {
+            ScrollCaptureTestAccess::tick(*session);
+            capture->frame(first);
+        }
+        QCOMPARE(completed.size(), 0);
+        QVERIFY(injector->posts.at(5).dy > 0);
+        bool noMotion = false;
+        for (const auto& notice : notices)
+            noMotion |= notice.first().toString().startsWith(QStringLiteral("未检测到滚动"));
+        QVERIFY(noMotion);
+        capture->frame(source.copy(0, 60, 320, 400));
+        ScrollCaptureTestAccess::tick(*session);
+        capture->frame(source.copy(0, 60, 320, 400));
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(completed.size(), 0);
+        capture->frame(source.copy(0, 60, 320, 400));
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(completed.size(), 1);
+        QCOMPARE(session->takeResult(), source.copy(0, 0, 320, 460));
+    }
+    void scrollManualBottomAndLimit_data()
+    {
+        QTest::addColumn<bool>("limited");
+        QTest::newRow("manual-bottom") << false;
+        QTest::newRow("length-limit") << true;
+    }
+    void scrollManualBottomAndLimit()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, limited);
+        auto capture = std::make_shared<RegionStubState>();
+        auto injector = std::make_shared<InjectorStubState>();
+        std::unique_ptr<ScrollCaptureSession> session(ScrollCaptureTestAccess::create(
+            {}, {}, std::make_unique<RegionStub>(capture), std::make_unique<InjectorStub>(injector),
+            [] { return QPoint(); }, {limited ? 450 : 20000, 30000000}));
+        QSignalSpy completed(session.get(), &ScrollCaptureSession::completed);
+        QSignalSpy notices(session.get(), &ScrollCaptureSession::noticeChanged);
+        session->start();
+        const auto source = scrollDocument();
+        capture->frame(source.copy(0, 0, 320, 400));
+        capture->frame(source.copy(0, 60, 320, 400));
+        if (limited)
+        {
+            QCOMPARE(completed.size(), 1);
+            QCOMPARE(session->stats().lengthPx, 450);
+            QVERIFY(notices.last().first().toString().startsWith(QStringLiteral("已达长度上限")));
+        }
+        else
+        {
+            ScrollCaptureTestAccess::ageLastMotion(*session);
+            capture->frame(source.copy(0, 60, 320, 400));
+            QCOMPARE(completed.size(), 0);
+            QVERIFY(
+                notices.last().first().toString().startsWith(QStringLiteral("似乎已滚动到底部")));
+            capture->frame(source.copy(0, 120, 320, 400));
+            QCOMPARE(notices.last().first().toString(), QString());
+        }
+    }
+    void scrollResultPreviewCropOutput_data()
+    {
+        QTest::addColumn<bool>("horizontal");
+        QTest::newRow("vertical") << false;
+        QTest::newRow("horizontal") << true;
+    }
+    void scrollResultPreviewCropOutput()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, horizontal);
+        const QImage image = scrollDocument(horizontal ? 1200 : 320, horizontal ? 320 : 1200);
+        ScrollStitchStats stats;
+        stats.warnings = 2;
+        ScrollResultActions actions;
+        QImage copied;
+        actions.copyImage = [&](const QImage& result)
+        {
+            copied = result;
+            return ImageOutputResult{true, {}};
+        };
+        actions.confirmDiscard = [](QWidget*) { return true; };
+        auto* window = new ScrollResultWindow(image, stats, actions);
+        window->show();
+        QTest::qWait(1);
+        auto* warning = window->findChild<QWidget*>(QStringLiteral("scrollResultWarningBar"));
+        QVERIFY(warning->isVisible());
+        QVERIFY(window->findChild<QLabel*>(QStringLiteral("scrollResultStatusLabel"))
+                    ->text()
+                    .contains(horizontal ? QStringLiteral("1200 × 320")
+                                         : QStringLiteral("320 × 1200")));
+        QVERIFY(window->zoom() <= 1);
+        scrollButton(window, "scrollResultZoom100Button")->click();
+        QCOMPARE(window->zoom(), qreal(1));
+        auto* view = window->findChild<QWidget*>(QStringLiteral("scrollResultView"));
+        QWheelEvent zoomIn(QPointF(50, 50), view->mapToGlobal(QPoint(50, 50)), {}, {0, 9600},
+                           Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(view, &zoomIn);
+        QCOMPARE(window->zoom(), qreal(4));
+        scrollButton(window, "scrollResultZoom100Button")->click();
+        scrollButton(window, "scrollResultCropButton")->click();
+        const QPoint start = horizontal ? QPoint(1, 100) : QPoint(100, 1);
+        const QPoint end = horizontal ? QPoint(50, 100) : QPoint(100, 50);
+        const auto send =
+            [&](QEvent::Type type, QPoint point, Qt::MouseButton changed, Qt::MouseButtons held)
+        {
+            QMouseEvent event(type, point, view->mapToGlobal(point), changed, held, Qt::NoModifier);
+            QApplication::sendEvent(view, &event);
+        };
+        send(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseMove, end, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, end, Qt::LeftButton, Qt::NoButton);
+        QVERIFY(window->findChild<QLabel*>(QStringLiteral("scrollResultStatusLabel"))
+                    ->text()
+                    .contains(horizontal ? QStringLiteral("1150 × 320")
+                                         : QStringLiteral("320 × 1150")));
+        scrollButton(window, "scrollResultCropResetButton")->click();
+        send(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseMove, end, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, end, Qt::LeftButton, Qt::NoButton);
+        scrollButton(window, "scrollResultCropApplyButton")->click();
+        QCOMPARE(window->image(),
+                 horizontal ? image.copy(50, 0, 1150, 320) : image.copy(0, 50, 320, 1150));
+        scrollButton(window, "scrollResultCopyButton")->click();
+        QCOMPARE(copied, window->image());
+        QVERIFY(window->hasOutput());
+        QVERIFY(window->isVisible());
+        QSignalSpy retry(window, &ScrollResultWindow::retryRequested);
+        scrollButton(window, "scrollResultRetryButton")->click();
+        QCOMPARE(retry.size(), 1);
+        window->closeWithoutConfirmation();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    void scrollResultFullOverview_data()
+    {
+        QTest::addColumn<bool>("horizontal");
+        QTest::newRow("vertical-20000") << false;
+        QTest::newRow("horizontal-20000") << true;
+    }
+    void scrollResultFullOverview()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, horizontal);
+        QImage image(horizontal ? QSize(20000, 320) : QSize(320, 20000), QImage::Format_RGB32);
+        image.fill(Qt::white);
+        auto* window = new ScrollResultWindow(image, {});
+        window->show();
+        QTest::qWait(1);
+        auto* view = window->findChild<QWidget*>(QStringLiteral("scrollResultView"));
+        auto* area = window->findChild<QScrollArea*>();
+        scrollButton(window, "scrollResultFitButton")->click();
+        QVERIFY(window->zoom() < 0.1);
+        QVERIFY(view->width() <= area->viewport()->width());
+        QVERIFY(view->height() <= area->viewport()->height());
+        QTest::mouseDClick(view, Qt::LeftButton, Qt::NoModifier, {10, 10});
+        QCOMPARE(window->zoom(), qreal(1));
+        QWheelEvent zoomOut(QPointF(10, 10), view->mapToGlobal(QPoint(10, 10)), {}, {0, -9600},
+                            Qt::NoButton, Qt::ControlModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(view, &zoomOut);
+        QCOMPARE(window->zoom(), qreal(0.1));
+        window->closeWithoutConfirmation();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    void scrollResultCloseConfirmation()
+    {
+        using namespace waibusnap;
+        auto* window = new ScrollResultWindow(scrollDocument(), {});
+        window->show();
+        bool observed = false;
+        QTimer::singleShot(0,
+                           [&, window]
+                           {
+                               auto* dialog =
+                                   qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                               observed =
+                                   dialog && dialog->text() == QStringLiteral("放弃这张长图？");
+                               if (dialog)
+                                   dialog->button(QMessageBox::Cancel);
+                               if (dialog)
+                                   dialog->reject();
+                               Q_UNUSED(window);
+                           });
+        QVERIFY(!window->close());
+        QVERIFY(observed && window->isVisible());
+        window->closeWithoutConfirmation();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    void scrollControllerLifecycle_data()
+    {
+        QTest::addColumn<int>("ending");
+        QTest::newRow("complete") << 0;
+        QTest::newRow("cancel") << 1;
+        QTest::newRow("layout-interruption") << 2;
+        QTest::newRow("error-interruption") << 3;
+    }
+    void scrollControllerLifecycle()
+    {
+        using namespace waibusnap;
+        QFETCH(int, ending);
+        QTemporaryDir temp;
+        RunOptions options;
+        options.metricsFile = temp.filePath(QStringLiteral("metrics.jsonl"));
+        auto capture = std::make_shared<RegionStubState>();
+        auto injector = std::make_shared<InjectorStubState>();
+        ApplicationController controller(*qApp, options);
+        ApplicationControllerTestAccess::factory(
+            controller,
+            [=](RegionCaptureRequest request, QRect bar, QObject* parent)
+            {
+                return ScrollCaptureTestAccess::create(
+                    request, bar, std::make_unique<RegionStub>(capture),
+                    std::make_unique<InjectorStub>(injector), [] { return QPoint(50, 50); }, {},
+                    parent);
+            });
+        const auto frame = annotationFrame();
+        auto* overlay = new SelectionOverlay(frame);
+        OverlayScrollTestAccess::enable(*overlay);
+        overlay->show();
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+        ApplicationControllerTestAccess::connectScroll(controller, frame.display);
+        overlay->enterScrollReady({200, 200, 320, 400});
+        QVERIFY(ApplicationControllerTestAccess::readyGuard(controller));
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QVERIFY(controller.active());
+        scrollButton(overlay, "scrollStartButton")->click();
+        QVERIFY(!overlay->isVisible());
+        const auto bar = ApplicationControllerTestAccess::bar(controller);
+        QVERIFY(bar && bar->isVisible());
+        const auto source = scrollDocument();
+        capture->frame(source.copy(0, 0, 320, 400));
+        capture->frame(source.copy(0, 60, 320, 400));
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QVERIFY(controller.active());
+        if (ending < 2)
+            scrollButton(bar, ending == 0 ? "scrollFinishButton" : "scrollCancelButton")->click();
+        else if (ending == 2)
+            ApplicationControllerTestAccess::changed(controller);
+        else
+            capture->error(QStringLiteral("假采集器中断"));
+        QVERIFY(!controller.active());
+        QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
+        auto result = ApplicationControllerTestAccess::result(controller);
+        QCOMPARE(bool(result), ending != 1);
+        if (result)
+        {
+            QCOMPARE(result->image(), source.copy(0, 0, 320, 460));
+            QCOMPARE(
+                result->findChild<QWidget*>(QStringLiteral("scrollResultWarningBar"))->isVisible(),
+                ending >= 2);
+            result->closeWithoutConfirmation();
+        }
+        QFile metrics(options.metricsFile);
+        QVERIFY(metrics.open(QIODevice::ReadOnly));
+        const auto record = QJsonDocument::fromJson(metrics.readLine()).object();
+        QCOMPARE(record.value(QStringLiteral("outcome")).toInt(), ending == 1 ? 14 : 13);
+        QCOMPARE(record.value(QStringLiteral("selection_height_px")).toInt(),
+                 ending == 1 ? 0 : 460);
+        capture->frame(source.copy(0, 120, 320, 400));
+        QVERIFY(!controller.active());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    void scrollReadyDprAndClamping_data()
+    {
+        QTest::addColumn<qreal>("dpr");
+        QTest::addColumn<int>("width");
+        for (qreal dpr : {1.0, 1.5, 2.0})
+            for (int width : {320, 480, 800})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(dpr).arg(width)))
+                    << dpr << width;
+    }
+    void scrollReadyDprAndClamping()
+    {
+        using namespace waibusnap;
+        QFETCH(qreal, dpr);
+        QFETCH(int, width);
+        CaptureFrame frame;
+        frame.display = {0, {-800, 0, width, 600}, dpr, 0, {-790, 24, width - 20, 552}};
+        frame.pixels = QImage(qRound(width * dpr), qRound(600 * dpr), QImage::Format_RGB32);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(dpr);
+        SelectionOverlay overlay(frame);
+        OverlayScrollTestAccess::enable(overlay);
+        overlay.show();
+        overlay.enterScrollReady(frame.pixels.rect());
+        QVERIFY(overlay.isScrollReady());
+        auto* bar = overlay.findChild<QWidget*>(QStringLiteral("scrollReadyBar"));
+        QVERIFY(QRect(10, 24, width - 20, 552).contains(bar->geometry()));
+        for (auto* control : bar->findChildren<QPushButton*>())
+            QVERIFY(bar->rect().contains(control->geometry()));
+        QCOMPARE(
+            overlay.findChild<QLabel*>(QStringLiteral("scrollReadySizeLabel"))->text(),
+            QStringLiteral("%1 × %2 像素").arg(frame.pixels.width()).arg(frame.pixels.height()));
+        QSignalSpy request(&overlay, &SelectionOverlay::scrollCaptureRequested);
+        QTest::keyClick(&overlay, Qt::Key_Return);
+        QCOMPARE(request.first().first().toRect(), frame.pixels.rect());
+    }
+    void scrollControllerRetryAndQuit()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temp;
+        RunOptions options;
+        options.metricsFile = temp.filePath(QStringLiteral("metrics.jsonl"));
+        auto capture = std::make_shared<RegionStubState>();
+        auto injector = std::make_shared<InjectorStubState>();
+        ApplicationController controller(*qApp, options);
+        auto frame = annotationFrame();
+        ApplicationControllerTestAccess::retryDependencies(controller, frame);
+        ApplicationControllerTestAccess::factory(
+            controller,
+            [=](RegionCaptureRequest request, QRect bar, QObject* parent)
+            {
+                return ScrollCaptureTestAccess::create(
+                    request, bar, std::make_unique<RegionStub>(capture),
+                    std::make_unique<InjectorStub>(injector), [] { return QPoint(50, 50); }, {},
+                    parent);
+            });
+        auto* overlay = new SelectionOverlay(frame);
+        OverlayScrollTestAccess::enable(*overlay);
+        overlay->show();
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+        ApplicationControllerTestAccess::connectScroll(controller, frame.display);
+        const QRect region(200, 200, 320, 400);
+        overlay->enterScrollReady(region);
+        scrollButton(overlay, "scrollStartButton")->click();
+        const auto source = scrollDocument();
+        capture->frame(source.copy(0, 0, 320, 400));
+        capture->error(QStringLiteral("重试用警告"));
+        auto result = ApplicationControllerTestAccess::result(controller);
+        QVERIFY(result && result->isVisible());
+        scrollButton(result, "scrollResultRetryButton")->click();
+        QVERIFY(controller.active());
+        QTRY_VERIFY(ApplicationControllerTestAccess::overlay(controller));
+        auto retry = ApplicationControllerTestAccess::overlay(controller);
+        QVERIFY(retry->isScrollReady());
+        QCOMPARE(retry->selection(), region);
+        QVERIFY(ApplicationControllerTestAccess::readyGuard(controller));
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QVERIFY(controller.active());
+        // 准备态退出直接丢弃，不弹结果确认；会话码 14。
+        controller.quit();
+        QVERIFY(!controller.active());
+        QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
+        QFile metrics(options.metricsFile);
+        QVERIFY(metrics.open(QIODevice::ReadOnly));
+        const auto first = QJsonDocument::fromJson(metrics.readLine()).object();
+        const auto second = QJsonDocument::fromJson(metrics.readLine()).object();
+        QCOMPARE(first.value(QStringLiteral("outcome")).toInt(), 13);
+        QCOMPARE(second.value(QStringLiteral("outcome")).toInt(), 14);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    void scrollControllerPermissionDialogAndQuitCancel()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temp;
+        RunOptions options;
+        options.metricsFile = temp.filePath(QStringLiteral("metrics.jsonl"));
+        ApplicationController controller(*qApp, options);
+        auto capture = std::make_shared<RegionStubState>();
+        auto injector = std::make_shared<InjectorStubState>();
+        ApplicationControllerTestAccess::factory(
+            controller,
+            [=](RegionCaptureRequest request, QRect bar, QObject* parent)
+            {
+                return ScrollCaptureTestAccess::create(
+                    request, bar, std::make_unique<RegionStub>(capture),
+                    std::make_unique<InjectorStub>(injector), [] { return QPoint(50, 50); }, {},
+                    parent);
+            });
+        const auto frame = annotationFrame();
+        auto* overlay = new SelectionOverlay(frame);
+        OverlayScrollTestAccess::enable(*overlay);
+        overlay->show();
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+        ApplicationControllerTestAccess::connectScroll(controller, frame.display);
+        overlay->enterScrollReady({200, 200, 320, 400});
+        scrollButton(overlay, "scrollStartButton")->click();
+        auto bar = ApplicationControllerTestAccess::bar(controller);
+        bool permissionSeen = false;
+        QTimer::singleShot(0,
+                           [&]
+                           {
+                               auto* dialog =
+                                   qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                               permissionSeen =
+                                   dialog &&
+                                   dialog->text() == ScrollInjector::permissionExplanation() &&
+                                   !bar->isVisible() && !overlay->isVisible();
+                               if (dialog)
+                                   dialog->reject();
+                           });
+        scrollButton(bar, "scrollAutoToggle")->click();
+        QVERIFY(permissionSeen);
+        QVERIFY(bar->isVisible());
+        QVERIFY(!scrollButton(bar, "scrollAutoToggle")->isChecked());
+        QCOMPARE(injector->posts.size(), 0);
+        capture->frame(scrollDocument().copy(0, 0, 320, 400));
+        scrollButton(bar, "scrollFinishButton")->click();
+        auto result = ApplicationControllerTestAccess::result(controller);
+        QVERIFY(result);
+        bool quitSeen = false;
+        QTimer::singleShot(
+            0,
+            [&]
+            {
+                auto* dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                quitSeen =
+                    dialog && dialog->text() == QStringLiteral("有未保存的长图，退出将丢弃。");
+                if (dialog)
+                    dialog->reject();
+            });
+        controller.quit();
+        QVERIFY(quitSeen && result && result->isVisible());
+        result->closeWithoutConfirmation();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    void scrollResultSavePinAndLimit()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temp;
+        const auto source = scrollDocument();
+        ScrollStitchStats stats;
+        stats.limitReached = true;
+        ScrollResultActions actions;
+        actions.loadSavePreferences = [&]
+        { return SavePreferences{temp.path(), ImageFormat::Png}; };
+        QImage pinned;
+        actions.pinImage = [&](const QImage& image)
+        {
+            pinned = image;
+            return ImageOutputResult{true, {}};
+        };
+        auto* result = new ScrollResultWindow(source, stats, actions);
+        result->show();
+        QVERIFY(result->findChild<QWidget*>(QStringLiteral("scrollResultWarningBar"))->isVisible());
+        QVERIFY(scrollButton(result, "scrollResultRetryButton")->isHidden());
+        scrollButton(result, "scrollResultSaveButton")->click();
+        QVERIFY(result->hasOutput());
+        const auto files = QDir(temp.path()).entryList({QStringLiteral("*.png")}, QDir::Files);
+        QCOMPARE(files.size(), 1);
+        QCOMPARE(QImage(QDir(temp.path()).filePath(files.first())), source);
+        scrollButton(result, "scrollResultPinButton")->click();
+        QCOMPARE(pinned, source);
+        QVERIFY(result->isVisible());
+        QVERIFY(result->close());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    void scrollUnreliableFramesNeverTriggerBottom()
+    {
+        using namespace waibusnap;
+        auto capture = std::make_shared<RegionStubState>();
+        auto injector = std::make_shared<InjectorStubState>();
+        injector->authorized = true;
+        RegionCaptureRequest request{{0, {0, 0, 800, 600}, 1, 0, {}}, {0, 0, 320, 400}, {}};
+        std::unique_ptr<ScrollCaptureSession> session(ScrollCaptureTestAccess::create(
+            request, {}, std::make_unique<RegionStub>(capture),
+            std::make_unique<InjectorStub>(injector), [] { return QPoint(50, 50); }));
+        QSignalSpy completed(session.get(), &ScrollCaptureSession::completed);
+        session->start();
+        const auto source = scrollDocument();
+        capture->frame(source.copy(0, 0, 320, 400));
+        capture->frame(source.copy(0, 60, 320, 400));
+        session->setAutomatic(true);
+        ScrollCaptureTestAccess::stopTimer(*session);
+        ScrollCaptureTestAccess::tick(*session);
+        // 未收到帧时不继续投递，缺口帧不能算作静止到底。
+        ScrollCaptureTestAccess::tick(*session);
+        QCOMPARE(injector->posts.size(), 1);
+        for (int index = 0; index < 3; ++index)
+        {
+            capture->frame(source.copy(0, 800, 320, 400));
+            ScrollCaptureTestAccess::tick(*session);
+        }
+        QCOMPARE(completed.size(), 0);
+        QVERIFY(session->stats().warnings > 0);
+        session->stop();
+    }
     void ocrModeLifecycle()
     {
         auto engine = std::make_shared<OcrStub>();
@@ -1537,15 +2425,15 @@ class StartupSmokeTest final : public QObject
         using namespace waibusnap;
         ApplicationController controller(*qApp, {});
         auto* menu = controller.menu();
-        QCOMPARE(menu->actions().size(), qsizetype(6));
+        QCOMPARE(menu->actions().size(), qsizetype(7));
         QCOMPARE(menu->actions()[0]->text(), QStringLiteral("截图"));
-        QCOMPARE(menu->actions()[1]->text(), QStringLiteral("剪贴板贴图"));
-        QCOMPARE(menu->actions()[1]->objectName(), QStringLiteral("clipboardStickerAction"));
-        QVERIFY(menu->actions()[1]->isEnabled());
-        QCOMPARE(menu->actions()[2]->text(), QStringLiteral("设置…"));
-        QCOMPARE(menu->actions()[5]->text(), QStringLiteral("退出"));
-        auto* hide = menu->actions()[3];
-        auto* restore = menu->actions()[4];
+        QCOMPARE(menu->actions()[2]->text(), QStringLiteral("剪贴板贴图"));
+        QCOMPARE(menu->actions()[2]->objectName(), QStringLiteral("clipboardStickerAction"));
+        QVERIFY(menu->actions()[2]->isEnabled());
+        QCOMPARE(menu->actions()[3]->text(), QStringLiteral("设置…"));
+        QCOMPARE(menu->actions()[6]->text(), QStringLiteral("退出"));
+        auto* hide = menu->actions()[4];
+        auto* restore = menu->actions()[5];
         QCOMPARE(hide->text(), QStringLiteral("隐藏全部贴图"));
         QCOMPARE(restore->text(), QStringLiteral("恢复全部贴图"));
         QCOMPARE(hide->objectName(), QStringLiteral("hideAllStickersAction"));
@@ -1888,7 +2776,7 @@ class StartupSmokeTest final : public QObject
             [&]
             {
                 sessionGuarded = controller.active() && !action->isEnabled() &&
-                                 !controller.menu()->actions()[2]->isEnabled();
+                                 !controller.menu()->actions()[3]->isEnabled();
                 sessionGuarded &=
                     ApplicationControllerTestAccess::watchdog(controller).isActive() &&
                     ApplicationControllerTestAccess::watchdog(controller).interval() == 5000;
@@ -1910,7 +2798,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!controller.active());
         QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
         QVERIFY(action->isEnabled());
-        QVERIFY(controller.menu()->actions()[2]->isEnabled());
+        QVERIFY(controller.menu()->actions()[3]->isEnabled());
         QCOMPARE(controller.stickers().count(), 1);
     }
     void controllerSessionWatchdogRecovery_data()
@@ -1936,7 +2824,7 @@ class StartupSmokeTest final : public QObject
             delete overlay.data();
         ApplicationControllerTestAccess::observe(controller);
         const auto oldToken = ApplicationControllerTestAccess::token(controller);
-        QVERIFY(!controller.menu()->actions()[2]->isEnabled());
+        QVERIFY(!controller.menu()->actions()[3]->isEnabled());
         QVERIFY(!clipboardAction(controller)->isEnabled());
         QTest::ignoreMessage(
             QtWarningMsg, QRegularExpression(QStringLiteral("截图会话异常残留，已自动复位：.*")));
@@ -1947,7 +2835,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
         QVERIFY(ApplicationControllerTestAccess::observationCleared(controller));
         QVERIFY(ApplicationControllerTestAccess::token(controller) > oldToken);
-        QVERIFY(controller.menu()->actions()[2]->isEnabled());
+        QVERIFY(controller.menu()->actions()[3]->isEnabled());
         QVERIFY(clipboardAction(controller)->isEnabled());
         if (overlay)
             QTRY_VERIFY(!overlay);
@@ -2033,7 +2921,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(hidden);
         QVERIFY(locked);
         QVERIFY(!controller.active());
-        QVERIFY(controller.menu()->actions()[2]->isEnabled());
+        QVERIFY(controller.menu()->actions()[3]->isEnabled());
         QVERIFY(clipboardAction(controller)->isEnabled());
     }
     void controllerQuitDialogHidesAndRestoresOverlay_data()
@@ -3976,8 +4864,8 @@ class StartupSmokeTest final : public QObject
     void coverOverlayToolbarFitsNarrowScreens_data()
     {
         QTest::addColumn<int>("screenWidth");
-        for (int width : {320, 480, 533, 534, 559, 560, 565, 566, 586, 587,
-                          597, 598, 618, 619, 639, 640, 650, 651, 720, 800})
+        for (int width : {320, 480, 533, 534, 559, 560, 565, 566, 586, 587, 597, 598,
+                          618, 619, 629, 630, 639, 640, 650, 651, 682, 683, 720, 800})
             QTest::newRow(qPrintable(QString::number(width))) << width;
     }
     void coverOverlayToolbarFitsNarrowScreens()
@@ -4008,7 +4896,7 @@ class StartupSmokeTest final : public QObject
                 QVERIFY(control->isVisible());
                 QVERIFY(toolbar->rect().contains(control->geometry()));
             }
-        if (screenWidth >= 640)
+        if (screenWidth >= 630)
         {
             QCOMPARE(toolbar->height(), 44);
             QCOMPARE(button(overlay, "copyButton")->y(), first->y());
@@ -4016,7 +4904,7 @@ class StartupSmokeTest final : public QObject
         if (screenWidth == 480)
             QCOMPARE(toolbar->height(), 76);
         if (screenWidth == 320)
-            QCOMPARE(toolbar->height(), 140);
+            QCOMPARE(toolbar->height(), 172);
         QTest::mouseClick(cover, Qt::LeftButton);
         QVERIFY(overlay.activeTool() == AnnotationType::Cover);
         auto* mosaic = button(overlay, "mosaicToolButton");
@@ -4028,11 +4916,11 @@ class StartupSmokeTest final : public QObject
         auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
         QVERIFY(status->isVisible());
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
-        QCOMPARE(toolbar->height(), screenWidth >= 598 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 630 ? 44 : screenWidth > 332 ? 76 : 172);
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
         QTRY_VERIFY(!overlay.isRecognizingText());
         QVERIFY(button(overlay, "extractAllTextButton")->isVisible());
-        QCOMPARE(toolbar->height(), screenWidth >= 651 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 683 ? 44 : screenWidth > 332 ? 76 : 172);
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
         for (auto* control : toolbar->findChildren<QPushButton*>())
         {
@@ -5384,7 +6272,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 ++handled;
             });
-        controller.menu()->actions().at(2)->trigger();
+        controller.menu()->actions().at(3)->trigger();
         QCOMPARE(handled, 1);
         QCOMPARE(stub.requests, QVector<bool>{true});
         QVERIFY(stub.state.enabled);
@@ -5402,7 +6290,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 ++handled;
             });
-        controller.menu()->actions().at(2)->trigger();
+        controller.menu()->actions().at(3)->trigger();
         QCOMPARE(handled, 2);
         QCOMPARE(stub.requests, QVector<bool>{true});
         QCOMPARE(stub.queries, 3);
@@ -5547,7 +6435,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 handled = true;
             });
-        controller.menu()->actions().at(2)->trigger();
+        controller.menu()->actions().at(3)->trigger();
         QVERIFY(handled);
         QVERIFY(window->saveImage());
         QCOMPARE(panels, 1);
@@ -5579,7 +6467,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 handled = true;
             });
-        controller.menu()->actions().at(2)->trigger();
+        controller.menu()->actions().at(3)->trigger();
         QVERIFY(handled);
         QVERIFY(!window->saveImage());
         QCOMPARE(panels, 2);

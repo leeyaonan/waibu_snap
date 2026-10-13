@@ -1,5 +1,6 @@
 #include "interfaces/overlay_window_behavior.h"
 #include "interfaces/platform_workarounds.h"
+#include "interfaces/region_capture.h"
 #import <AppKit/AppKit.h>
 #include <QGuiApplication>
 #include <QWindow>
@@ -64,6 +65,22 @@ class PlatformWorkaroundsTest final : public QObject
         QCOMPARE(native.level, NSInteger(0));
         waibusnap::raiseOverlayAboveSystemChrome(&window);
         QCOMPARE(native.level, NSInteger(25));
+    }
+    void regionWindowIdGuardsAndNativeNumber()
+    {
+        QCOMPARE(waibusnap::regionCaptureWindowId(nullptr), quint64(0));
+        QWindow window;
+        QVERIFY(!window.handle());
+        QCOMPARE(waibusnap::regionCaptureWindowId(&window), quint64(0));
+        QVERIFY(!window.handle());
+        if (QGuiApplication::platformName() != QStringLiteral("cocoa") ||
+            QGuiApplication::screens().isEmpty())
+            return;
+        window.create();
+        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window.winId());
+        QVERIFY(view.window);
+        QCOMPARE(waibusnap::regionCaptureWindowId(&window), quint64(view.window.windowNumber));
+        QVERIFY(waibusnap::regionCaptureWindowId(&window) > 0);
     }
     void safeClickCount()
     {

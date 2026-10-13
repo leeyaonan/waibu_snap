@@ -1,5 +1,6 @@
 #pragma once
 #include "app/app_settings.h"
+#include "app/scroll_capture.h"
 #include "app/sticker_manager.h"
 #include "interfaces/autostart.h"
 #include "interfaces/capture_provider.h"
@@ -8,6 +9,8 @@
 #include "interfaces/window_enumerator.h"
 #include "session/session_metrics.h"
 #include "ui/clipboard_sticker_toast.h"
+#include "ui/scroll_capture_windows.h"
+#include "ui/scroll_result_window.h"
 #include "ui/selection_overlay.h"
 #include <QApplication>
 #include <QMenu>
@@ -50,6 +53,12 @@ class ApplicationController final : public QObject
   private:
     // 冒烟仅通过友元注入会话状态，不开放生产运行参数。
     friend struct ApplicationControllerTestAccess;
+    void bindScrollOverlay(DisplayTarget display);
+    void beginScrollCapture(RegionCaptureRequest request);
+    void finishScrollCapture();
+    void clearScrollCapture(int outcome = scrollCancelledOutcome);
+    bool resolveScrollResultsForQuit();
+    void layoutChanged();
     void cleanup();
     void captureCompleted(quint64 token, CaptureResult result);
     void finish(QRect pixels, int outcome);
@@ -62,6 +71,7 @@ class ApplicationController final : public QObject
     QString changeHotkey(const QKeySequence& sequence);
     QApplication& application_;
     RunOptions options_;
+    QAction* scrollAction_ = nullptr;
     QAction* settingsAction_ = nullptr;
     QAction* clipboardStickerAction_ = nullptr;
     QAction* hideAllStickersAction_ = nullptr;
@@ -81,6 +91,19 @@ class ApplicationController final : public QObject
     std::unique_ptr<ClipboardStickerToast> clipboardToast_;
     quint64 clipboardStickerSequence_ = 0;
     QPointer<SelectionOverlay> overlay_;
+    QPointer<ScrollCaptureSession> scrollSession_;
+    QPointer<ScrollBorderWindow> scrollBorder_;
+    QPointer<ScrollControlBar> scrollBar_;
+    QVector<QPointer<ScrollResultWindow>> scrollResults_;
+    std::function<ScrollCaptureSession*(RegionCaptureRequest, QRect, QObject*)> scrollFactory_;
+    std::function<SelectionOverlay*(CaptureFrame, OverlayActions, QVector<QRect>, QString)>
+        overlayFactory_;
+    std::function<void()> scrollRestoreFocus_;
+    std::optional<DisplayTarget> retryDisplay_;
+    QRect retryRegion_;
+    bool scrollFlowActive_ = false;
+    qint64 scrollStartedNs_ = 0;
+    quint64 scrollStickerSequence_ = 0;
     SessionMetrics metrics_;
     QTimer captureTimeout_;
     QTimer sessionWatchdog_;

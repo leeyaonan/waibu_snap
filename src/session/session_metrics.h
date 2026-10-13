@@ -6,6 +6,8 @@ namespace waibusnap
 inline constexpr int cancelledSessionOutcome = 2;
 inline constexpr int copiedSessionOutcome = 10;
 inline constexpr int pinnedSessionOutcome = 11;
+inline constexpr int scrollCompletedOutcome = 13;
+inline constexpr int scrollCancelledOutcome = 14;
 struct SessionMetrics
 {
     int sequence = 0;

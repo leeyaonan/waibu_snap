@@ -2,11 +2,13 @@
 #include "core/selection_assistance.h"
 #include "core/window_snapping.h"
 #include "interfaces/overlay_window_behavior.h"
+#include "interfaces/region_capture.h"
 #include "output/annotation_renderer.h"
 #include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
 #include "ui/annotation_text_edit.h"
 #include "ui/ocr_dialog.h"
+#include "ui/scroll_capture_windows.h"
 #include "ui/text_recognition_task.h"
 #include "ui/toolbar_icons.h"
 #include <QApplication>
@@ -14,6 +16,7 @@
 #include <QCloseEvent>
 #include <QDir>
 #include <QFocusEvent>
+#include <QHBoxLayout>
 #include <QInputMethod>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -39,6 +42,7 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
       frame_(std::move(frame)), actions_(std::move(actions)), windows_(std::move(windows))
 {
+    scrollSupported_ = regionCaptureSupported();
     if (!snappingError.isEmpty() || windows_.isEmpty())
     {
         windows_.clear();
@@ -178,6 +182,13 @@ void SelectionOverlay::ensureToolbar()
                             QStringLiteral("取字（文字识别）"), ToolbarIcon::Ocr);
     ocrButton_->setCheckable(true);
     connect(ocrButton_, &QPushButton::clicked, this, &SelectionOverlay::toggleTextMode);
+    longImageButton_ =
+        makeButton(toolbar_, QStringLiteral("longImageButton"),
+                   scrollSupported_ ? QStringLiteral("截长图：以当前选区为滚动采集区域")
+                                    : QStringLiteral("截长图暂不支持当前平台（Windows 后补）。"),
+                   ToolbarIcon::LongImage);
+    longImageButton_->setEnabled(scrollSupported_);
+    connect(longImageButton_, &QPushButton::clicked, this, [this] { enterScrollReady(); });
     const QString actionObjects[] = {QStringLiteral("undoAnnotationButton"),
                                      QStringLiteral("redoAnnotationButton"),
                                      QStringLiteral("copyButton"),
@@ -378,6 +389,7 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
     for (auto* tool : toolButtons_)
         tools.append(tool);
     tools.append(ocrButton_);
+    tools.append(longImageButton_);
     QVector<QWidget*> actions;
     if (textMode_)
         actions << extractAllTextButton_ << separators_[1];
@@ -421,13 +433,14 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
         // 320 逻辑像素使用三列工具网格，操作组仍紧凑成行。
         // 取字多一枚操作按钮；320px 下缩小间距，保留全部 28px 按钮与三行工具。
         const int gap = rowWidth(actions) > availableWidth ? 1 : 4;
-        toolbar_->setFixedSize(std::max(108, rowWidth(actions, gap)), 140);
+        const int actionsY = 8 + int((tools.size() + 2) / 3) * 32;
+        toolbar_->setFixedSize(std::max(108, rowWidth(actions, gap)), actionsY + 36);
         for (int index = 0; index < tools.size(); ++index)
         {
             tools[index]->move(8 + index % 3 * 32, 8 + index / 3 * 32);
             tools[index]->show();
         }
-        placeRow(actions, 104, gap);
+        placeRow(actions, actionsY, gap);
     }
 }
 void SelectionOverlay::updateOptionsBar()
@@ -606,7 +619,7 @@ QImage SelectionOverlay::outputImage() const
 QRect SelectionOverlay::toolbarClusterRect() const
 {
     QRect cluster;
-    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, shapeBar_})
+    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, shapeBar_, scrollReadyBar_})
         if (panel && !panel->isHidden())
             cluster = cluster.united(panel->geometry());
     return cluster;
@@ -634,6 +647,21 @@ void SelectionOverlay::positionStatus()
 }
 void SelectionOverlay::updateToolbar()
 {
+    if (scrollReady_)
+    {
+        toolbar_->hide();
+        optionsBar_->hide();
+        ratioBar_->hide();
+        shapeBar_->hide();
+        undoShortcut_->setEnabled(false);
+        redoShortcut_->setEnabled(false);
+        copyShortcut_->setEnabled(false);
+        updateScrollReadyBar();
+        positionStatus();
+        return;
+    }
+    if (scrollReadyBar_)
+        scrollReadyBar_->hide();
     if (finished_ || selection_.isEmpty() || dragMode_ == DragMode::Create)
     {
         if (toolbar_)
@@ -699,6 +727,103 @@ void SelectionOverlay::updateToolbar()
         showStatus(notice, false);
     }
 }
+
+void SelectionOverlay::enterScrollReady(QRect preset)
+{
+    if (finished_ || scrollReady_ || saveDialogOpen_ || ocrDialog_ || !scrollSupported_)
+        return;
+    if (!preset.isEmpty())
+        setSelection(preset & frame_.pixels.rect());
+    finishText(true, false);
+    exitTextMode();
+    if (selection_.isEmpty())
+    {
+        showStatus(QStringLiteral("请先框选区域再截长图。"), true);
+        return;
+    }
+    if (selection_.width() < 64 || selection_.height() < 64)
+    {
+        showStatus(QStringLiteral("区域太小，请重新框选（至少 64 × 64 像素）。"), true);
+        return;
+    }
+    const bool annotated = history_.canUndo() || history_.canRedo();
+    discardAnnotations();
+    if (annotated)
+        markDirty();
+    ensureToolbar();
+    dragMode_ = DragMode::None;
+    hoveredWindowPixels_ = {};
+    hideMagnifier();
+    scrollReady_ = true;
+    setCursor(Qt::ArrowCursor);
+    updateToolbar();
+    if (annotated)
+        showStatus(QStringLiteral("已清除标注，长图结果不含标注。"), true);
+    else
+        status_->hide();
+    setFocus(Qt::OtherFocusReason);
+    update();
+    emit scrollReadyChanged(true);
+}
+void SelectionOverlay::updateScrollReadyBar()
+{
+    if (!scrollReadyBar_)
+    {
+        scrollReadyBar_ = new QWidget(this);
+        scrollReadyBar_->setObjectName(QStringLiteral("scrollReadyBar"));
+        scrollReadyBar_->setStyleSheet(
+            QStringLiteral("QWidget#scrollReadyBar { background: #202020; border: 1px solid "
+                           "#3a3a3a; border-radius: 8px; }"
+                           "QLabel { color: #f2f2f2; border: none; font-size: 12px; }"
+                           "QPushButton { color: white; background: #363636; border: none; "
+                           "border-radius: 6px; padding: 0 6px; }"));
+        auto* layout = new QHBoxLayout(scrollReadyBar_);
+        layout->setContentsMargins(6, 6, 6, 6);
+        layout->setSpacing(4);
+        auto* title = new QLabel(QStringLiteral("截长图：选区已锁定"), scrollReadyBar_);
+        title->setObjectName(QStringLiteral("scrollReadyTitleLabel"));
+        title->setWordWrap(true);
+        layout->addWidget(title);
+        auto* size = new QLabel(scrollReadyBar_);
+        size->setObjectName(QStringLiteral("scrollReadySizeLabel"));
+        size->setWordWrap(true);
+        layout->addWidget(size);
+        const auto button = [&](const QString& name, const QString& text)
+        {
+            auto* result = new QPushButton(text, scrollReadyBar_);
+            result->setObjectName(name);
+            result->setFixedHeight(28);
+            result->setFocusPolicy(Qt::NoFocus);
+            layout->addWidget(result);
+            return result;
+        };
+        connect(button(QStringLiteral("scrollStartButton"), QStringLiteral("开始采集")),
+                &QPushButton::clicked, this, &SelectionOverlay::startScrollCapture);
+        connect(button(QStringLiteral("scrollBackButton"), QStringLiteral("返回")),
+                &QPushButton::clicked, this,
+                [this]
+                {
+                    scrollReady_ = false;
+                    updateToolbar();
+                    update();
+                    emit scrollReadyChanged(false);
+                });
+        connect(button(QStringLiteral("scrollReadyCancelButton"), QStringLiteral("取消")),
+                &QPushButton::clicked, this, [this] { complete(scrollCancelledOutcome); });
+    }
+    scrollReadyBar_->findChild<QLabel*>(QStringLiteral("scrollReadySizeLabel"))
+        ->setText(QStringLiteral("%1 × %2 像素").arg(selection_.width()).arg(selection_.height()));
+    scrollReadyBar_->setGeometry(
+        placeScrollBar(logicalSelection().toAlignedRect(), QSize(530, 44), availableRect()));
+    scrollReadyBar_->show();
+}
+void SelectionOverlay::startScrollCapture()
+{
+    if (!scrollReady_ || finished_)
+        return;
+    scrollReadyBar_->hide();
+    emit scrollCaptureRequested(selection_);
+}
 void SelectionOverlay::showStatus(const QString& text, bool temporary)
 {
     ensureToolbar();
@@ -707,6 +832,14 @@ void SelectionOverlay::showStatus(const QString& text, bool temporary)
     status_->setToolTip(text);
     status_->show();
     updateToolbar();
+    if (selection_.isEmpty())
+    {
+        const QRect bounds = availableRect();
+        status_->setFixedWidth(std::min(530, bounds.width()));
+        status_->setFixedHeight(std::max(28, status_->heightForWidth(status_->width()) + 8));
+        status_->move(bounds.center().x() - status_->width() / 2, bounds.top() + 64);
+        status_->show();
+    }
     if (temporary)
         statusTimeout_.start(3000);
 }
@@ -852,6 +985,11 @@ SelectionEdges SelectionOverlay::edgesAt(QPointF position) const
 }
 void SelectionOverlay::updateCursor(QPointF position)
 {
+    if (scrollReady_)
+    {
+        setCursor(Qt::ArrowCursor);
+        return;
+    }
     if (textMode_)
     {
         setCursor(textAt(position, false).valid() ? Qt::IBeamCursor : Qt::ArrowCursor);
@@ -957,7 +1095,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         QPainterPath outline;
         if (!selection_.isEmpty())
         {
-            if (activeShape_ >= 0 && activeShape_ < 6)
+            if (!scrollReady_ && activeShape_ >= 0 && activeShape_ < 6)
             {
                 outline = captureShapePath(static_cast<CaptureShape>(activeShape_), region);
                 shade = shade.subtracted(outline);
@@ -967,7 +1105,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         }
         painter.setRenderHint(QPainter::Antialiasing, activeShape_ >= 0);
         painter.fillPath(shade, QColor(0, 0, 0, 75));
-        if (!selection_.isEmpty() && activeShape_ >= 6)
+        if (!scrollReady_ && !selection_.isEmpty() && activeShape_ >= 6)
         {
             const QSize target(std::max(1, qRound(region.width())),
                                std::max(1, qRound(region.height())));
@@ -999,7 +1137,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         painter.setPen(QPen(Qt::white, 1.0 / scale));
         if (!selection_.isEmpty())
         {
-            if (activeShape_ >= 0 && activeShape_ < 6)
+            if (!scrollReady_ && activeShape_ >= 0 && activeShape_ < 6)
                 painter.drawPath(outline);
             else
                 painter.drawRect(region);
@@ -1020,7 +1158,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
                 painter.drawPath(highlight.simplified());
                 painter.restore();
             }
-            if (!textMode_ && dragMode_ != DragMode::Create)
+            if (!scrollReady_ && !textMode_ && dragMode_ != DragMode::Create)
             {
                 painter.setBrush(QColor(245, 130, 35));
                 const qreal x[] = {region.left(), region.center().x(), region.right()};
@@ -1031,10 +1169,11 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
                             painter.drawRect(QRectF(x[column] - 3, y[row] - 3, 6, 6));
             }
         }
-        const QString hint = textMode_ ? QStringLiteral("拖选文字 · 双击选词 · Esc 退出取字")
-                             : activeTool_
-                                 ? QStringLiteral("拖拽标注 · 再点工具调整选区 · Esc 取消")
-                                 : QStringLiteral("单击吸附 · 拖拽框选 · Esc 取消");
+        const QString hint =
+            scrollReady_ ? QStringLiteral("回车开始采集 · Esc 取消 · 尽量避开固定侧栏")
+            : textMode_   ? QStringLiteral("拖选文字 · 双击选词 · Esc 退出取字")
+            : activeTool_ ? QStringLiteral("拖拽标注 · 再点工具调整选区 · Esc 取消")
+                          : QStringLiteral("单击吸附 · 拖拽框选 · Esc 取消");
         const QString text = selectionSizeText() + QStringLiteral("   ") + hint;
         const QRect box(16, 16, std::max(0, std::min(width() - 32, 580)), 36);
         painter.fillRect(box, QColor(20, 20, 20, 220));
@@ -1056,6 +1195,8 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
 }
 void SelectionOverlay::mousePressEvent(QMouseEvent* event)
 {
+    if (scrollReady_)
+        return;
     if (ocrDialog_ || finished_ || saveDialogOpen_ || event->button() != Qt::LeftButton)
         return;
     hideMagnifier();
@@ -1111,6 +1252,8 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
 }
 void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
 {
+    if (scrollReady_)
+        return;
     if (ocrDialog_ || finished_ || saveDialogOpen_)
         return;
     if (textMode_)
@@ -1133,6 +1276,8 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
 }
 void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (scrollReady_)
+        return;
     if (ocrDialog_)
         return;
     if (textMode_ && !finished_ && !saveDialogOpen_ && event->button() == Qt::LeftButton)
@@ -1170,6 +1315,15 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
 }
 void SelectionOverlay::keyPressEvent(QKeyEvent* event)
 {
+    if (scrollReady_)
+    {
+        if (event->key() == Qt::Key_Escape)
+            complete(scrollCancelledOutcome);
+        else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+            startScrollCapture();
+        event->accept();
+        return;
+    }
     if (ocrDialog_)
     {
         if (event->key() == Qt::Key_Escape)
@@ -1282,7 +1436,7 @@ bool SelectionOverlay::nudgeSelection(QKeyEvent* event)
 }
 void SelectionOverlay::showMagnifier(QPoint anchor, bool keyboard)
 {
-    if (textMode_ || finished_ || saveDialogOpen_ || activeTool_)
+    if (scrollReady_ || textMode_ || finished_ || saveDialogOpen_ || activeTool_)
         return;
     const QRect sampleRect = magnifierSamplingRect(anchor, frame_.pixels.size());
     if (sampleRect.isEmpty())
@@ -1381,13 +1535,14 @@ void SelectionOverlay::closeEvent(QCloseEvent* event)
         exitTextMode();
         hideMagnifier();
         discardAnnotations();
-        emit finished({}, cancelledSessionOutcome);
+        emit finished({}, scrollReady_ ? scrollCancelledOutcome : cancelledSessionOutcome);
     }
 }
 void SelectionOverlay::complete(int outcome)
 {
     if (finished_)
         return;
+    scrollReady_ = false;
     finished_ = true;
     exitTextMode();
     hideMagnifier();
@@ -1698,6 +1853,8 @@ void SelectionOverlay::selectOcrTo(QPointF position)
 }
 void SelectionOverlay::mouseDoubleClickEvent(QMouseEvent* event)
 {
+    if (scrollReady_)
+        return;
     if (!textMode_)
     {
         QWidget::mouseDoubleClickEvent(event);
@@ -1727,6 +1884,8 @@ QVector<QRectF> SelectionOverlay::ocrHighlightBoxes() const
 }
 void SelectionOverlay::copyShortcut()
 {
+    if (scrollReady_)
+        return;
     if (finished_ || saveDialogOpen_ || ocrDialog_)
         return;
     if (!textMode_)
