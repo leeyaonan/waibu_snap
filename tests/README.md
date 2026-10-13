@@ -432,7 +432,7 @@ python3 tests/unit/objc_block_capture_test.py --build-dir build/macos
 
 ### 浅底文字匹配退化修复（2026-10-13–14）
 
-来源：v004、用户提供的「滚动过快」独立复现与根因说明。分支 `fix/scroll-stitcher-flat-content` 基于 main `7ad497f`，不合并。此前只用随机噪声验证接缝，不能覆盖浏览器 / 文档的白底稀疏笔画。
+来源：v004、用户提供的「滚动过快」独立复现与根因说明。分支 `fix/scroll-stitcher-flat-content` 基于 main `7ad497f`，修复见 [PR #27](https://github.com/leeyaonan/waibu_snap/pull/27)，按用户要求不合并。此前只用随机噪声验证接缝，不能覆盖浏览器 / 文档的白底稀疏笔画。
 
 独立无头探针使用 `QGuiApplication` + offscreen、`QPainter` 渲染 Arial 14px 文本页（白底、每行不同内容、20 / 22px 行距、1px 灰色分隔线），按页面坐标裁剪 800×640 帧，直接调用生产 `ScrollStitcher`，240 帧，无 GUI 操作 / 屏幕录制 / 辅助功能权限。该探针与单测的文本内容生成器独立；下面的字体 / 字符串与用户原稿不同，不混用计数。
 
@@ -462,7 +462,7 @@ python3 tests/unit/objc_block_capture_test.py --build-dir build/macos
 
 通用匹配失败无法证明滚动速度过快，改提示「画面重叠不足或内容变化，部分帧未拼接。」；只在警告处数增加时发出，连续异常不逐帧重发。有效慢速与亚像素零位移不计警告。公共 API、结果码、端带 / 轴锁定 / 长度面积上限及统计字段含义保留。冒烟补断言：连续真实缺口只提示一次、无「滚动较快」误归因、不触发自动到底。
 
-本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：原 WaibuSnap Dev / bundle id / 证书叶 requirement 签名恢复并核验，16 项 CTest、426 / 359 冒烟、56 项拼接单测（含数据行与初始化 / 清理）、ObjC 块捕获门禁、clang-format 18.1.8 全量与 `git diff --check` 通过。保留的 2560×1440 首个位移帧探针约 4.3ms，仍在 ≤6ms 量级；它不代替真机长会话性能。双端 CI 与 Intel 交叉构建在本次修复 PR 验证。
+本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：原 WaibuSnap Dev / bundle id / 证书叶 requirement 签名恢复并核验，16 项 CTest、426 / 359 冒烟、56 项拼接单测（含数据行与初始化 / 清理）、ObjC 块捕获门禁、clang-format 18.1.8 全量与 `git diff --check` 通过。保留的 2560×1440 首个位移帧探针约 4.3ms，仍在 ≤6ms 量级；它不代替真机长会话性能。双端 CI 与 Intel 交叉构建在 [PR #27](https://github.com/leeyaonan/waibu_snap/pull/27) 验证。
 
 ```bash
 QT_QPA_PLATFORM=offscreen build/macos/tests/scroll_stitcher_test lightTextAndNoise smoothTextAndNoise
