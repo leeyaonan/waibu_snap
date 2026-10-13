@@ -13,6 +13,10 @@
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
 
+`ApplicationController` 对触发守卫拒绝、会话开始、捕获完成、覆盖层首帧、可交互就绪与会话结束逐次记录中文日志，一行一事、不节流；`fail()` 保留原警告。`sessionWatchdog_` 仅在截图会话中每 5 秒检查，`finish()` 停止；active、无 Qt 模态、无可见覆盖层且会话年龄至少 20 秒时，先输出状态快照，再以新结果码 **12（异常残留自动复位）** 走统一清理，释放锁并恢复菜单。空闲无轮询，不改变有效性能样本集合 `(1, 2, 10, 11)`。该安全网将必须退出重开的状态泄漏降级为自动恢复并留证；取得日志后仍须定位根因，事件循环本身阻塞不在此安全网范围内。冒烟通过友元注入年龄与残留状态，不开放生产运行参数、不把注入当作真实卡死复现。
+
+2026-10-13 弹窗防御：`fail()` 弹出独立 QMessageBox 前隐藏层级 25 的全屏覆盖层，继续持有会话锁，关闭提示后统一结束。托盘退出的未保存汇总 / 逐张保存期间同样隐藏；取消退出只恢复原先可见、仍存活且 token 未变的当前覆盖层，避免嵌套事件循环结束会话后复活旧窗口。OCR 对话框是覆盖层子窗口，无需隐藏；覆盖层保存面板沿用 PR #24 的临时降级 / 恢复；设置入口在会话中拒绝。上述遮挡防御不作为本次偶发静默残留的根因结论，现场取证见 tests/README。
+
 `createTrayIcon()` 在 macOS 返回 18 / 36px 黑版并设置模板标记，Windows 返回 16 / 32px 彩色版。四个确认 PNG 由平台 CMake 的 `qt_add_resources` 嵌入，显式加入 @2x 档位；`ApplicationController` 只装配返回的 QIcon，菜单与点击路径不变。资源与再生成说明见 [图标资源](../assets/icons/README.md)。
 
 `OverlayActions` 提供复制、钉图与路径选择的行为缝，默认走真实 QClipboard 和原生 QFileDialog；`exportToPath` 分离路径导出与面板。输出由 `renderAnnotatedSelection(frame_.pixels, annotations, selection)` 合成后裁剪，不捕获 QWidget 显示层；保存成功保留会话，复制成功以结果码 10、钉图成功以结果码 11 结束。工具栏在选区成立后创建，文本编辑器仅在使用文本工具时创建；标注、撤销历史、工具栏和短暂反馈计时器归会话所有，空闲无隐藏预建选区或轮询。
@@ -73,7 +77,7 @@
 
 `StickerActions` 提供复制、路径选择、`confirmClose(QWidget*)` 与 `confirmQuit(count)` 行为缝，默认使用真实剪贴板、原生保存面板与中文三选一 QMessageBox；路径导出使用 `image_output` 的 PNG / JPEG 原子提交及格式感知命名工具。单张关闭先提交文本，已保存直接关闭，未保存选择取消 / 保存 / 放弃；面板取消或写入失败返回 false、提示并保留窗口。窗口以 confirmingClose / saveDialogOpen 保护嵌套循环，Qt 自身的 close 重入也以实际窗口生命周期与回调次数验证。
 
-`StickerManager::resolveUnsavedForQuit()` 在清理前结束编辑并提交文本，按创建顺序收集未保存项；汇总取消或任一逐张保存取消 / 失败返回 false，已保存项保持已保存。汇总期间禁用贴图交互与新增，保存 / 关闭确认期间再退出直接返回 false。控制器单独用 resolvingQuit 保护托盘重入，只有返回 true 才进入既有 cleanup，故中止不销毁选区、不释放热键；期间不接受新的截图或设置。`closeAll()` 使用 forceClose，aboutToQuit 与析构仍兜底清理，不二次确认；管理器保留待删除窗口的所有权，面板嵌套循环中的删除用 QPointer 防护。应用冒烟的两张贴图显式 saved=true，确认决策由进程内用例覆盖。选区退出码 9、受控模式码 2、结果码 1–11 与测量协议不变。
+`StickerManager::resolveUnsavedForQuit()` 在清理前结束编辑并提交文本，按创建顺序收集未保存项；汇总取消或任一逐张保存取消 / 失败返回 false，已保存项保持已保存。汇总期间禁用贴图交互与新增，保存 / 关闭确认期间再退出直接返回 false。控制器单独用 resolvingQuit 保护托盘重入，只有返回 true 才进入既有 cleanup，故中止不销毁选区、不释放热键；期间不接受新的截图或设置。`closeAll()` 使用 forceClose，aboutToQuit 与析构仍兜底清理，不二次确认；管理器保留待删除窗口的所有权，面板嵌套循环中的删除用 QPointer 防护。应用冒烟的两张贴图显式 saved=true，确认决策由进程内用例覆盖。选区退出码 9、受控模式码 2 和既有结果码 1–11 语义不变，异常残留复位追加码 12。
 
 `ClipboardActions::loadImage` 是 `ApplicationController` 的第四个可选构造参数，签名 `std::function<QImage()>`；默认仅调用 `QGuiApplication::clipboard()->image()`，不调用 setImage / setMimeData。测试注入确定图像或空图，独立于无头剪贴板能力。读取副本 DPR 归一为 1，按光标所在 QScreen 的可用区域与当前屏 DPR 计算初始窗口逻辑尺寸，再走 `StickerManager::create(image, position)` 默认 saved=false 路径；没有独立贴图列表或输出生命周期，不写截图结果码 / JSONL。
 

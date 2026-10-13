@@ -103,6 +103,8 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     savePanelFormatsNormalizeSuffixAndDispatch
     clipboardStickerImageLifecycle clipboardStickerEmptyToastReuseTimeoutAndCleanup
     clipboardStickerFailureDoesNotAdvanceCascade clipboardStickerMenuSessionAndQuitGuards
+    controllerSessionWatchdogRecovery controllerSessionWatchdogGuards
+    controllerFailureHidesOverlayBeforeDialog controllerQuitDialogHidesAndRestoresOverlay
     clipboardStickerReadOnly
     clipboardStickerToastClampsAtScreenEdges clipboardStickerCleanupDisablesAction
     autostartToggleAndReopen autostartFailureKeepsStateAndRetries

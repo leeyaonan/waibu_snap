@@ -5,6 +5,7 @@
 #include "core/sticker_geometry.h"
 #include "interfaces/tray_icon.h"
 #include "output/annotation_renderer.h"
+#include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
 #include "ui/annotation_text_edit.h"
 #include "ui/ocr_dialog.h"
@@ -26,6 +27,7 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QInputMethodEvent>
+#include <QJsonDocument>
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
@@ -38,6 +40,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSignalSpy>
@@ -51,6 +54,52 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+
+namespace waibusnap
+{
+struct ApplicationControllerTestAccess
+{
+    static void seedSession(ApplicationController& controller, SelectionOverlay* overlay,
+                            qint64 ageMs = 0)
+    {
+        controller.active_ = true;
+        ++controller.token_;
+        controller.metrics_ = {};
+        controller.metrics_.t0 = monotonicNs() - ageMs * 1000000;
+        controller.metrics_.trigger = QStringLiteral("smoke-state-injection");
+        controller.overlay_ = overlay;
+        controller.settingsAction_->setEnabled(false);
+        controller.refreshStickerActions();
+        controller.captureTimeout_.start(15000);
+        controller.sessionWatchdog_.start();
+    }
+    static void fail(ApplicationController& controller)
+    {
+        controller.fail(8, QStringLiteral("测试注入：未观察到可交互覆盖窗口。"));
+    }
+    static QTimer& watchdog(ApplicationController& controller)
+    {
+        return controller.sessionWatchdog_;
+    }
+    static bool timersStopped(const ApplicationController& controller)
+    {
+        return !controller.captureTimeout_.isActive() && !controller.sessionWatchdog_.isActive();
+    }
+    static void observe(ApplicationController& controller)
+    {
+        controller.observation_ = std::make_unique<PresentationObservation>();
+    }
+    static bool observationCleared(const ApplicationController& controller)
+    {
+        return !controller.observation_;
+    }
+    static quint64 token(const ApplicationController& controller) { return controller.token_; }
+    static void staleCapture(ApplicationController& controller, quint64 token)
+    {
+        controller.captureCompleted(token, {{}, CaptureError::Unavailable, QStringLiteral("迟到")});
+    }
+};
+}
 
 namespace
 {
@@ -1840,6 +1889,9 @@ class StartupSmokeTest final : public QObject
             {
                 sessionGuarded = controller.active() && !action->isEnabled() &&
                                  !controller.menu()->actions()[2]->isEnabled();
+                sessionGuarded &=
+                    ApplicationControllerTestAccess::watchdog(controller).isActive() &&
+                    ApplicationControllerTestAccess::watchdog(controller).interval() == 5000;
                 sessionGuarded &= QMetaObject::invokeMethod(controller.menu(), "aboutToShow",
                                                             Qt::DirectConnection);
                 sessionGuarded &= !action->isEnabled();
@@ -1856,9 +1908,172 @@ class StartupSmokeTest final : public QObject
         QTRY_VERIFY(checked);
         QVERIFY(sessionGuarded);
         QVERIFY(!controller.active());
+        QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
         QVERIFY(action->isEnabled());
         QVERIFY(controller.menu()->actions()[2]->isEnabled());
         QCOMPARE(controller.stickers().count(), 1);
+    }
+    void controllerSessionWatchdogRecovery_data()
+    {
+        QTest::addColumn<int>("overlayState");
+        QTest::newRow("missing") << 0;
+        QTest::newRow("hidden") << 1;
+        QTest::newRow("destroyed") << 2;
+    }
+    void controllerSessionWatchdogRecovery()
+    {
+        using namespace waibusnap;
+        QFETCH(int, overlayState);
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        ApplicationController controller(*qApp, options);
+        QPointer<SelectionOverlay> overlay;
+        if (overlayState)
+            overlay = new SelectionOverlay(sampleFrame());
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 21000);
+        if (overlayState == 2)
+            delete overlay.data();
+        ApplicationControllerTestAccess::observe(controller);
+        const auto oldToken = ApplicationControllerTestAccess::token(controller);
+        QVERIFY(!controller.menu()->actions()[2]->isEnabled());
+        QVERIFY(!clipboardAction(controller)->isEnabled());
+        QTest::ignoreMessage(
+            QtWarningMsg, QRegularExpression(QStringLiteral("截图会话异常残留，已自动复位：.*")));
+        // 直接投递真实定时器信号，避免每个数据行等待 20 秒；年龄由测试缝构造。
+        QVERIFY(QMetaObject::invokeMethod(&ApplicationControllerTestAccess::watchdog(controller),
+                                          "timeout", Qt::DirectConnection));
+        QVERIFY(!controller.active());
+        QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
+        QVERIFY(ApplicationControllerTestAccess::observationCleared(controller));
+        QVERIFY(ApplicationControllerTestAccess::token(controller) > oldToken);
+        QVERIFY(controller.menu()->actions()[2]->isEnabled());
+        QVERIFY(clipboardAction(controller)->isEnabled());
+        if (overlay)
+            QTRY_VERIFY(!overlay);
+        QFile metrics(options.metricsFile);
+        QVERIFY(metrics.open(QIODevice::ReadOnly));
+        const auto record = QJsonDocument::fromJson(metrics.readLine()).object();
+        QCOMPARE(record.value(QStringLiteral("outcome")).toInt(), 12);
+        QVERIFY(metrics.atEnd());
+        // 旧捕获回调到达下一会话时仍被 token 拒绝，不结束或污染新会话。
+        ApplicationControllerTestAccess::seedSession(controller, nullptr);
+        ApplicationControllerTestAccess::staleCapture(controller, oldToken);
+        QVERIFY(controller.active());
+        QVERIFY(ApplicationControllerTestAccess::watchdog(controller).isActive());
+        QVERIFY(metrics.atEnd());
+    }
+    void controllerSessionWatchdogGuards_data()
+    {
+        QTest::addColumn<int>("state");
+        QTest::newRow("inactive") << 0;
+        QTest::newRow("capture-grace") << 1;
+        QTest::newRow("visible-overlay") << 2;
+        QTest::newRow("modal-dialog") << 3;
+    }
+    void controllerSessionWatchdogGuards()
+    {
+        using namespace waibusnap;
+        QFETCH(int, state);
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        ApplicationController controller(*qApp, options);
+        QPointer<SelectionOverlay> overlay;
+        if (state == 2)
+        {
+            overlay = new SelectionOverlay(sampleFrame());
+            overlay->show();
+        }
+        if (state)
+            ApplicationControllerTestAccess::seedSession(controller, overlay,
+                                                         state == 1 ? 19000 : 30000);
+        QDialog dialog;
+        if (state == 3)
+        {
+            dialog.setWindowModality(Qt::ApplicationModal);
+            dialog.show();
+            QCOMPARE(QApplication::activeModalWidget(), &dialog);
+        }
+        QVERIFY(QMetaObject::invokeMethod(&ApplicationControllerTestAccess::watchdog(controller),
+                                          "timeout", Qt::DirectConnection));
+        QCOMPARE(controller.active(), state != 0);
+        QCOMPARE(ApplicationControllerTestAccess::watchdog(controller).isActive(), state != 0);
+        QVERIFY(!QFile::exists(options.metricsFile));
+        if (overlay)
+            QVERIFY(overlay->isVisible());
+    }
+    void controllerFailureHidesOverlayBeforeDialog()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        ApplicationController controller(*qApp, options);
+        auto* overlay = new SelectionOverlay(sampleFrame());
+        overlay->show();
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+        bool checked = false, hidden = false, locked = false;
+        QTimer::singleShot(0, &controller,
+                           [&]
+                           {
+                               if (auto* dialog = QApplication::activeModalWidget())
+                               {
+                                   checked = true;
+                                   hidden = !overlay->isVisible();
+                                   QMetaObject::invokeMethod(
+                                       &ApplicationControllerTestAccess::watchdog(controller),
+                                       "timeout", Qt::DirectConnection);
+                                   locked = controller.active();
+                                   dialog->close();
+                               }
+                           });
+        ApplicationControllerTestAccess::fail(controller);
+        QVERIFY(checked);
+        QVERIFY(hidden);
+        QVERIFY(locked);
+        QVERIFY(!controller.active());
+        QVERIFY(controller.menu()->actions()[2]->isEnabled());
+        QVERIFY(clipboardAction(controller)->isEnabled());
+    }
+    void controllerQuitDialogHidesAndRestoresOverlay_data()
+    {
+        QTest::addColumn<int>("state");
+        QTest::newRow("visible-cancel") << 0;
+        QTest::newRow("already-hidden") << 1;
+        QTest::newRow("session-ended-during-dialog") << 2;
+    }
+    void controllerQuitDialogHidesAndRestoresOverlay()
+    {
+        using namespace waibusnap;
+        QFETCH(int, state);
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        QPointer<SelectionOverlay> overlay;
+        bool checked = false, hidden = false;
+        StickerActions actions;
+        actions.confirmQuit = [&](int)
+        {
+            checked = true;
+            hidden = overlay && !overlay->isVisible();
+            if (state == 2)
+                QMetaObject::invokeMethod(qApp, "screenRemoved", Qt::DirectConnection,
+                                          Q_ARG(QScreen*, QGuiApplication::primaryScreen()));
+            return StickerQuitDecision::Cancel;
+        };
+        ApplicationController controller(*qApp, options, actions);
+        QVERIFY(controller.stickers().create(sampleFrame().pixels, {30, 40}).success);
+        overlay = new SelectionOverlay(sampleFrame());
+        if (state != 1)
+            overlay->show();
+        ApplicationControllerTestAccess::seedSession(controller, overlay);
+        controller.quit();
+        QVERIFY(checked);
+        QVERIFY(hidden);
+        QCOMPARE(controller.active(), state != 2);
+        QVERIFY(overlay);
+        QCOMPARE(overlay->isVisible(), state == 0);
     }
     void clipboardStickerReadOnly_data()
     {
