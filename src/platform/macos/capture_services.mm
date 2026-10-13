@@ -403,7 +403,7 @@ class MacCapture final : public CaptureProvider
                                                                        .arg(qRound(
                                                                            requested.logicalGeometry
                                                                                .height() *
-                                                                           target
+                                                                           requested
                                                                                .devicePixelRatio))});
                                                               return;
                                                           }
@@ -481,9 +481,11 @@ void captureRegionFrame(const std::shared_ptr<RegionState>& state)
         regionError(state, QStringLiteral("显示器布局已变化，采集已中断。"));
         return;
     }
+    // 块存活期超过当前栈帧，必须按值持有 shared_ptr，不能捕获引用参数。
+    const auto keepAlive = state;
     [SCScreenshotManager
-        captureImageWithFilter:state->filter
-                 configuration:state->configuration
+        captureImageWithFilter:keepAlive->filter
+                 configuration:keepAlive->configuration
              completionHandler:^(CGImageRef image, NSError* error) {
                @autoreleasepool
                {
@@ -493,13 +495,13 @@ void captureRegionFrame(const std::shared_ptr<RegionState>& state)
                        explanation =
                            QStringLiteral("区域采集已中断（错误 %1），请检查屏幕录制权限。")
                                .arg(error ? error.code : -1);
-                   else if (int(CGImageGetWidth(image)) != state->request.pixelRect.width() ||
-                            int(CGImageGetHeight(image)) != state->request.pixelRect.height())
+                   else if (int(CGImageGetWidth(image)) != keepAlive->request.pixelRect.width() ||
+                            int(CGImageGetHeight(image)) != keepAlive->request.pixelRect.height())
                        explanation =
                            QStringLiteral("区域捕获尺寸不匹配，采集已中断。请重新框选。 ");
                    else
                    {
-                       pixels = QImage(state->request.pixelRect.size(), QImage::Format_RGB32);
+                       pixels = QImage(keepAlive->request.pixelRect.size(), QImage::Format_RGB32);
                        CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
                        CGContextRef context =
                            pixels.isNull()
@@ -522,20 +524,20 @@ void captureRegionFrame(const std::shared_ptr<RegionState>& state)
                    }
                    QMetaObject::invokeMethod(
                        QCoreApplication::instance(),
-                       [state, pixels = std::move(pixels), explanation]() mutable
+                       [keepAlive, pixels = std::move(pixels), explanation]() mutable
                        {
-                           if (!state->active)
+                           if (!keepAlive->active)
                                return;
                            if (!explanation.isEmpty())
                            {
-                               regionError(state, explanation);
+                               regionError(keepAlive, explanation);
                                return;
                            }
-                           const auto callback = state->onFrame;
+                           const auto callback = keepAlive->onFrame;
                            if (callback)
                                callback(std::move(pixels));
-                           if (state->active)
-                               captureRegionFrame(state);
+                           if (keepAlive->active)
+                               captureRegionFrame(keepAlive);
                        },
                        Qt::QueuedConnection);
                }

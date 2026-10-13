@@ -394,6 +394,22 @@ LaunchServices 受控两轮均使用独立临时 INI / JSONL，每轮两条，�
 
 已知限制：固定侧栏请框选避开；动态内容 / 斜向 / 快速缺口拒绝拼入，可能只有部分结果；长图标注后置；Windows 后补。长度 / 面积固定上限，速度 / 方向不持久化。
 
+### 真实采集崩溃与引用捕获回归（2026-10-13）
+
+用户提供的 `WaibuSnap-2026-10-13-174955.ips` 显示：进入真实区域采集约 0.2–0.4 秒后，SCK 的 XPC 完成回调在 `captureRegionFrame` 访问地址 `0x40`，触发 SIGSEGV。引用参数 `state` 被 ObjC 块捕获，调用它的 GUI lambda 销毁后 shared_ptr 存储已悬垂；原冒烟使用假采集器，未覆盖此真实回调路径。
+
+完成块现按值持有局部副本 `keepAlive`，像素转换、排队交付的内层 lambda、错误处理与下一帧链式调用均使用该副本。复核 `MacRegionCapture::start`：`state` 是局部 shared_ptr 值，SCShareableContent 块与内层 `[state, content, error]` lambda 均复制持有，未发现同类引用捕获。另清除既有普通截图尺寸报错文案中残留的 `target` 引用，统一使用已有快照 `requested`；本 PR 的滚动注入实现没有 ObjC 块。
+
+新增 `tests/unit/objc_block_capture_test.py`，复用 Ninja 中真实生产目标的编译命令，读取 Apple Clang 的 ObjC 块捕获 AST，拒绝 C++ 引用类型捕获；无需屏幕录制权限，不复制被测函数。修复前检出区域 `state` 与普通截图内外块的 `target` 引用；修复后 4 个块 / 6 个捕获均通过。该检查已加入 macOS CI，作为原 16 项 CTest 之外的回归门禁；它验证编译器捕获语义，不代替真实 SCK 采集。
+
+```bash
+python3 tests/unit/objc_block_capture_test.py --build-dir build/macos
+```
+
+用户提供的修复后真实 SCK 复测已在两台显示器（DPR=1 / DPR=2）通过：终态 13、尺寸换算一致、描边未入画、内容连续。此记录来源为用户反馈；本次更新二进制的真实取证由用户再次执行，负坐标、控制条排除、自动注入与性能项仍按下方清单核对。
+
+本次删除已知构建产物后完整重建（118 步）与原开发签名校验通过；16 项 CTest 全部通过，主冒烟 426 / 2 倍 DPR 359 均零失败、零跳过，clang-format 18.1.8 全量检查、`git diff --check` 与改动文件 UTF-8 / LF 检查通过。更新提交对应的双端 CI 结果在 PR #26 记录，PR 保持未合并。
+
 待验证平台项：
 
 - [ ] SCK sourceRect 点 / 物理像素换算与 DPR（含副屏 / 负坐标）；与既有全屏捕获核对原像素位置与尺寸。
