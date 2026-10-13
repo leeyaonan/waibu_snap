@@ -1,5 +1,8 @@
+#include "interfaces/overlay_window_behavior.h"
 #include "interfaces/platform_workarounds.h"
 #import <AppKit/AppKit.h>
+#include <QGuiApplication>
+#include <QWindow>
 #include <QtTest>
 #import <objc/runtime.h>
 
@@ -7,6 +10,61 @@ class PlatformWorkaroundsTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void overlayWindowLevelNullWindow()
+    {
+        waibusnap::lowerOverlayBelowSystemPanels(nullptr);
+        waibusnap::raiseOverlayAboveSystemChrome(nullptr);
+    }
+    void overlayWindowLevelGuards()
+    {
+        if (QGuiApplication::screens().isEmpty())
+        {
+            QTest::qSkip("当前环境没有可用屏幕，无法创建 QWindow 验证无原生句柄守卫。", __FILE__,
+                         __LINE__);
+            return;
+        }
+        QWindow window;
+        QVERIFY(!window.handle());
+        waibusnap::lowerOverlayBelowSystemPanels(&window);
+        waibusnap::raiseOverlayAboveSystemChrome(&window);
+        // 安全返回不得为尚未显示的窗口创建原生句柄。
+        QVERIFY(!window.handle());
+    }
+    void overlayWindowLevelRoundTrip()
+    {
+        if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
+        {
+            QTest::qSkip("当前不是 Cocoa 后端，无法核对 AppKit 窗口层级。", __FILE__, __LINE__);
+            return;
+        }
+        if (QGuiApplication::screens().isEmpty())
+        {
+            QTest::qSkip("当前环境没有可用屏幕，无法核对 AppKit 窗口层级。", __FILE__, __LINE__);
+            return;
+        }
+        QWindow window;
+        window.create();
+        if (!window.handle())
+        {
+            QTest::qSkip("当前环境无法创建原生窗口，无法核对 AppKit 窗口层级。", __FILE__,
+                         __LINE__);
+            return;
+        }
+        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window.winId());
+        NSWindow* native = view.window;
+        if (!native)
+        {
+            QTest::qSkip("当前环境没有 AppKit 窗口，无法核对原生层级。", __FILE__, __LINE__);
+            return;
+        }
+        // 隐藏窗口只验证层级接口，不替代原生保存面板的真机可见性验收。
+        waibusnap::raiseOverlayAboveSystemChrome(&window);
+        QCOMPARE(native.level, NSInteger(25));
+        waibusnap::lowerOverlayBelowSystemPanels(&window);
+        QCOMPARE(native.level, NSInteger(0));
+        waibusnap::raiseOverlayAboveSystemChrome(&window);
+        QCOMPARE(native.level, NSInteger(25));
+    }
     void safeClickCount()
     {
         @autoreleasepool
@@ -69,6 +127,7 @@ class PlatformWorkaroundsTest final : public QObject
 };
 int main(int argc, char* argv[])
 {
+    QGuiApplication app(argc, argv);
     PlatformWorkaroundsTest test;
     return QTest::qExec(&test, argc, argv);
 }

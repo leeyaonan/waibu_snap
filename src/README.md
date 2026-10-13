@@ -23,6 +23,8 @@
 
 `raiseOverlayAboveSystemChrome` 不暴露原生句柄。macOS 仅在 Cocoa 后端且 QWindow 已有原生窗口时，通过 ARC bridge 取得 NSView.window 并设置 NSStatusWindowLevel；空指针、无原生窗口和 offscreen 安全返回。SelectionOverlay 首次 showEvent 调用，销毁后无须还原系统层级。Windows 沿用现有 topmost，接口为空实现。
 
+`lowerOverlayBelowSystemPanels` 与抬升接口配对：macOS 临时设置 NSNormalWindowLevel（0），因为原生保存面板是独立 app-modal 窗口，NSModalPanelWindowLevel（8）低于覆盖层的 NSStatusWindowLevel（25），会被全屏冻结画面遮挡。`SelectionOverlay::saveSelection` 在选择保存目标前降级，对象仍存活时在面板取消或确认后、会话结束提前返回前恢复抬升；快速保存也走同一配对路径。未抬升时不改变层级，空指针、无原生窗口与 offscreen 安全返回；Windows 为空实现。
+
 `core/selection_assistance` 沿用 `sticker_geometry` / `window_snapping` 的纯几何测试缝：`nudgedPixelSelection` 直接在源屏半开物理像素矩形上移动 / 扩张 / 收缩 1 像素，复用现有几何夹取；`selectionNudgeAnchor` 取移动左上角或对应边内最后像素的中点；`magnifierSamplingRect` 给出 15×15 贴边平移矩形；`placedMagnifier` 负责逻辑坐标四象限翻转、屏内夹取及工具栏避让。不依赖 QWidget 或平台接口。
 
 `SelectionOverlay` 按键分层为 **文本编辑 > 工具态 > 微调**：已结束 / 保存面板先拦截，文本编辑器继续负责 IME 与方向键；无工具、非拖动且覆盖层自身 `hasFocus()` 才接收无修饰 / Shift / `Qt::AltModifier` 方向键。Control / Meta 或 Shift+Alt 不处理，双端共享 Alt（macOS Option）路径。`setSelection` 仅在矩形真的改变时标脏，历史仍只包含标注；尺寸提示通过只读 `selectionSizeText()` 与绘制共用文本，工具栏按可用区重新定位。
