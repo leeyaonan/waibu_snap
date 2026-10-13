@@ -104,7 +104,7 @@ std::pair<int, int> staticBands(const QImage& before, const QImage& after, Scrol
 // 在合法重叠中取中部模板，另用整个重叠核对；避免窄模板撞上周期性行高。
 double difference(const QImage& before, const QImage& after, ScrollAxis axis, int delta,
                   int leading, int trailing, bool wholeOverlap = false, int columns = 64,
-                  int templateLimit = 96)
+                  int templateLimit = 96, int across = 0)
 {
     const int n = length(after, axis), w = breadth(after, axis);
     int start = std::max(leading, leading - delta);
@@ -122,6 +122,9 @@ double difference(const QImage& before, const QImage& after, ScrollAxis axis, in
     // 沿运动轴逐行采样：稀疏行步长会与文字行距同相，整排落入笔画间隙。
     constexpr int rowStep = 1;
     const int columnStep = std::max(2, w / columns);
+    const int columnStart = std::max(0, -across), columnEnd = std::min(w, w - across);
+    if (columnEnd <= columnStart)
+        return std::numeric_limits<double>::infinity();
     const uchar* beforeBits = before.constBits();
     const uchar* afterBits = after.constBits();
     const qsizetype beforeStride = before.bytesPerLine();
@@ -131,18 +134,18 @@ double difference(const QImage& before, const QImage& after, ScrollAxis axis, in
         {
             const uchar* first = beforeBits + (row + delta) * beforeStride;
             const uchar* second = afterBits + row * afterStride;
-            for (int column = 0; column < w; column += columnStep)
-                total += std::abs(int(first[column]) - int(second[column]));
+            for (int column = columnStart; column < columnEnd; column += columnStep)
+                total += std::abs(int(first[column + across]) - int(second[column]));
         }
     else
-        for (int column = 0; column < w; column += columnStep)
+        for (int column = columnStart; column < columnEnd; column += columnStep)
         {
-            const uchar* first = beforeBits + column * beforeStride + delta;
-            const uchar* second = afterBits + column * afterStride;
-            for (int row = start; row < end; row += rowStep)
+            const uchar* first = beforeBits + (column + across) * beforeStride + start + delta;
+            const uchar* second = afterBits + column * afterStride + start;
+            for (int row = 0; row < end - start; row += rowStep)
                 total += std::abs(int(first[row]) - int(second[row]));
         }
-    samples = (end - start) * ((w + columnStep - 1) / columnStep);
+    samples = (end - start) * ((columnEnd - columnStart + columnStep - 1) / columnStep);
     return double(total) / std::max(1, samples);
 }
 struct Match
@@ -230,6 +233,26 @@ Match matchFrames(const QImage& before, const QImage& after, const QImage& befor
     const bool strict = result.error <= maximumError && overlapError <= maximumError;
     const bool smooth = result.error <= smoothMaximumError && overlapError <= smoothMaximumError;
     result.reliable = separated && continuous && (strict || smooth);
+    // 白底会稀释斜向误差；若另一轴移动能显著降低整段残差，拒绝一维假匹配。
+    if (result.reliable && overlapError > referenceTolerance)
+        for (int across = -32; across <= 32; ++across)
+        {
+            if (!across)
+                continue;
+            const double diagonalTemplate = difference(beforeGray, afterGray, axis, result.delta,
+                                                       leading, trailing, false, 64, 96, across);
+            if (result.error - diagonalTemplate < minimumSeparation ||
+                diagonalTemplate > result.error * confidenceRatio)
+                continue;
+            const double diagonalError = difference(beforeGray, afterGray, axis, result.delta,
+                                                    leading, trailing, true, 64, 96, across);
+            if (overlapError - diagonalError >= minimumSeparation &&
+                diagonalError <= overlapError * confidenceRatio)
+            {
+                result.reliable = false;
+                break;
+            }
+        }
     result.exact = result.error <= referenceTolerance && overlapError <= referenceTolerance;
     return result;
 }
@@ -442,6 +465,7 @@ QImage ScrollStitcher::takeResult()
     image.setDevicePixelRatio(1);
     previous_ = {};
     previousGray_ = {};
+    previousCoarse_ = {};
     return image;
 }
 QImage ScrollStitcher::result() const

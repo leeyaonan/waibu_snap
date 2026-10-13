@@ -121,9 +121,11 @@ class ScrollStitcherTest : public QObject
         const QImage source = lineHeight ? textDocument(lineHeight) : document(800, 8200);
         ScrollStitcher stitcher;
         int unreliable = 0;
+        // 22px 对照从笔画中开始，避免字体度量差异把空白页边识别成固定端带。
+        const int origin = lineHeight == 22 ? 6 : 0;
         for (int index = 0; index < 240; ++index)
         {
-            stitcher.addFrame(source.copy(0, qRound(index * speed), 800, 640));
+            stitcher.addFrame(source.copy(0, origin + qRound(index * speed), 800, 640));
             unreliable += !stitcher.stats().lastFrameReliable;
         }
         const int expectedLength = 640 + qRound(239 * speed);
@@ -139,7 +141,7 @@ class ScrollStitcherTest : public QObject
         const int trimmed = expectedLength - result.height();
         bool continuous = false;
         for (int leading = 0; leading <= trimmed; ++leading)
-            continuous |= result == source.copy(0, leading, 800, result.height());
+            continuous |= result == source.copy(0, origin + leading, 800, result.height());
         QVERIFY(continuous);
         if (!lineHeight)
         {
@@ -228,11 +230,18 @@ class ScrollStitcherTest : public QObject
         QCOMPARE(stitcher.stats().warnings, 0);
         QCOMPARE(stitcher.stats().lengthPx, 649);
     }
+    void lightTextDiagonalAndPeriodicAreRejected_data()
+    {
+        QTest::addColumn<int>("shift");
+        for (int shift : {0, 1, 2, 5, 12, 30})
+            QTest::newRow(qPrintable(QString::number(shift))) << shift;
+    }
     void lightTextDiagonalAndPeriodicAreRejected()
     {
+        QFETCH(int, shift);
         const QImage source = textDocument(20);
         const QImage first = source.copy(0, 6, 760, 640);
-        for (int shift : {1, 2, 5, 12, 30})
+        if (shift)
         {
             ScrollStitcher stitcher;
             stitcher.addFrame(first);
@@ -240,6 +249,7 @@ class ScrollStitcherTest : public QObject
                      ScrollFrameOutcome::Skipped);
             QCOMPARE(stitcher.result(), first);
             QVERIFY(!stitcher.stats().motionDetected);
+            return;
         }
         QImage periodic(source.size(), source.format());
         for (int row = 0; row < periodic.height(); ++row)
