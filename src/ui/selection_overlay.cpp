@@ -758,6 +758,11 @@ void SelectionOverlay::saveSelection()
     ImageSaveActions actions = actions_;
     if (activeShape_ >= 0)
         actions.forcedFormat = ImageFormat::Png;
+    // 保存面板是独立 app-modal 窗口（NSModalPanelWindowLevel），低于覆盖层抬升后的
+    // NSStatusWindowLevel，不临时降级会被全屏覆盖层遮挡（2026-10-13 实机取证）。
+    const bool lowered = overlayLevelRaised_;
+    if (lowered)
+        lowerOverlayBelowSystemPanels(windowHandle());
     const auto target = chooseImageSaveTarget(
         this, actions, [self] { return self && !self->finished_; },
         [self](const QString& text)
@@ -767,6 +772,8 @@ void SelectionOverlay::saveSelection()
         });
     if (!self)
         return;
+    if (lowered)
+        raiseOverlayAboveSystemChrome(windowHandle());
     saveDialogOpen_ = false;
     if (finished_)
         return;

@@ -24,7 +24,7 @@
 | `window_snapping` | 全局转屏内坐标与越屏裁剪、屏外丢弃且前后序不变；重叠取最前、缝隙 / 空列表未命中、半开命中边界；1.5× / 2×、半像素取整、按两端边缘求宽高、物理范围夹取与无效输入 |
 | `hotkey_settings` | 合法 / 非法键矩阵、Portable / Native 往返；临时 INI 往返、缺文件默认且不创建、损坏值 / 文件回退且不改写；替身验证存储键成功、存储键失败后 F1 成功、双失败仅托盘状态；改键非法不注册、冲突保旧与配置不变、注册前文件仍为旧值、成功持久化、写入失败不虚报重启保留 |
 | `probe_cpu_calibration`（macOS） | libproc Mach 时间换算对照 getrusage CPU 微秒时间；原错误在 M3 Pro 上先失败，修正后通过 |
-| `platform_workarounds`（macOS） | 安装前 AppKitDefined 的 `clickCount` 确实抛 NSException；安装后返回 1、不抛，鼠标双击仍返回 2，重复安装不替换已安装实现 |
+| `platform_workarounds`（macOS） | 安装前 AppKitDefined 的 `clickCount` 确实抛 NSException；安装后返回 1、不抛，鼠标双击仍返回 2，重复安装不替换已安装实现；覆盖层抬升 / 降级接口对空指针、无原生窗口安全返回；Cocoa 隐藏 QWindow 验证 25→0→25，非 Cocoa / 无可用屏幕 / 无原生窗口明确跳过层级断言 |
 | `measurement_tool` | nearest-rank 30 次第 29 项、最大样本和空样本；有效会话集合 `(1, 2, 10, 11)`、旧码兼容与缺失终点过滤；刷新代理不能宣布通过；跨进程 CPU 总和、进程退出后的记账缺口 |
 
 S01 实心遮盖新增用例：`annotation` 核对 Cover 追加枚举、可见性、点 / 水平 / 垂直零面积拒绝、反向拖画、撤销重做与七类混合 20 步历史序列；`image_output::coverReplacesShapeAndTextPixels` 在 1 / 1.5 / 2 倍 DPR、正反拖画和三色下，先合成图形及中文文本再遮盖，真实 PNG 全图逐像素回读：覆盖区纯色且 alpha=255，四边 / 四角无混合，区域外保持前一合成结果；同时核对共享预览、裁剪与后画图形的顺序语义。
@@ -253,6 +253,10 @@ OCR 人工核对仍需完成：
 
 ## 人工核对清单（待用户真机操作）
 
+- 保存面板可见性（2026-10-13 真机回归）：覆盖层出现并框选后，分别点「保存」与使用保存快捷键，原生面板必须显示在覆盖层之上；取消与确认两条路径都要核对。面板结束后覆盖层应恢复盖住菜单栏与 Dock，可再点一次保存验证可见性与恢复；确认后核对图片实际写入。
+- 贴图窗口「另存为」面板可见性：顺带核对原生面板正常出现、取消 / 确认正常，预期不受此次覆盖层层级修复影响。
+- 原生面板可见性无法由 offscreen 自动化验证：现有保存测试注入 `chooseSavePath` 绕过原生面板；Cocoa 窗口层级断言仅核对接口，不替代上述真机操作。
+
 - C02 / macOS：从真实应用包打开设置，首次默认关闭；开启后退出 / 重开确认回读，系统设置「登录项」状态一致，待批准时按提示允许。注销并重新登录后只出现一个实例，已配置截图快捷键可用；关闭后再重登不自动运行。移动应用包后从新位置打开并关闭 / 重新开启，核对新位置；系统拒绝时中文错误留在对话框、原注册态保持且可重试。
 - C02 / Windows：原生热键与目标实机补齐后，核对 HKCU Run 的 WaibuSnap 值为带引号的当前 exe 路径（含中文 / 空格），开关与系统状态一致、无需管理员、移动 exe 后重新开启更新路径；按相同重登口径验证启动与关闭。Windows 单实例锁仍后置，双端 CI 不能替代此项人工验收。
 
@@ -344,3 +348,13 @@ LaunchServices 受控两轮均使用独立临时 INI / JSONL，每轮两条，�
 - [ ] 桌面透明贴纸拖动、缩放、编辑、另存及隐藏恢复。
 - [ ] 模板设置导入 / 启停 / 删除与重启保留。
 - [ ] Windows 11 实机透明贴纸和全功能后补；CI 与 Cocoa 程序化测试不替代人工验收。
+
+## 覆盖层保存面板遮挡修复验证（2026-10-13）
+
+用户提供的真机诊断版取证确认：PR #21 将覆盖层抬到 `NSStatusWindowLevel`（25）；`QFileDialog::getSaveFileName` 打开的原生保存面板为独立 app-modal 窗口（`NSModalPanelWindowLevel` 8，`sheet=0`），因低于全屏覆盖层而不可见，模态期间输入进入面板，表现为工具栏置灰、仅 Esc 取消后恢复。对照实验在面板打开前降到 `NSNormalWindowLevel`（0），CG 窗口 z 序由覆盖层在前反转为面板在前。这是用户提供的根因证据，不计作本次修复后的可见性验收。
+
+修复保留原抬升，在 `SelectionOverlay::saveSelection` 选择保存目标前调用 `lowerOverlayBelowSystemPanels`，对象仍存活时在取消 / 确认之后、`finished_` 提前返回之前恢复抬升；快速保存统一包住，Windows 新接口为空实现，其余面板入口不变。
+
+本机 macOS **27.0.1 / arm64**、Qt **6.11.2 Release**：`bash scripts/build-project.sh`、`bash scripts/test-project.sh`、clang-format **18.1.8** 全量格式检查与 `git diff --check` 通过；**15 项 CTest** 全部通过，主冒烟 **370** / 2 倍 DPR 子集 **303**，均零失败 / 零跳过，基线不变。`platform_workarounds` 从 **3 → 6** 项（含初始化 / 清理）通过，新增空指针、无原生句柄守卫和 Cocoa 隐藏 QWindow **25→0→25** 层级往返，均实际执行、无跳过。单独 offscreen 运行为 **5 通过 / 1 明确跳过**，跳过 Cocoa 层级断言。首轮沙箱无可用屏幕无法创建 QWindow，已补无屏幕显式跳过守卫；最终全量验证在可访问桌面的环境运行。应用以原 `WaibuSnap Dev` / `local.waibusnap.dev` 证书叶 requirement 签名并校验通过。
+
+原生面板可见性、取消 / 确认后的菜单栏与 Dock 覆盖恢复、贴图「另存为」仍**待人工核对**，见上方人工清单；现有保存测试注入 `chooseSavePath`，不能以 offscreen 或隐藏窗口层级测试宣称原生面板可见。
