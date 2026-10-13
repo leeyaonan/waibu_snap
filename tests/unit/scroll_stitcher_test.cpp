@@ -1,7 +1,10 @@
 #include "core/scroll_stitcher.h"
 #include <QColorSpace>
+#include <QDirIterator>
 #include <QElapsedTimer>
+#include <QFontDatabase>
 #include <QPainter>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <algorithm>
@@ -80,6 +83,28 @@ class ScrollStitcherTest : public QObject
 {
     Q_OBJECT
   private slots:
+    void initTestCase()
+    {
+        // Windows offscreen 的字体库可能为空；只读加载系统 Arial，禁止用空白页冒充文本。
+        if (!QFontDatabase::families().contains(QStringLiteral("Arial")))
+            for (const QString& directory :
+                 QStandardPaths::standardLocations(QStandardPaths::FontsLocation))
+            {
+                QDirIterator fonts(directory, {QStringLiteral("*.ttf")}, QDir::Files,
+                                   QDirIterator::Subdirectories);
+                while (fonts.hasNext())
+                {
+                    const QString path = fonts.next();
+                    if (fonts.fileName().compare(QStringLiteral("arial.ttf"),
+                                                 Qt::CaseInsensitive) == 0)
+                    {
+                        QVERIFY(QFontDatabase::addApplicationFont(path) >= 0);
+                        break;
+                    }
+                }
+            }
+        QVERIFY(QFontDatabase::families().contains(QStringLiteral("Arial")));
+    }
     void lightTextAndNoise_data()
     {
         QTest::addColumn<int>("lineHeight");

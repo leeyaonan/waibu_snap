@@ -476,3 +476,5 @@ QT_QPA_PLATFORM=offscreen build/macos/tests/scroll_stitcher_test matchingTiming
 - [ ] Chrome / Safari 自动滚动三档全文：无误警告、内容完整，暂停 / 继续、到底与反向往返正常。
 - [ ] 刻意大跨度跳滚 / 内容更新：质量异常仍有提示与结果警告条；相同页极慢滚动不触发警告。
 - [ ] ≥8,000px 长会话帧率与峰值内存；本次新增灰度缓存计入实测。
+
+Windows 首轮 CI 的 14 项 CTest 中仅 `scroll_stitcher` 失败，但 GUI 单测控制台输出为空，现有冒烟日志同时报告 offscreen 字体目录缺失。本轮补只读从 `QStandardPaths::FontsLocation` 加载系统 Arial（仅在字体库未提供时），并在初始化断言 Arial 存在，禁止把无字形的空白页面当文字夹具；不复制字体、不新增依赖、不跳过测试。CTest 为拼接单测追加 `scroll-stitcher-output.txt` 文件日志，供双端失败诊断读取。匹配阈值、速度矩阵、完整性与阴性断言不变；本机 56 项拼接单测与格式复验通过，最新双端结果见 PR #27。

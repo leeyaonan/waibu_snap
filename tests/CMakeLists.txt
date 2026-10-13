@@ -158,5 +158,6 @@ add_test(NAME shape_mask COMMAND shape_mask_test)
 qt_add_executable(scroll_stitcher_test unit/scroll_stitcher_test.cpp)
 target_link_libraries(scroll_stitcher_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(scroll_stitcher_test PROPERTIES WIN32_EXECUTABLE FALSE)
-add_test(NAME scroll_stitcher COMMAND scroll_stitcher_test)
+add_test(NAME scroll_stitcher COMMAND scroll_stitcher_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/scroll-stitcher-output.txt,txt")
 set_tests_properties(scroll_stitcher PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
