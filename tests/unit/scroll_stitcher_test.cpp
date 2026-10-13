@@ -1,8 +1,12 @@
 #include "core/scroll_stitcher.h"
 #include <QColorSpace>
 #include <QElapsedTimer>
+#include <QPainter>
 #include <QTemporaryDir>
 #include <QTest>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 using namespace waibusnap;
 namespace
 {
@@ -26,11 +30,222 @@ QImage fixedBands(QImage frame, int top, int bottom)
                 frame.setPixel(x, y, qRgb(x % 255, y < top ? 120 : 200, 90));
     return frame;
 }
+QImage textDocument(int lineHeight)
+{
+    QImage image(800, 8200, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QPainter painter(&image);
+    QFont font(QStringLiteral("Arial"));
+    font.setPixelSize(14);
+    painter.setFont(font);
+    quint32 random = 73;
+    for (int row = 0, index = 0; row < image.height(); row += lineHeight, ++index)
+    {
+        QString text = QString::number(index) + QStringLiteral("  ");
+        for (int word = 0; word < 10; ++word)
+        {
+            random = random * 1664525 + 1013904223;
+            text += QString::number(random, 36) + QLatin1Char(' ');
+        }
+        painter.setPen(QColor(45, 45, 45));
+        painter.drawText(12, row + 14, text);
+        painter.setPen(QColor(220, 220, 220));
+        painter.drawLine(0, row + lineHeight - 1, image.width() - 1, row + lineHeight - 1);
+    }
+    return image;
+}
+// 独立按相邻源行线性插值，模拟浏览器平滑滚动的亚像素重采样。
+QImage smoothFrame(const QImage& source, double position, int height = 640)
+{
+    const int start = int(std::floor(position));
+    const double fraction = position - start;
+    QImage frame = source.copy(0, start, source.width(), height);
+    for (int row = 0; row < height; ++row)
+    {
+        auto* pixels = reinterpret_cast<QRgb*>(frame.scanLine(row));
+        const auto* next = reinterpret_cast<const QRgb*>(source.constScanLine(start + row + 1));
+        for (int column = 0; column < frame.width(); ++column)
+        {
+            const QRgb first = pixels[column], second = next[column];
+            const auto blend = [&](int a, int b) { return qRound(a + (b - a) * fraction); };
+            pixels[column] =
+                qRgb(blend(qRed(first), qRed(second)), blend(qGreen(first), qGreen(second)),
+                     blend(qBlue(first), qBlue(second)));
+        }
+    }
+    return frame;
+}
 }
 class ScrollStitcherTest : public QObject
 {
     Q_OBJECT
   private slots:
+    void lightTextAndNoise_data()
+    {
+        QTest::addColumn<int>("lineHeight");
+        QTest::addColumn<double>("speed");
+        for (int lineHeight : {0, 20, 22})
+            for (double speed : {1.0, 2.0, 3.0, 5.0, 12.0, 30.0, 2.3})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(lineHeight).arg(speed)))
+                    << lineHeight << speed;
+    }
+    void lightTextAndNoise()
+    {
+        QFETCH(int, lineHeight);
+        QFETCH(double, speed);
+        const QImage source = lineHeight ? textDocument(lineHeight) : document(800, 8200);
+        ScrollStitcher stitcher;
+        int unreliable = 0;
+        for (int index = 0; index < 240; ++index)
+        {
+            stitcher.addFrame(source.copy(0, qRound(index * speed), 800, 640));
+            unreliable += !stitcher.stats().lastFrameReliable;
+        }
+        const int expectedLength = 640 + qRound(239 * speed);
+        qInfo() << "连续滚动：行距 / 速度 / 接受 / 不可靠 / 长度 / 真值" << lineHeight << speed
+                << stitcher.stats().accepted << unreliable << stitcher.stats().lengthPx
+                << expectedLength;
+        QCOMPARE(unreliable, 0);
+        QCOMPARE(stitcher.stats().warnings, 0);
+        QVERIFY(stitcher.stats().motionDetected);
+        QVERIFY(std::abs(stitcher.stats().lengthPx - expectedLength) <= expectedLength * 0.005);
+        // 逐像素核对全部内容，比只数行标更严格：任意重复 / 缺失带都会失败。
+        const QImage result = stitcher.result();
+        const int trimmed = expectedLength - result.height();
+        bool continuous = false;
+        for (int leading = 0; leading <= trimmed; ++leading)
+            continuous |= result == source.copy(0, leading, 800, result.height());
+        QVERIFY(continuous);
+        if (!lineHeight)
+        {
+            QCOMPARE(stitcher.stats().accepted, 240);
+            QCOMPARE(result, source.copy(0, 0, 800, expectedLength));
+        }
+    }
+    void smoothTextAndNoise_data()
+    {
+        QTest::addColumn<int>("lineHeight");
+        QTest::addColumn<double>("speed");
+        for (int lineHeight : {0, 20, 22})
+            for (double speed : {0.2, 0.45, 2.3, 5.7, 12.4, 30.3})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(lineHeight).arg(speed)))
+                    << lineHeight << speed;
+    }
+    void smoothTextAndNoise()
+    {
+        QFETCH(int, lineHeight);
+        QFETCH(double, speed);
+        const QImage source = lineHeight ? textDocument(lineHeight) : document(800, 8200);
+        ScrollStitcher stitcher;
+        int unreliable = 0;
+        for (int index = 0; index < 240; ++index)
+        {
+            stitcher.addFrame(smoothFrame(source, 6 + index * speed));
+            unreliable += !stitcher.stats().lastFrameReliable;
+        }
+        const int expectedLength = 640 + qRound(239 * speed);
+        qInfo() << "平滑滚动：行距 / 速度 / 接受 / 不可靠 / 长度 / 真值" << lineHeight << speed
+                << stitcher.stats().accepted << unreliable << stitcher.stats().lengthPx
+                << expectedLength;
+        QCOMPARE(unreliable, 0);
+        QCOMPARE(stitcher.stats().warnings, 0);
+        QVERIFY(stitcher.stats().motionDetected);
+        QVERIFY(std::abs(stitcher.stats().lengthPx - expectedLength) <= expectedLength * 0.005);
+        // 按原始页面的行坐标核对每一行；只容许亚像素插值造成的相邻源行混合。
+        const QImage result = stitcher.result();
+        QCOMPARE(result.copy(0, 0, 800, 16), source.copy(0, 6, 800, 16));
+        double maximumRowError = 0;
+        for (int row = 0; row < result.height(); ++row)
+        {
+            const auto* actual = reinterpret_cast<const QRgb*>(result.constScanLine(row));
+            double best = 255;
+            for (int offset : {-1, 0})
+            {
+                const auto* first =
+                    reinterpret_cast<const QRgb*>(source.constScanLine(6 + row + offset));
+                const auto* second =
+                    reinterpret_cast<const QRgb*>(source.constScanLine(7 + row + offset));
+                double numerator = 0, denominator = 0;
+                for (int column = 0; column < 800; ++column)
+                {
+                    const int delta = qGray(second[column]) - qGray(first[column]);
+                    numerator += (qGray(actual[column]) - qGray(first[column])) * delta;
+                    denominator += delta * delta;
+                }
+                const double fraction =
+                    denominator ? std::clamp(numerator / denominator, 0.0, 1.0) : 0.0;
+                double error = 0;
+                for (int column = 0; column < 800; ++column)
+                {
+                    const double expected =
+                        qGray(first[column]) +
+                        (qGray(second[column]) - qGray(first[column])) * fraction;
+                    error += std::abs(qGray(actual[column]) - expected);
+                }
+                best = std::min(best, error / 800);
+            }
+            maximumRowError = std::max(maximumRowError, best);
+        }
+        qInfo() << "平滑滚动最大单行误差：" << maximumRowError;
+        QVERIFY(maximumRowError <= 1.5);
+    }
+    void smoothReturnToReference()
+    {
+        const QImage source = document(800, 1200);
+        ScrollStitcher stitcher;
+        stitcher.addFrame(smoothFrame(source, 100));
+        QCOMPARE(stitcher.addFrame(smoothFrame(source, 106.9)), ScrollFrameOutcome::Accepted);
+        QCOMPARE(stitcher.stats().lastMotionPx, 7);
+        QCOMPARE(stitcher.addFrame(smoothFrame(source, 100)), ScrollFrameOutcome::Accepted);
+        QCOMPARE(stitcher.stats().lastMotionPx, -7);
+        QCOMPARE(stitcher.addFrame(smoothFrame(source, 98)), ScrollFrameOutcome::Accepted);
+        QCOMPARE(stitcher.stats().lastMotionPx, -2);
+        QCOMPARE(stitcher.stats().warnings, 0);
+        QCOMPARE(stitcher.stats().lengthPx, 649);
+    }
+    void lightTextDiagonalAndPeriodicAreRejected()
+    {
+        const QImage source = textDocument(20);
+        const QImage first = source.copy(0, 6, 760, 640);
+        for (int shift : {1, 2, 5, 12, 30})
+        {
+            ScrollStitcher stitcher;
+            stitcher.addFrame(first);
+            QCOMPARE(stitcher.addFrame(source.copy(shift, 6 + shift, 760, 640)),
+                     ScrollFrameOutcome::Skipped);
+            QCOMPARE(stitcher.result(), first);
+            QVERIFY(!stitcher.stats().motionDetected);
+        }
+        QImage periodic(source.size(), source.format());
+        for (int row = 0; row < periodic.height(); ++row)
+            std::memcpy(periodic.scanLine(row), source.constScanLine(row % 20),
+                        size_t(periodic.bytesPerLine()));
+        ScrollStitcher stitcher;
+        stitcher.addFrame(smoothFrame(periodic, 0.2));
+        const QImage original = stitcher.result();
+        QCOMPARE(stitcher.addFrame(smoothFrame(periodic, 7.6)), ScrollFrameOutcome::Skipped);
+        QCOMPARE(stitcher.result(), original);
+        QVERIFY(!stitcher.stats().motionDetected);
+    }
+    void subpixelZeroKeepsReference()
+    {
+        const QImage source = document(800, 1200);
+        ScrollStitcher stitcher;
+        stitcher.addFrame(smoothFrame(source, 0));
+        const QImage initial = stitcher.result();
+        for (double position : {0.1, 0.2, 0.3, 0.4})
+        {
+            QCOMPARE(stitcher.addFrame(smoothFrame(source, position)), ScrollFrameOutcome::Skipped);
+            QCOMPARE(stitcher.stats().lastMotionPx, 0);
+            QVERIFY(stitcher.stats().lastFrameReliable);
+            QVERIFY(!stitcher.stats().motionDetected);
+            QCOMPARE(stitcher.result(), initial);
+            QCOMPARE(stitcher.stats().warnings, 0);
+        }
+        QCOMPARE(stitcher.addFrame(smoothFrame(source, 1)), ScrollFrameOutcome::Accepted);
+        QCOMPARE(stitcher.result(), source.copy(0, 0, 800, 641));
+        QCOMPARE(stitcher.stats().accepted, 2);
+    }
     void verticalAndBidirectional()
     {
         const QImage source = document();
@@ -195,5 +410,5 @@ class ScrollStitcherTest : public QObject
         QCOMPARE(stitcher.addFrame(source.copy(0, 0, 64, 80)), ScrollFrameOutcome::Skipped);
     }
 };
-QTEST_GUILESS_MAIN(ScrollStitcherTest)
+QTEST_MAIN(ScrollStitcherTest)
 #include "scroll_stitcher_test.moc"

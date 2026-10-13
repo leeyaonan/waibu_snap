@@ -87,6 +87,7 @@ void ScrollCaptureSession::frameArrived(QImage image)
     if (!active_)
         return;
     frameTimeout_.start(5000);
+    const int warningsBefore = stitcher_.stats().warnings;
     const auto outcome = stitcher_.addFrame(image);
     if (stitcher_.stats().lastFrameReliable)
         ++reliableSerial_;
@@ -111,8 +112,9 @@ void ScrollCaptureSession::frameArrived(QImage image)
         emit noticeChanged(QStringLiteral("检测到另一方向移动，已忽略；如需更换方向请重新开始。"));
     }
     else if (outcome == ScrollFrameOutcome::Skipped && !stitcher_.stats().lastFrameReliable &&
-             !suspended_)
-        emit noticeChanged(QStringLiteral("滚动较快，部分画面已跳过。"));
+             stitcher_.stats().warnings > warningsBefore && !suspended_)
+        // 匹配失败无法区分快速缺口与内容变化，不据此声称滚动速度过快。
+        emit noticeChanged(QStringLiteral("画面重叠不足或内容变化，部分帧未拼接。"));
     if (elapsed_.elapsed() - lastRefreshMs_ >= 500 || outcome == ScrollFrameOutcome::LimitReached)
     {
         lastRefreshMs_ = elapsed_.elapsed();
