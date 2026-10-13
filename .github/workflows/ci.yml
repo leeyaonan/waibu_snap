@@ -52,6 +52,7 @@ jobs:
         run: |
           bash scripts/build-project.sh
           bash scripts/test-project.sh
+          python3 tests/unit/objc_block_capture_test.py --build-dir build/macos
           bash scripts/lint-code.sh
           file build/macos/bin/WaibuSnap.app/Contents/MacOS/WaibuSnap
           otool -L build/macos/bin/WaibuSnap.app/Contents/MacOS/WaibuSnap

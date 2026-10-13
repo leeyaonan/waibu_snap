@@ -39,6 +39,8 @@ class SelectionOverlay final : public QWidget
     explicit SelectionOverlay(CaptureFrame frame, OverlayActions actions = {},
                               QVector<QRect> windows = {}, QString snappingError = {});
     QRect selection() const;
+    bool isScrollReady() const { return scrollReady_; }
+    void enterScrollReady(QRect preset = {});
     bool isTextMode() const { return textMode_; }
     bool isRecognizingText() const { return recognizingText_; }
     QString selectedOcrText() const;
@@ -59,6 +61,8 @@ class SelectionOverlay final : public QWidget
     // 不打开对话框；路径确认由保存入口负责，供导出测试和后续输出入口复用。
     bool exportToPath(const QString& path);
   signals:
+    void scrollReadyChanged(bool ready);
+    void scrollCaptureRequested(QRect pixels);
     void firstPaintCompleted(qint64 timestamp);
     void finished(QRect pixels, int outcome);
 
@@ -76,6 +80,13 @@ class SelectionOverlay final : public QWidget
     bool eventFilter(QObject*, QEvent*) override;
 
   private:
+    friend struct OverlayScrollTestAccess;
+    void updateScrollReadyBar();
+    void startScrollCapture();
+    bool scrollSupported_ = false;
+    bool scrollReady_ = false;
+    QWidget* scrollReadyBar_ = nullptr;
+    QPushButton* longImageButton_ = nullptr;
     enum class DragMode
     {
         None,

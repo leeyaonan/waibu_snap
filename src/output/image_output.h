@@ -24,6 +24,7 @@ struct ImageFileResult
     ImageOutputResult result;
     QString path;
 };
+QImage scaledToFit(const QImage& image, QSize maximum, bool allowUpscale = false);
 QString imageFilePath(const QString& path, ImageFormat format = ImageFormat::Png);
 ImageFormat imageFormatForPath(const QString& path);
 QString suggestedImagePath(const QString& directory, ImageFormat format = ImageFormat::Png,

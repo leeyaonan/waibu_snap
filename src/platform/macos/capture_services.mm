@@ -1,5 +1,6 @@
 #include "interfaces/capture_provider.h"
 #include "interfaces/global_hotkey.h"
+#include "interfaces/region_capture.h"
 #include "interfaces/window_enumerator.h"
 #include "session/monotonic_clock.h"
 #import <AppKit/AppKit.h>
@@ -9,6 +10,7 @@
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QScreen>
+#include <QWindow>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #include <array>
 #include <cmath>
@@ -401,7 +403,7 @@ class MacCapture final : public CaptureProvider
                                                                        .arg(qRound(
                                                                            requested.logicalGeometry
                                                                                .height() *
-                                                                           target
+                                                                           requested
                                                                                .devicePixelRatio))});
                                                               return;
                                                           }
@@ -449,6 +451,199 @@ class MacCapture final : public CaptureProvider
                                      }];
     }
 };
+// 状态仅在 GUI 线程读写；系统回调只转换其持有的 CGImage，再排队交付。
+// 单帧完成后才链式发起下一帧，处理速度自然构成背压。
+struct RegionState
+{
+    RegionCaptureRequest request;
+    SCContentFilter* filter = nil;
+    SCStreamConfiguration* configuration = nil;
+    std::function<void(QImage)> onFrame;
+    std::function<void(QString)> onError;
+    bool active = true;
+};
+void regionError(const std::shared_ptr<RegionState>& state, const QString& explanation)
+{
+    if (!state->active)
+        return;
+    state->active = false;
+    const auto callback = std::move(state->onError);
+    state->onFrame = {};
+    if (callback)
+        callback(explanation);
+}
+void captureRegionFrame(const std::shared_ptr<RegionState>& state)
+{
+    if (!state->active)
+        return;
+    if (!MacDisplays().stillMatches(state->request.display))
+    {
+        regionError(state, QStringLiteral("显示器布局已变化，采集已中断。"));
+        return;
+    }
+    // 块存活期超过当前栈帧，必须按值持有 shared_ptr，不能捕获引用参数。
+    const auto keepAlive = state;
+    [SCScreenshotManager
+        captureImageWithFilter:keepAlive->filter
+                 configuration:keepAlive->configuration
+             completionHandler:^(CGImageRef image, NSError* error) {
+               @autoreleasepool
+               {
+                   QImage pixels;
+                   QString explanation;
+                   if (error || !image)
+                       explanation =
+                           QStringLiteral("区域采集已中断（错误 %1），请检查屏幕录制权限。")
+                               .arg(error ? error.code : -1);
+                   else if (int(CGImageGetWidth(image)) != keepAlive->request.pixelRect.width() ||
+                            int(CGImageGetHeight(image)) != keepAlive->request.pixelRect.height())
+                       explanation =
+                           QStringLiteral("区域捕获尺寸不匹配，采集已中断。请重新框选。 ");
+                   else
+                   {
+                       pixels = QImage(keepAlive->request.pixelRect.size(), QImage::Format_RGB32);
+                       CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+                       CGContextRef context =
+                           pixels.isNull()
+                               ? nullptr
+                               : CGBitmapContextCreate(
+                                     pixels.bits(), pixels.width(), pixels.height(), 8,
+                                     size_t(pixels.bytesPerLine()), space,
+                                     kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
+                       CGColorSpaceRelease(space);
+                       if (!context)
+                           explanation = QStringLiteral("区域捕获像素分配失败，采集已中断。");
+                       else
+                       {
+                           CGContextDrawImage(
+                               context, CGRectMake(0, 0, pixels.width(), pixels.height()), image);
+                           CGContextRelease(context);
+                           pixels.setColorSpace(QColorSpace::SRgb);
+                           pixels.setDevicePixelRatio(1);
+                       }
+                   }
+                   QMetaObject::invokeMethod(
+                       QCoreApplication::instance(),
+                       [keepAlive, pixels = std::move(pixels), explanation]() mutable
+                       {
+                           if (!keepAlive->active)
+                               return;
+                           if (!explanation.isEmpty())
+                           {
+                               regionError(keepAlive, explanation);
+                               return;
+                           }
+                           const auto callback = keepAlive->onFrame;
+                           if (callback)
+                               callback(std::move(pixels));
+                           if (keepAlive->active)
+                               captureRegionFrame(keepAlive);
+                       },
+                       Qt::QueuedConnection);
+               }
+             }];
+}
+class MacRegionCapture final : public RegionCaptureSession
+{
+  public:
+    explicit MacRegionCapture(RegionCaptureRequest request) : request_(std::move(request)) {}
+    ~MacRegionCapture() override { stop(); }
+    void stop() override
+    {
+        if (state_)
+        {
+            state_->active = false;
+            state_->onFrame = {};
+            state_->onError = {};
+            state_.reset();
+        }
+    }
+    void start(std::function<void(QImage)> onFrame, std::function<void(QString)> onError) override
+    {
+        stop();
+        auto state = std::make_shared<RegionState>();
+        state->request = request_;
+        state->onFrame = std::move(onFrame);
+        state->onError = std::move(onError);
+        state_ = state;
+        const QRect screenPixels(QPoint(), QSize(qRound(request_.display.logicalGeometry.width() *
+                                                        request_.display.devicePixelRatio),
+                                                 qRound(request_.display.logicalGeometry.height() *
+                                                        request_.display.devicePixelRatio)));
+        if (request_.pixelRect.isEmpty() || !screenPixels.contains(request_.pixelRect) ||
+            !CGPreflightScreenCaptureAccess())
+        {
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [state] {
+                    regionError(state,
+                                QStringLiteral("区域不可用或屏幕录制权限已撤销，采集已中断。"));
+                },
+                Qt::QueuedConnection);
+            return;
+        }
+        [SCShareableContent
+            getShareableContentExcludingDesktopWindows:NO
+                                   onScreenWindowsOnly:YES
+                                     completionHandler:^(SCShareableContent* content,
+                                                         NSError* error) {
+                                       QMetaObject::invokeMethod(
+                                           QCoreApplication::instance(),
+                                           [state, content, error]
+                                           {
+                                               if (!state->active)
+                                                   return;
+                                               SCDisplay* display = nil;
+                                               for (SCDisplay* candidate in content.displays)
+                                                   if (candidate.displayID ==
+                                                       state->request.display.id)
+                                                       display = candidate;
+                                               if (error || !display)
+                                               {
+                                                   regionError(
+                                                       state,
+                                                       QStringLiteral(
+                                                           "无法读取区域采集信息，采集已中断。"));
+                                                   return;
+                                               }
+                                               NSMutableArray<SCWindow*>* excluded =
+                                                   [NSMutableArray array];
+                                               for (SCWindow* window in content.windows)
+                                                   if (state->request.excludedWindowIds.contains(
+                                                           quint64(window.windowID)))
+                                                       [excluded addObject:window];
+                                               state->filter = [[SCContentFilter alloc]
+                                                    initWithDisplay:display
+                                                   excludingWindows:excluded];
+                                               state->configuration =
+                                                   [[SCStreamConfiguration alloc] init];
+                                               const auto& rectangle = state->request.pixelRect;
+                                               const qreal dpr =
+                                                   state->request.display.devicePixelRatio;
+                                               state->configuration.sourceRect = CGRectMake(
+                                                   rectangle.x() / dpr, rectangle.y() / dpr,
+                                                   rectangle.width() / dpr,
+                                                   rectangle.height() / dpr);
+                                               state->configuration.width =
+                                                   size_t(rectangle.width());
+                                               state->configuration.height =
+                                                   size_t(rectangle.height());
+                                               state->configuration.captureResolution =
+                                                   SCCaptureResolutionBest;
+                                               state->configuration.showsCursor = NO;
+                                               state->configuration.colorSpaceName =
+                                                   kCGColorSpaceSRGB;
+                                               captureRegionFrame(state);
+                                           },
+                                           Qt::QueuedConnection);
+                                     }];
+    }
+
+  private:
+    RegionCaptureRequest request_;
+    std::shared_ptr<RegionState> state_;
+};
+
 }
 std::unique_ptr<GlobalHotkey> createGlobalHotkey() { return std::make_unique<MacHotkey>(); }
 std::unique_ptr<WindowEnumerator> createWindowEnumerator()
@@ -457,4 +652,33 @@ std::unique_ptr<WindowEnumerator> createWindowEnumerator()
 }
 std::unique_ptr<DisplayTopology> createDisplayTopology() { return std::make_unique<MacDisplays>(); }
 std::unique_ptr<CaptureProvider> createCaptureProvider() { return std::make_unique<MacCapture>(); }
+std::function<void()> captureForegroundRestorer()
+{
+    NSRunningApplication* previous = NSWorkspace.sharedWorkspace.frontmostApplication;
+    return [previous]
+    {
+        if (previous &&
+            previous.processIdentifier !=
+                NSRunningApplication.currentApplication.processIdentifier &&
+            NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier ==
+                NSRunningApplication.currentApplication.processIdentifier)
+        {
+            [NSApp yieldActivationToApplication:previous];
+            [previous activateWithOptions:0];
+        }
+    };
+}
+bool regionCaptureSupported() { return true; }
+quint64 regionCaptureWindowId(QWindow* window)
+{
+    if (!window || !window->handle() || QGuiApplication::platformName() != QStringLiteral("cocoa"))
+        return 0;
+    NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
+    return quint64(view.window.windowNumber);
+}
+std::unique_ptr<RegionCaptureSession> createRegionCaptureSession(RegionCaptureRequest request)
+{
+    return std::make_unique<MacRegionCapture>(std::move(request));
+}
+
 }

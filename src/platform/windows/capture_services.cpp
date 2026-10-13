@@ -1,6 +1,7 @@
 #include "interfaces/capture_provider.h"
 #include "interfaces/global_hotkey.h"
 #include "interfaces/presentation_observer.h"
+#include "interfaces/region_capture.h"
 #include "interfaces/window_enumerator.h"
 #include <QTimer>
 namespace waibusnap
@@ -68,4 +69,12 @@ observePresentation(QWindow*, QObject* context, std::function<void(PresentationS
     QTimer::singleShot(0, context, [completion = std::move(completion)] { completion({}); });
     return {};
 }
+std::function<void()> captureForegroundRestorer() { return {}; }
+bool regionCaptureSupported() { return false; }
+quint64 regionCaptureWindowId(QWindow*) { return 0; }
+std::unique_ptr<RegionCaptureSession> createRegionCaptureSession(RegionCaptureRequest)
+{
+    return {};
+}
+
 }

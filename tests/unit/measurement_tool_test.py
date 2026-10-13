@@ -49,6 +49,12 @@ class MeasurementTest(unittest.TestCase):
         self.assertEqual(result["warm"]["count"], 4)
         self.assertEqual(result["warm"]["p95_proxy_ms"], 20)
 
+    def test_scroll_sessions_are_excluded(self):
+        rows = [{"cold": False, "nf01_proxy_ms": 1, "interactive_ns": "2", "outcome": outcome}
+                for outcome in (12, 13, 14)]
+        result = measurement.nf01_summary(rows)
+        self.assertEqual(result["warm"]["count"], 0)
+
     def test_process_exit_marks_incomplete_accounting(self):
         before = {"app": [{"pid": 1, "birth": "a", "cpu_ns": "100", "error": 0}]}
         delta, incomplete = measurement.cpu_delta(before, {"app": []}, "app")

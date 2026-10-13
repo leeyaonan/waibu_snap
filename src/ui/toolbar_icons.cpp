@@ -143,6 +143,14 @@ static void drawIcon(QPainter& p, int id, const QRectF& box, const QColor& fg, c
         arrowHead(p, QPointF(5.5, 9), pi, 3.2);
         arrowHead(p, QPointF(12.5, 9), 0.0, 3.2);
         break;
+    case 21: // 长图（长页 + 双向滚动箭头）
+        p.drawRoundedRect(QRectF(2, 2, 8, 14), 1, 1);
+        p.drawLine(QPointF(4, 6), QPointF(8, 6));
+        p.drawLine(QPointF(4, 10), QPointF(8, 10));
+        p.drawLine(QPointF(14, 3), QPointF(14, 15));
+        arrowHead(p, QPointF(14, 3), -pi / 2, 3);
+        arrowHead(p, QPointF(14, 15), pi / 2, 3);
+        break;
     case 20: // 形状（五角星描边）
     {
         QPainterPath star;

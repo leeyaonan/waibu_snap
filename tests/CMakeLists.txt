@@ -69,6 +69,11 @@ set_target_properties(sticker_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME sticker_geometry COMMAND sticker_geometry_test)
 
 add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
+    scrollReadyDprAndClamping scrollEntryPreparation scrollReadyTransitions scrollPlatformAndMenu scrollControlPlacement
+    scrollAutomaticPermissionAndSuspension scrollAutomaticProbeAndBottom scrollManualBottomAndLimit
+    scrollResultPreviewCropOutput scrollResultFullOverview scrollResultCloseConfirmation scrollControllerLifecycle
+    scrollControllerRetryAndQuit scrollControllerPermissionDialogAndQuitCancel
+    scrollResultSavePinAndLimit scrollUnreliableFramesNeverTriggerBottom
     fullScreenToolbarUsesInsideBottom toolbarStaysReachableWithSystemChrome
     toolbarCompactIconsAndTooltips toolbarOptionsFollowActiveTool toolbarStatusPillIndependent
     toolbarStatusPillTimesOut
@@ -149,3 +154,8 @@ qt_add_executable(shape_mask_test unit/shape_mask_test.cpp)
 target_link_libraries(shape_mask_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(shape_mask_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME shape_mask COMMAND shape_mask_test)
+
+qt_add_executable(scroll_stitcher_test unit/scroll_stitcher_test.cpp)
+target_link_libraries(scroll_stitcher_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(scroll_stitcher_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME scroll_stitcher COMMAND scroll_stitcher_test)

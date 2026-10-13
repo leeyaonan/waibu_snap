@@ -1,6 +1,7 @@
 #include "app/application_controller.h"
 #include "core/sticker_geometry.h"
 #include "core/window_snapping.h"
+#include "interfaces/overlay_window_behavior.h"
 #include "interfaces/tray_icon.h"
 #include "session/monotonic_clock.h"
 #include "ui/settings_dialog.h"
@@ -9,9 +10,11 @@
 #include <QCursor>
 #include <QDebug>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QScopedValueRollback>
 #include <QScreen>
 #include <QTimer>
+#include <algorithm>
 namespace waibusnap
 {
 ApplicationController::ApplicationController(QApplication& application, RunOptions options,
@@ -42,19 +45,34 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     }
     if (!clipboardActions_.loadImage)
         clipboardActions_.loadImage = [] { return QGuiApplication::clipboard()->image(); };
+    scrollFactory_ = [](RegionCaptureRequest request, QRect bar, QObject* parent)
+    { return new ScrollCaptureSession(std::move(request), bar, parent); };
+    overlayFactory_ =
+        [](CaptureFrame frame, OverlayActions actions, QVector<QRect> windows, QString error)
+    {
+        return new SelectionOverlay(std::move(frame), std::move(actions), std::move(windows),
+                                    std::move(error));
+    };
     application_.setQuitOnLastWindowClosed(false);
     connect(&application_, &QCoreApplication::aboutToQuit, this, &ApplicationController::cleanup);
     captureTimeout_.setSingleShot(true);
     connect(&captureTimeout_, &QTimer::timeout, this,
             [this]
             {
-                if (active_)
+                if (active_ && !scrollFlowActive_)
                     fail(6, QStringLiteral("截图会话超时，请重新尝试。"));
             });
     sessionWatchdog_.setInterval(5000);
     connect(&sessionWatchdog_, &QTimer::timeout, this,
             &ApplicationController::checkSessionWatchdog);
     menu_.addAction(QStringLiteral("截图"), this, [this] { trigger(QStringLiteral("tray")); });
+    scrollAction_ = menu_.addAction(QStringLiteral("截长图"), this,
+                                    [this] { trigger(QStringLiteral("tray-scroll")); });
+    scrollAction_->setObjectName(QStringLiteral("scrollCaptureAction"));
+    scrollAction_->setToolTip(regionCaptureSupported()
+                                  ? QStringLiteral("框选区域后点击长图开始滚动采集")
+                                  : QStringLiteral("截长图暂不支持当前平台（Windows 后补）。"));
+    scrollAction_->setEnabled(regionCaptureSupported());
     clipboardStickerAction_ = menu_.addAction(QStringLiteral("剪贴板贴图"), this,
                                               &ApplicationController::pinClipboardImage);
     clipboardStickerAction_->setObjectName(QStringLiteral("clipboardStickerAction"));
@@ -81,33 +99,18 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     tray_.setContextMenu(&menu_);
     // 热插拔或屏幕参数变更只响应通知，立即取消当前会话。
     connect(&application_, &QGuiApplication::screenRemoved, this,
-            [this](QScreen*)
-            {
-                if (active_)
-                    finish({}, 4);
-            });
+            [this](QScreen*) { layoutChanged(); });
     const auto watchScreen = [this](QScreen* screen)
     {
-        connect(screen, &QScreen::geometryChanged, this,
-                [this]
-                {
-                    if (active_)
-                        finish({}, 4);
-                });
-        connect(screen, &QScreen::logicalDotsPerInchChanged, this,
-                [this]
-                {
-                    if (active_)
-                        finish({}, 4);
-                });
+        connect(screen, &QScreen::geometryChanged, this, [this] { layoutChanged(); });
+        connect(screen, &QScreen::logicalDotsPerInchChanged, this, [this] { layoutChanged(); });
     };
     for (QScreen* screen : QGuiApplication::screens())
         watchScreen(screen);
     connect(&application_, &QGuiApplication::screenAdded, this,
             [this, watchScreen](QScreen* screen)
             {
-                if (active_)
-                    finish({}, 4);
+                layoutChanged();
                 watchScreen(screen);
             });
 }
@@ -229,6 +232,8 @@ void ApplicationController::trigger(const QString& source)
                    << " resolvingQuit=" << resolvingQuit_ << " settingsOpen=" << settingsOpen_;
         return;
     }
+    if (!retryDisplay_)
+        scrollRestoreFocus_ = captureForegroundRestorer();
     active_ = true;
     qInfo() << "截图会话开始：source=" << source;
     if (clipboardToast_)
@@ -241,7 +246,15 @@ void ApplicationController::trigger(const QString& source)
     metrics_.trigger = source;
     metrics_.t0 = t0;
     sessionWatchdog_.start();
-    const auto display = displays_->cursorDisplay();
+    const auto display =
+        retryDisplay_ ? DisplayResult{*retryDisplay_, {}} : displays_->cursorDisplay();
+    if (retryDisplay_ && !displays_->stillMatches(*retryDisplay_))
+    {
+        retryDisplay_.reset();
+        retryRegion_ = {};
+        fail(4, QStringLiteral("显示器布局已变化，请重新框选长图区域。"));
+        return;
+    }
     if (!display.error.isEmpty())
     {
         fail(5, display.error);
@@ -300,8 +313,10 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
         return stickers_.create(image, overlay_->selectionGlobalPosition(),
                                 overlay_->isSelectionSaved());
     };
-    overlay_ = new SelectionOverlay(std::move(result.frame), std::move(actions), localWindows,
-                                    listed.error);
+    const DisplayTarget scrollDisplay = result.frame.display;
+    overlay_ =
+        overlayFactory_(std::move(result.frame), std::move(actions), localWindows, listed.error);
+    bindScrollOverlay(scrollDisplay);
     overlay_->winId();
     metrics_.windowCreated = monotonicNs();
     connect(overlay_, &SelectionOverlay::finished, this,
@@ -316,13 +331,13 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
                     0, this,
                     [this, token]
                     {
-                        if (!active_ || token != token_ || !overlay_)
+                        if (!active_ || token != token_ || !overlay_ || scrollFlowActive_)
                             return;
                         observation_ = observePresentation(
                             overlay_->windowHandle(), this,
                             [this, token](PresentationSample sample)
                             {
-                                if (!active_ || token != token_ || !overlay_)
+                                if (!active_ || token != token_ || !overlay_ || scrollFlowActive_)
                                     return;
                                 if (!sample.available || !overlay_->isVisible() ||
                                     !overlay_->isActiveWindow())
@@ -351,12 +366,253 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     overlay_->raise();
     overlay_->activateWindow();
     overlay_->setFocus(Qt::ActiveWindowFocusReason);
+    if (!retryRegion_.isEmpty())
+    {
+        const QRect region = retryRegion_;
+        retryRegion_ = {};
+        retryDisplay_.reset();
+        overlay_->enterScrollReady(region);
+    }
+}
+
+void ApplicationController::bindScrollOverlay(DisplayTarget display)
+{
+    connect(overlay_, &SelectionOverlay::scrollReadyChanged, this,
+            [this](bool ready)
+            {
+                scrollFlowActive_ = ready;
+                if (ready)
+                {
+                    captureTimeout_.stop();
+                    observation_.reset();
+                    qInfo().nospace() << "截长图进入准备态：区域 " << overlay_->selection().width()
+                                      << "×" << overlay_->selection().height();
+                }
+            });
+    connect(overlay_, &SelectionOverlay::scrollCaptureRequested, this,
+            [this, display](QRect pixels) { beginScrollCapture({display, pixels, {}}); });
+}
+void ApplicationController::beginScrollCapture(RegionCaptureRequest request)
+{
+    if (!active_ || !scrollFlowActive_ || scrollSession_ || !overlay_)
+        return;
+    captureTimeout_.stop();
+    observation_.reset();
+    overlay_->hide();
+    if (scrollRestoreFocus_)
+        scrollRestoreFocus_();
+    const qreal dpr = request.display.devicePixelRatio;
+    const QRect region(
+        request.display.logicalGeometry.topLeft() +
+            QPoint(qRound(request.pixelRect.x() / dpr), qRound(request.pixelRect.y() / dpr)),
+        QSize(qRound(request.pixelRect.width() / dpr), qRound(request.pixelRect.height() / dpr)));
+    const QRect available = request.display.availableLogicalGeometry.isEmpty()
+                                ? request.display.logicalGeometry
+                                : request.display.availableLogicalGeometry;
+    scrollBorder_ = new ScrollBorderWindow(region);
+    scrollBar_ = new ScrollControlBar(region, available);
+    scrollBorder_->show();
+    scrollBar_->show();
+    // 窗口显示并获得原生编号之后再建立 SCK 排除列表。
+    for (QWidget* window :
+         {static_cast<QWidget*>(scrollBorder_), static_cast<QWidget*>(scrollBar_)})
+    {
+        window->winId();
+        raiseOverlayAboveSystemChrome(window->windowHandle());
+        const quint64 id = regionCaptureWindowId(window->windowHandle());
+        if (id)
+            request.excludedWindowIds.append(id);
+    }
+    scrollSession_ = scrollFactory_(request, scrollBar_->geometry(), this);
+    if (!scrollSession_)
+    {
+        finish({}, scrollCancelledOutcome);
+        return;
+    }
+    const auto session = scrollSession_;
+    connect(scrollBar_, &ScrollControlBar::finishRequested, session,
+            &ScrollCaptureSession::complete);
+    connect(scrollBar_, &ScrollControlBar::cancelRequested, this,
+            [this] { finish({}, scrollCancelledOutcome); });
+    connect(scrollBar_, &ScrollControlBar::automaticRequested, session,
+            &ScrollCaptureSession::setAutomatic);
+    connect(scrollBar_, &ScrollControlBar::speedRequested, session,
+            &ScrollCaptureSession::cycleSpeed);
+    connect(scrollBar_, &ScrollControlBar::directionRequested, session,
+            &ScrollCaptureSession::cycleDirection);
+    connect(scrollBar_, &ScrollControlBar::placementChanged, session,
+            &ScrollCaptureSession::setControlBar);
+    connect(session, &ScrollCaptureSession::noticeChanged, scrollBar_,
+            &ScrollControlBar::setNotice);
+    connect(session, &ScrollCaptureSession::statisticsChanged, scrollBar_,
+            [this](ScrollStitchStats stats)
+            {
+                if (scrollBar_ && scrollSession_)
+                    scrollBar_->setStatistics(stats, scrollSession_->lengthLimit());
+            });
+    connect(session, &ScrollCaptureSession::automaticChanged, scrollBar_,
+            &ScrollControlBar::setAutomatic);
+    connect(session, &ScrollCaptureSession::optionsChanged, scrollBar_,
+            &ScrollControlBar::setOptions);
+    connect(session, &ScrollCaptureSession::permissionMissing, this,
+            [this, session]
+            {
+                if (!scrollBar_ || !scrollBorder_)
+                    return;
+                const auto bar = scrollBar_;
+                const auto border = scrollBorder_;
+                bar->hide();
+                border->hide();
+                const bool open = bar->explainAccessibilityPermission();
+                if (scrollSession_ != session || !session || !active_)
+                    return;
+                if (open)
+                    session->openAccessibilitySettings();
+                if (bar)
+                    bar->show();
+                if (border)
+                    border->show();
+            });
+    connect(session, &ScrollCaptureSession::completed, this,
+            [this, request]
+            {
+                retryDisplay_ = request.display;
+                retryRegion_ = request.pixelRect;
+                finishScrollCapture();
+            });
+    scrollStartedNs_ = monotonicNs();
+    session->start();
+}
+void ApplicationController::finishScrollCapture()
+{
+    if (!scrollSession_ || !active_)
+        return;
+    QImage image = scrollSession_->takeResult();
+    const auto stats = scrollSession_->stats();
+    const auto display = retryDisplay_;
+    const QRect region = retryRegion_;
+    const auto restoreFocus = scrollRestoreFocus_;
+    finish(image.isNull() ? QRect() : QRect(QPoint(), image.size()),
+           image.isNull() ? scrollCancelledOutcome : scrollCompletedOutcome);
+    if (image.isNull() || quitting_ || !display)
+        return;
+    ScrollResultActions actions;
+    actions.loadSavePreferences = [this] { return settings_.loadSavePreferences(); };
+    actions.pinImage = [this](const QImage& original)
+    {
+        QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        if (!screen)
+            return ImageOutputResult{false, QStringLiteral("未找到可用显示器，请重试。")};
+        const QRect available = screen->availableGeometry();
+        const QSize maximum(qRound(available.width() * 0.85 * screen->devicePixelRatio()),
+                            qRound(available.height() * 0.85 * screen->devicePixelRatio()));
+        const QImage scaled = scaledToFit(original, maximum);
+        const auto result = stickers_.create(
+            scaled, clipboardStickerPosition(
+                        available, stickerWindowSize(scaled.size(), 1, screen->devicePixelRatio()),
+                        scrollStickerSequence_));
+        if (result.success)
+            ++scrollStickerSequence_;
+        refreshStickerActions();
+        return result;
+    };
+    auto* result = new ScrollResultWindow(std::move(image), stats, std::move(actions));
+    scrollResults_.append(result);
+    connect(result, &QObject::destroyed, this,
+            [this]
+            {
+                scrollResults_.erase(std::remove_if(scrollResults_.begin(), scrollResults_.end(),
+                                                    [](const auto& window)
+                                                    { return window.isNull(); }),
+                                     scrollResults_.end());
+            });
+    connect(result, &ScrollResultWindow::retryRequested, this,
+            [this, result, display, region, restoreFocus]
+            {
+                if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
+                    return;
+                retryDisplay_ = display;
+                retryRegion_ = region;
+                scrollRestoreFocus_ = restoreFocus;
+                result->closeWithoutConfirmation();
+                trigger(QStringLiteral("scroll-retry"));
+            });
+    const QRect available = display->availableLogicalGeometry.isEmpty()
+                                ? display->logicalGeometry
+                                : display->availableLogicalGeometry;
+    result->resize(result->size().boundedTo(available.size()));
+    result->move(available.center() - QPoint(result->width() / 2, result->height() / 2));
+    result->show();
+}
+void ApplicationController::clearScrollCapture(int outcome)
+{
+    if (scrollFlowActive_)
+    {
+        const ScrollStitchStats stats =
+            scrollSession_ ? scrollSession_->stats() : ScrollStitchStats{};
+        qInfo().nospace() << "截长图结束：帧 " << stats.frames << "，接受 " << stats.accepted
+                          << "，跳过 " << stats.skipped << "，警告 " << stats.warnings << "，长度 "
+                          << stats.lengthPx << " px，终态 " << outcome << "，用时 "
+                          << (scrollStartedNs_ ? (monotonicNs() - scrollStartedNs_) / 1000000 : 0)
+                          << " ms";
+    }
+    scrollFlowActive_ = false;
+    scrollStartedNs_ = 0;
+    if (scrollSession_)
+    {
+        scrollSession_->stop();
+        scrollSession_->disconnect();
+        scrollSession_->deleteLater();
+        scrollSession_ = nullptr;
+    }
+    for (QWidget* window :
+         {static_cast<QWidget*>(scrollBorder_), static_cast<QWidget*>(scrollBar_)})
+        if (window)
+        {
+            window->hide();
+            window->disconnect();
+            window->deleteLater();
+        }
+    scrollBorder_ = nullptr;
+    scrollBar_ = nullptr;
+}
+void ApplicationController::layoutChanged()
+{
+    if (!active_)
+        return;
+    if (scrollSession_)
+        scrollSession_->interrupt(QStringLiteral("显示器布局已变化，采集已中断，已保留当前结果。"));
+    else
+        finish({}, scrollFlowActive_ ? scrollCancelledOutcome : 4);
+}
+bool ApplicationController::resolveScrollResultsForQuit()
+{
+    for (const auto& window : scrollResults_)
+        if (window && !window->hasOutput())
+        {
+            QMessageBox dialog(QMessageBox::Question, QStringLiteral("退出 WaibuSnap"),
+                               QStringLiteral("有未保存的长图，退出将丢弃。"),
+                               QMessageBox::NoButton, nullptr);
+            auto* discard =
+                dialog.addButton(QStringLiteral("放弃并退出"), QMessageBox::DestructiveRole);
+            auto* cancel = dialog.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+            dialog.setDefaultButton(cancel);
+            dialog.exec();
+            return dialog.clickedButton() == discard;
+        }
+    return true;
 }
 void ApplicationController::finish(QRect pixels, int outcome)
 {
     if (!active_)
         return;
     ++token_;
+    clearScrollCapture(outcome);
+    retryDisplay_.reset();
+    retryRegion_ = {};
+    scrollRestoreFocus_ = {};
     captureTimeout_.stop();
     sessionWatchdog_.stop();
     observation_.reset();
@@ -410,7 +666,7 @@ void ApplicationController::fail(int outcome, const QString& explanation)
 }
 void ApplicationController::checkSessionWatchdog()
 {
-    if (!active_)
+    if (!active_ || scrollFlowActive_)
         return;
     if (QApplication::activeModalWidget())
         return;
@@ -437,7 +693,13 @@ void ApplicationController::cleanup()
     clipboardToast_.reset();
     const QPointer<SelectionOverlay> closingOverlay = overlay_;
     if (active_)
-        finish({}, 9);
+        finish({}, scrollFlowActive_ ? scrollCancelledOutcome : 9);
+    clearScrollCapture();
+    const auto results = scrollResults_;
+    scrollResults_.clear();
+    for (const auto& result : results)
+        if (result)
+            delete result.data();
     // 所有退出入口共用清理；正在面板嵌套事件循环中的窗口也会被销毁。
     stickers_.closeAll();
     if (closingOverlay)
@@ -461,7 +723,13 @@ void ApplicationController::quit()
         // 2026-10-13 同类防御：退出汇总与逐张保存的独立模态也可能被覆盖层遮住。
         if (restoreOverlay)
             pausedOverlay->hide();
-        resolved = stickers_.resolveUnsavedForQuit();
+        if (scrollBorder_)
+            scrollBorder_->hide();
+        if (scrollBar_)
+            scrollBar_->hide();
+        if (scrollFlowActive_)
+            finish({}, scrollCancelledOutcome);
+        resolved = resolveScrollResultsForQuit() && stickers_.resolveUnsavedForQuit();
     }
     refreshStickerActions();
     if (!resolved)
@@ -487,14 +755,14 @@ void ApplicationController::startSmokeTest()
         [this]
         {
             if (tray_.icon().isNull() || tray_.icon().availableSizes().isEmpty() ||
-                application_.quitOnLastWindowClosed() || menu_.actions().size() != 6 ||
-                menu_.actions().at(1)->text() != QStringLiteral("剪贴板贴图") ||
-                menu_.actions().at(1)->objectName() != QStringLiteral("clipboardStickerAction") ||
-                !menu_.actions().at(1)->isEnabled() ||
-                menu_.actions().at(2)->text() != QStringLiteral("设置…") ||
-                menu_.actions().at(3)->objectName() != QStringLiteral("hideAllStickersAction") ||
-                menu_.actions().at(4)->objectName() != QStringLiteral("restoreAllStickersAction") ||
-                menu_.actions().at(3)->isEnabled() || menu_.actions().at(4)->isEnabled() ||
+                application_.quitOnLastWindowClosed() || menu_.actions().size() != 7 ||
+                menu_.actions().at(2)->text() != QStringLiteral("剪贴板贴图") ||
+                menu_.actions().at(2)->objectName() != QStringLiteral("clipboardStickerAction") ||
+                !menu_.actions().at(2)->isEnabled() ||
+                menu_.actions().at(3)->text() != QStringLiteral("设置…") ||
+                menu_.actions().at(4)->objectName() != QStringLiteral("hideAllStickersAction") ||
+                menu_.actions().at(5)->objectName() != QStringLiteral("restoreAllStickersAction") ||
+                menu_.actions().at(4)->isEnabled() || menu_.actions().at(5)->isEnabled() ||
                 !QApplication::topLevelWidgets().contains(&menu_))
             {
                 application_.exit(20);

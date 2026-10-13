@@ -9,6 +9,17 @@
 #include <QTemporaryFile>
 namespace waibusnap
 {
+QImage scaledToFit(const QImage& image, QSize maximum, bool allowUpscale)
+{
+    if (image.isNull() || maximum.isEmpty())
+        return {};
+    QImage normalized = image;
+    normalized.setDevicePixelRatio(1);
+    if (!allowUpscale && image.width() <= maximum.width() && image.height() <= maximum.height())
+        return normalized;
+    return normalized.scaled(maximum, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 QImage cropFrozenSelection(const QImage& frozen, QRect pixels)
 {
     if (frozen.isNull() || pixels.isEmpty() || !frozen.rect().contains(pixels))

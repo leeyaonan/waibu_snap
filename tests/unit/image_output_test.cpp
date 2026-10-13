@@ -12,6 +12,37 @@ class ImageOutputTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void scaledToFitMatrix_data()
+    {
+        QTest::addColumn<QSize>("source");
+        QTest::addColumn<QSize>("maximum");
+        QTest::addColumn<bool>("upscale");
+        QTest::addColumn<QSize>("expected");
+        QTest::newRow("long-vertical")
+            << QSize(100, 2000) << QSize(800, 600) << false << QSize(30, 600);
+        QTest::newRow("long-horizontal")
+            << QSize(2000, 100) << QSize(800, 600) << false << QSize(800, 40);
+        QTest::newRow("small") << QSize(100, 50) << QSize(800, 600) << false << QSize(100, 50);
+        QTest::newRow("upscale") << QSize(100, 50) << QSize(800, 600) << true << QSize(800, 400);
+        QTest::newRow("empty") << QSize() << QSize(800, 600) << false << QSize(0, 0);
+        QTest::newRow("empty-limit") << QSize(100, 50) << QSize() << false << QSize(0, 0);
+    }
+    void scaledToFitMatrix()
+    {
+        QFETCH(QSize, source);
+        QFETCH(QSize, maximum);
+        QFETCH(bool, upscale);
+        QFETCH(QSize, expected);
+        QImage image(source, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::red);
+        image.setDevicePixelRatio(2);
+        const QImage scaled = waibusnap::scaledToFit(image, maximum, upscale);
+        QCOMPARE(scaled.size(), expected);
+        if (!scaled.isNull())
+            QCOMPARE(scaled.devicePixelRatio(), qreal(1));
+        if (!image.isNull())
+            QCOMPARE(image.devicePixelRatio(), qreal(2));
+    }
     void jpegRoundTripSuffixAndAnnotations_data()
     {
         QTest::addColumn<QString>("name");
