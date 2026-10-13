@@ -51,6 +51,9 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                 if (active_)
                     fail(6, QStringLiteral("截图会话超时，请重新尝试。"));
             });
+    sessionWatchdog_.setInterval(5000);
+    connect(&sessionWatchdog_, &QTimer::timeout, this,
+            &ApplicationController::checkSessionWatchdog);
     menu_.addAction(QStringLiteral("截图"), this, [this] { trigger(QStringLiteral("tray")); });
     clipboardStickerAction_ = menu_.addAction(QStringLiteral("剪贴板贴图"), this,
                                               &ApplicationController::pinClipboardImage);
@@ -221,8 +224,13 @@ void ApplicationController::trigger(const QString& source)
 {
     const qint64 t0 = monotonicNs();
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
+    {
+        qWarning() << "截图触发被忽略：active=" << active_ << " quitting=" << quitting_
+                   << " resolvingQuit=" << resolvingQuit_ << " settingsOpen=" << settingsOpen_;
         return;
+    }
     active_ = true;
+    qInfo() << "截图会话开始：source=" << source;
     if (clipboardToast_)
         clipboardToast_->close();
     refreshStickerActions();
@@ -232,6 +240,7 @@ void ApplicationController::trigger(const QString& source)
     metrics_.sequence = ++sequence_;
     metrics_.trigger = source;
     metrics_.t0 = t0;
+    sessionWatchdog_.start();
     const auto display = displays_->cursorDisplay();
     if (!display.error.isEmpty())
     {
@@ -273,6 +282,7 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
         fail(4, QStringLiteral("显示器布局已变化，本次截图已取消，请重试。"));
         return;
     }
+    qInfo() << "截图捕获完成，耗时 " << (metrics_.captureComplete - metrics_.t0) / 1000000 << " ms";
     metrics_.frameWidth = result.frame.pixels.width();
     metrics_.frameHeight = result.frame.pixels.height();
     const auto listed = windows_->visibleWindows(result.frame.display);
@@ -299,6 +309,7 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     connect(overlay_, &SelectionOverlay::firstPaintCompleted, this,
             [this, token](qint64 timestamp)
             {
+                qInfo() << "覆盖层首帧完成";
                 metrics_.paintComplete = timestamp;
                 // 排到 backing store flush 之后，再观察目标屏刷新；不能用 paintEvent 当可见终点。
                 QTimer::singleShot(
@@ -322,6 +333,7 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
                                     return;
                                 }
                                 captureTimeout_.stop();
+                                qInfo() << "覆盖层可交互就绪（停止超时保护）";
                                 metrics_.visibleProxy = sample.observedAtNs;
                                 metrics_.interactive = monotonicNs();
                                 metrics_.refreshIntervalMs = sample.refreshIntervalMs;
@@ -346,6 +358,7 @@ void ApplicationController::finish(QRect pixels, int outcome)
         return;
     ++token_;
     captureTimeout_.stop();
+    sessionWatchdog_.stop();
     observation_.reset();
     metrics_.width = pixels.width();
     metrics_.height = pixels.height();
@@ -360,6 +373,8 @@ void ApplicationController::finish(QRect pixels, int outcome)
     }
     const bool written = appendMetrics(options_.metricsFile, metrics_);
     active_ = false;
+    qInfo() << "截图会话结束：outcome=" << outcome << "，用时 "
+            << (monotonicNs() - metrics_.t0) / 1000000 << " ms";
     settingsAction_->setEnabled(!quitting_);
     if (clipboardToast_)
         clipboardToast_->close();
@@ -386,9 +401,34 @@ void ApplicationController::fail(int outcome, const QString& explanation)
         return;
     }
     qWarning().noquote() << explanation;
+    // 2026-10-13 防御：层级 25 的全屏覆盖层会遮住独立模态窗口，先隐藏再提示。
+    if (overlay_)
+        overlay_->hide();
     // 对话框期间仍持有会话锁，避免连续 F1 堆叠提示。
     QMessageBox::information(nullptr, QStringLiteral("截图未完成"), explanation);
     finish({}, outcome);
+}
+void ApplicationController::checkSessionWatchdog()
+{
+    if (!active_)
+        return;
+    if (QApplication::activeModalWidget())
+        return;
+    if (overlay_ && overlay_->isVisible())
+        return;
+    const qint64 age = monotonicNs() - metrics_.t0;
+    if (age < 20'000'000'000LL)
+        return;
+    // 将状态泄漏的后果从必须退出重开降级为自动恢复 + 日志留证，不是掩盖问题；
+    // 发现异常残留日志后仍需继续定位根因。空闲不轮询，正常可见覆盖层与模态不复位。
+    qWarning().nospace() << "截图会话异常残留，已自动复位：active=" << active_
+                         << " overlay=" << (overlay_ != nullptr)
+                         << " overlayVisible=" << (overlay_ ? overlay_->isVisible() : false)
+                         << " observation=" << (observation_ != nullptr)
+                         << " captureTimeoutActive=" << captureTimeout_.isActive()
+                         << " settingsOpen=" << settingsOpen_ << " resolvingQuit=" << resolvingQuit_
+                         << " quitting=" << quitting_ << " 会话年龄ms=" << age / 1000000;
+    finish({}, 12);
 }
 void ApplicationController::cleanup()
 {
@@ -409,17 +449,33 @@ void ApplicationController::quit()
 {
     if (quitting_ || resolvingQuit_)
         return;
+    const QPointer<SelectionOverlay> pausedOverlay = overlay_;
+    const quint64 pausedToken = token_;
+    const bool restoreOverlay = pausedOverlay && pausedOverlay->isVisible();
     bool resolved = false;
     {
         QScopedValueRollback<bool> resolving(resolvingQuit_, true);
         refreshStickerActions();
         if (clipboardToast_)
             clipboardToast_->close();
+        // 2026-10-13 同类防御：退出汇总与逐张保存的独立模态也可能被覆盖层遮住。
+        if (restoreOverlay)
+            pausedOverlay->hide();
         resolved = stickers_.resolveUnsavedForQuit();
     }
     refreshStickerActions();
     if (!resolved)
+    {
+        // 嵌套事件循环可能已取消或销毁会话，不能复活旧覆盖层。
+        if (restoreOverlay && active_ && token_ == pausedToken && overlay_ == pausedOverlay)
+        {
+            pausedOverlay->show();
+            pausedOverlay->raise();
+            pausedOverlay->activateWindow();
+            pausedOverlay->setFocus(Qt::ActiveWindowFocusReason);
+        }
         return;
+    }
     cleanup();
     application_.quit();
 }

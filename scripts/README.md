@@ -149,7 +149,7 @@ bash scripts/run-app.sh --metrics-file "$PWD/build/manual/sessions.jsonl"
 bash scripts/summarize-nf01.sh --input build/manual/sessions.jsonl --output build/manual/summary
 ```
 
-无自定义路径时，日志为 Qt `AppLocalDataLocation/WaibuSnap` 对应的 `sessions.jsonl`（实际目录由 Qt / 系统决定）。不保存截图、裁剪图、标注或识别文本；JSONL 仅存时间、尺寸、冷 / 热、触发方式与数值结果码。应用日志的中文错误说明是固定技术提示，不含截图或用户文本。真实 F1 与注入触发直接进入同一个 `ApplicationController::trigger`，第一条语句记录 t0；单会话锁拒绝连按，不为无效重入写虚假成功记录。
+无自定义路径时，日志为 Qt `AppLocalDataLocation/WaibuSnap` 对应的 `sessions.jsonl`（实际目录由 Qt / 系统决定）。不保存截图、裁剪图、标注或识别文本；JSONL 仅存时间、尺寸、冷 / 热、触发方式与数值结果码。应用 stderr 逐次记录中文会话链路、触发守卫状态与看门狗异常快照，不含截图或用户文本、不节流；run-app 终端与 stderr 文件用于卡死现场取证，清单见 tests/README。真实 F1 与注入触发直接进入同一个 `ApplicationController::trigger`，第一条语句记录 t0；单会话锁拒绝连按，不为无效重入写虚假成功记录。
 
 ### 埋点与呈现误差
 
@@ -165,7 +165,7 @@ bash scripts/summarize-nf01.sh --input build/manual/sessions.jsonl --output buil
 
 有效时间样本必须有可交互终点且结果码属于 `(1, 2, 10, 11)`（历史确认 / 取消 / 已复制 / 已钉到屏幕并结束会话）；旧数据仍兼容。权限、捕获、显示器变化、呈现观察失败和超时记录均不混入 P95。nearest-rank 为排序后第 `ceil(0.95 × n)` 项，30 次取第 29 项，同时保留最大值。
 
-数值结果码：1 确认（历史语义保留，本轮松开仅进入选区态）、2 取消、3 未授权、4 显示器变化、5 定位未实现 / 失败、6 超时、7 捕获失败、8 未观察到可交互窗口、9 退出取消、10 已复制并结束会话、11 已钉到屏幕并结束会话。保存成功不结束会话，不单独写终态日志；受控模式可交互后仍自动取消（码 2），30 冷 + 30 热协议不变。无可交互终点的行不算有效性能样本。
+数值结果码：1 确认（历史语义保留，本轮松开仅进入选区态）、2 取消、3 未授权、4 显示器变化、5 定位未实现 / 失败、6 超时、7 捕获失败、8 未观察到可交互窗口、9 退出取消、10 已复制并结束会话、11 已钉到屏幕并结束会话、12 异常残留由会话看门狗自动复位。保存成功不结束会话，不单独写终态日志；受控模式可交互后仍自动取消（码 2），30 冷 + 30 热协议不变。有效终态仍为 `(1, 2, 10, 11)`，码 12 不算有效性能样本。
 
 ### NF04 进程与内存口径
 

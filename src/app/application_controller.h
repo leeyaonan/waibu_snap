@@ -48,10 +48,13 @@ class ApplicationController final : public QObject
     StickerManager& stickers() { return stickers_; }
 
   private:
+    // 冒烟仅通过友元注入会话状态，不开放生产运行参数。
+    friend struct ApplicationControllerTestAccess;
     void cleanup();
     void captureCompleted(quint64 token, CaptureResult result);
     void finish(QRect pixels, int outcome);
     void fail(int outcome, const QString& explanation);
+    void checkSessionWatchdog();
     void startSmokeTest();
     void openSettings();
     void refreshStickerActions();
@@ -80,6 +83,7 @@ class ApplicationController final : public QObject
     QPointer<SelectionOverlay> overlay_;
     SessionMetrics metrics_;
     QTimer captureTimeout_;
+    QTimer sessionWatchdog_;
     int sequence_ = 0;
     quint64 token_ = 0;
     bool active_ = false;
