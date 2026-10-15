@@ -2,7 +2,11 @@
 #include <QCursor>
 #include <QDebug>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QPointer>
+#include <QScreen>
 #include <QWindow>
 namespace waibusnap
 {
@@ -10,7 +14,8 @@ ScrollCaptureSession::ScrollCaptureSession(RegionCaptureRequest request, QRect c
                                            QObject* parent)
     : ScrollCaptureSession(
           request, controlBar, createRegionCaptureSession(request), createScrollInjector(),
-          [] { return QCursor::pos(); }, {}, parent)
+          [] { return QCursor::pos(); },
+          ScrollStitchLimits::forDisplay(request.display.devicePixelRatio), parent)
 {
 }
 ScrollCaptureSession::ScrollCaptureSession(RegionCaptureRequest request, QRect controlBar,
@@ -22,6 +27,7 @@ ScrollCaptureSession::ScrollCaptureSession(RegionCaptureRequest request, QRect c
       capture_(std::move(capture)), injector_(std::move(injector)), cursor_(std::move(cursor)),
       stitcher_(limits)
 {
+    trace_ = qEnvironmentVariableIntValue("WAIBUSNAP_SCROLL_TRACE") > 0;
     autoTimer_.setInterval(100);
     connect(&autoTimer_, &QTimer::timeout, this, &ScrollCaptureSession::driveAutomatic);
     frameTimeout_.setSingleShot(true);
@@ -36,7 +42,13 @@ void ScrollCaptureSession::start()
     active_ = true;
     elapsed_.start();
     lastMotionMs_ = 0;
-    qInfo("截长图开始采集：模式=手动");
+    qreal refresh = 0;
+    for (QScreen* screen : QGuiApplication::screens())
+        if (screen->geometry() == request_.display.logicalGeometry)
+            refresh = screen->refreshRate();
+    qInfo() << "截长图开始采集：模式=手动，屏幕 / DPR / 标称刷新率 / 物理区域"
+            << request_.display.id << request_.display.devicePixelRatio << refresh
+            << request_.pixelRect;
     frameTimeout_.start(5000);
     if (!capture_)
     {
@@ -58,6 +70,8 @@ void ScrollCaptureSession::start()
 }
 void ScrollCaptureSession::stop()
 {
+    if (active_)
+        logDiagnostics();
     active_ = false;
     automatic_ = false;
     autoTimer_.stop();
@@ -70,7 +84,9 @@ void ScrollCaptureSession::complete()
 {
     if (!active_)
         return;
+    stitcher_.finalize();
     stop();
+    emit statisticsChanged(stitcher_.stats());
     emit completed();
 }
 void ScrollCaptureSession::interrupt(const QString& explanation)
@@ -87,8 +103,27 @@ void ScrollCaptureSession::frameArrived(QImage image)
     if (!active_)
         return;
     frameTimeout_.start(5000);
+    const qint64 arrival = elapsed_.nsecsElapsed();
+    if (firstArrivalNs_ < 0)
+        firstArrivalNs_ = arrival;
+    if (lastArrivalNs_ >= 0)
+        arrivalIntervals_.add((arrival - lastArrivalNs_) / 1e6);
+    lastArrivalNs_ = arrival;
     const int warningsBefore = stitcher_.stats().warnings;
     const auto outcome = stitcher_.addFrame(image);
+    processingTimes_.add((elapsed_.nsecsElapsed() - arrival) / 1e6);
+    if (trace_)
+    {
+        const auto& d = stitcher_.diagnostics();
+        qInfo() << "长截逐帧：毫秒 / 帧 / 位移 / 跳过原因 / 基准帧 / 基准位移 / range / 误差"
+                << arrival / 1e6 << stats().frames << stats().lastMotionPx
+                << int(stats().lastSkipReason) << d.lastAnchorFrame << d.lastDelta << d.lastRange
+                << d.lastError;
+    }
+    if (stats().frames == 1 && stats().memoryLimited)
+        emit noticeChanged(
+            QStringLiteral("已按内存预算调整上限为 %1 逻辑 px；缩窄选区可采集更长内容。")
+                .arg(qRound64(lengthLimit() / stats().devicePixelRatio)));
     if (stitcher_.stats().lastFrameReliable)
         ++reliableSerial_;
     if (stitcher_.stats().lastMotionPx)
@@ -113,8 +148,7 @@ void ScrollCaptureSession::frameArrived(QImage image)
     }
     else if (outcome == ScrollFrameOutcome::Skipped && !stitcher_.stats().lastFrameReliable &&
              stitcher_.stats().warnings > warningsBefore && !suspended_)
-        // 匹配失败无法区分快速缺口与内容变化，不据此声称滚动速度过快。
-        emit noticeChanged(QStringLiteral("画面重叠不足或内容变化，部分帧未拼接。"));
+        emit noticeChanged(QStringLiteral("位移超出可验证重叠范围，可能有内容未采集。"));
     if (elapsed_.elapsed() - lastRefreshMs_ >= 500 || outcome == ScrollFrameOutcome::LimitReached)
     {
         lastRefreshMs_ = elapsed_.elapsed();
@@ -122,7 +156,10 @@ void ScrollCaptureSession::frameArrived(QImage image)
     }
     if (outcome == ScrollFrameOutcome::LimitReached)
     {
-        emit noticeChanged(QStringLiteral("已达长度上限，已保留当前结果。"));
+        emit noticeChanged(
+            stats().memoryLimited
+                ? QStringLiteral("已达内存预算上限，已保留当前结果；缩窄选区可采集更长内容。")
+                : QStringLiteral("已达长度上限，已保留当前结果。"));
         complete();
     }
 }
@@ -200,7 +237,10 @@ void ScrollCaptureSession::driveAutomatic()
     if (!QRectF(request_.pixelRect).contains(local) || ownWindow)
     {
         if (!suspended_)
+        {
+            ++suspensions_;
             emit noticeChanged(QStringLiteral("自动滚动暂挂：请将鼠标移到采集区域内。"));
+        }
         suspended_ = true;
         postPending_ = false;
         stationaryPosts_ = 0;
@@ -222,7 +262,7 @@ void ScrollCaptureSession::driveAutomatic()
             stationaryDistance_ = 0;
             probeCount_ = 0;
         }
-        else if (reliableSerial_ != postReliableSerial_)
+        else if (reliableSerial_ != postReliableSerial_ && stats().lastFrameReliable)
         {
             if (stats().motionDetected)
             {
@@ -268,10 +308,70 @@ void ScrollCaptureSession::driveAutomatic()
         emit noticeChanged(QStringLiteral("自动滚动投递失败，已切回手动滚动。"));
         return;
     }
+    ++postedEvents_;
     postPending_ = true;
     postedDistance_ = step;
     postFrames_ = stats().frames;
     postMotionSerial_ = motionSerial_;
     postReliableSerial_ = reliableSerial_;
 }
+void ScrollCaptureSession::logDiagnostics() const
+{
+    const auto distribution = [](const ScrollDistribution& d)
+    {
+        QJsonArray bins;
+        for (qint64 value : d.bins)
+            bins.append(value);
+        QJsonObject result{{"次数", d.count}, {"桶", bins}};
+        if (d.count)
+        {
+            result.insert("最小", d.minimum);
+            result.insert("最大", d.maximum);
+            result.insert("均值", d.sum / d.count);
+        }
+        return result;
+    };
+    const auto& d = stitcher_.diagnostics();
+    const auto& s = stats();
+    const double seconds = (lastArrivalNs_ - firstArrivalNs_) / 1e9;
+    QJsonObject report{{"屏幕", qint64(request_.display.id)},
+                       {"DPR", request_.display.devicePixelRatio},
+                       {"帧", s.frames},
+                       {"到帧fps", seconds > 0 ? (s.frames - 1) / seconds : 0},
+                       {"到帧间隔ms", distribution(arrivalIntervals_)},
+                       {"处理ms", distribution(processingTimes_)},
+                       {"位移物理px", distribution(d.displacement)},
+                       {"分离边距", distribution(d.separationMargin)},
+                       {"连续边距", distribution(d.continuityMargin)},
+                       {"斜向边距", distribution(d.diagonalMargin)},
+                       {"平滑边距", distribution(d.smoothMargin)},
+                       {"同相边距", distribution(d.referenceMargin)},
+                       {"零位移边距", distribution(d.zeroMotionMargin)},
+                       {"亚像素保持边距", distribution(d.subpixelHoldMargin)},
+                       {"无运动", s.noMotion},
+                       {"内容变化", s.hiccups},
+                       {"低置信", s.lowConfidence},
+                       {"缺口", s.gaps},
+                       {"range帧", s.rangeExceededFrames},
+                       {"换轴帧", s.axisChanges},
+                       {"无效帧", s.invalidFrames},
+                       {"尾部", s.unverifiedTails},
+                       {"中断", s.interruptions},
+                       {"警告", s.warnings},
+                       {"同相重锚", d.exactAnchors},
+                       {"严格像素重锚", d.strictPixelAnchors},
+                       {"空间支持重锚", d.stableSupportAnchors},
+                       {"边界重锚", d.rangeAnchors},
+                       {"内容重锚", d.contentAnchors},
+                       {"亚像素保持", d.subpixelHolds},
+                       {"最长基准帧龄", d.maximumReferenceAge},
+                       {"最后重锚帧", d.lastAnchorFrame},
+                       {"自动投递", postedEvents_},
+                       {"暂挂", suspensions_},
+                       {"逻辑长度", s.logicalLength()},
+                       {"逻辑上限", qRound64(lengthLimit() / s.devicePixelRatio)},
+                       {"内存收敛", s.memoryLimited}};
+    qInfo().noquote() << "长截诊断：" << QJsonDocument(report).toJson(QJsonDocument::Compact);
+}
+
 }

@@ -280,6 +280,170 @@ class ScrollStitcherTest : public QObject
         QCOMPARE(stitcher.addFrame(smoothFrame(source, 1)), ScrollFrameOutcome::Accepted);
         QCOMPARE(stitcher.result(), source.copy(0, 0, 800, 641));
         QCOMPARE(stitcher.stats().accepted, 2);
+        QCOMPARE(stitcher.diagnostics().zeroMotionMargin.count, 5);
+        QCOMPARE(stitcher.diagnostics().subpixelHoldMargin.count, 4);
+        QVERIFY(stitcher.diagnostics().subpixelHoldMargin.minimum >= 0);
+    }
+    void dynamicContent_data()
+    {
+        QTest::addColumn<bool>("moving");
+        QTest::addColumn<bool>("text");
+        QTest::addColumn<QSize>("block");
+        for (bool moving : {false, true})
+            for (bool text : {false, true})
+                for (QSize block : {QSize(80, 60), QSize(400, 200)})
+                    QTest::newRow(qPrintable(
+                        QStringLiteral("%1-%2-%3").arg(moving).arg(text).arg(block.width())))
+                        << moving << text << block;
+    }
+    void dynamicContent()
+    {
+        QFETCH(bool, moving);
+        QFETCH(bool, text);
+        QFETCH(QSize, block);
+        const QImage source = text ? textDocument(20) : document(800, 8200);
+        ScrollStitcher stitcher;
+        int unreliable = 0;
+        for (int index = 0; index < 120; ++index)
+        {
+            QImage frame = source.copy(0, 6 + (moving ? index * 3 : 0), 800, 640);
+            QPainter painter(&frame);
+            // 局部视频每隔 20 帧换色，覆盖中部匹配模板。
+            painter.fillRect(QRect(QPoint(200, 240), block),
+                             QColor::fromHsv((index / 20) * 51, 220, 200));
+            painter.end();
+            stitcher.addFrame(frame);
+            unreliable += !stitcher.stats().lastFrameReliable;
+        }
+        qInfo() << "动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度" << moving << text << block
+                << unreliable << stitcher.stats().warnings << stitcher.stats().lengthPx;
+        QCOMPARE(stitcher.stats().warnings, 0);
+        QCOMPARE(unreliable, 0);
+        QCOMPARE(stitcher.stats().lengthPx, moving ? 997 : 640);
+        QCOMPARE(stitcher.diagnostics().exactAnchors,
+                 stitcher.diagnostics().strictPixelAnchors +
+                     stitcher.diagnostics().stableSupportAnchors);
+        // 动态块外的全文必须逐像素连续。
+        QCOMPARE(stitcher.result().copy(0, 0, 180, int(stitcher.stats().lengthPx)),
+                 source.copy(0, 6, 180, int(stitcher.stats().lengthPx)));
+    }
+    void logicalLimits_data()
+    {
+        QTest::addColumn<int>("dpr");
+        QTest::addColumn<bool>("horizontal");
+        for (int dpr : {1, 2})
+            for (bool horizontal : {false, true})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(dpr).arg(horizontal)))
+                    << dpr << horizontal;
+    }
+    void logicalLimits()
+    {
+        QFETCH(int, dpr);
+        QFETCH(bool, horizontal);
+        const QImage source = document(300 * dpr, 1400 * dpr);
+        ScrollStitcher stitcher(ScrollStitchLimits::forDisplay(dpr, 600, 300 * 550));
+        QTransform rotate;
+        if (horizontal)
+            rotate.rotate(90);
+        for (int position = 0; position <= 400; position += 50)
+        {
+            const QImage frame =
+                source.copy(0, position * dpr, 300 * dpr, 200 * dpr).transformed(rotate);
+            stitcher.addFrame(frame);
+        }
+        QCOMPARE(stitcher.stats().logicalLength(), 550);
+        QCOMPARE(stitcher.lengthLimit(), 550 * dpr);
+        QVERIFY(!stitcher.stats().memoryLimited);
+        QVERIFY(stitcher.stats().limitReached);
+        QCOMPARE(stitcher.result(), source.copy(0, 0, 300 * dpr, 550 * dpr).transformed(rotate));
+    }
+    void memoryBudgetAndDefaultLogicalLimits()
+    {
+        for (int dpr : {1, 2})
+        {
+            ScrollStitcher normal(ScrollStitchLimits::forDisplay(dpr));
+            normal.addFrame(document(400 * dpr, 240 * dpr));
+            QCOMPARE(normal.lengthLimit() / dpr, 12000);
+            QVERIFY(!normal.stats().memoryLimited);
+        }
+        ScrollStitcher wide(ScrollStitchLimits::forDisplay(2));
+        wide.addFrame(document(2400, 1600));
+        QVERIFY(wide.stats().memoryLimited);
+        QVERIFY(wide.lengthLimit() < 10000);
+        QVERIFY(wide.lengthLimit() * 2400 * 4 + qint64(2400) * 1600 * 20 <= 120000000);
+        ScrollStitchLimits exhaustedLimits;
+        exhaustedLimits.workingSetBytes = 1;
+        ScrollStitcher exhausted(exhaustedLimits);
+        QCOMPARE(exhausted.addFrame(document(320, 400)), ScrollFrameOutcome::LimitReached);
+        QVERIFY(exhausted.stats().memoryLimited);
+        QVERIFY(exhausted.takeResult().isNull());
+        QCOMPARE(exhausted.stats().accepted, 0);
+    }
+    void warningReasonsAndFinalization()
+    {
+        const QImage source = document();
+        ScrollStitcher gap;
+        gap.addFrame(source.copy(0, 0, 320, 400));
+        QCOMPARE(gap.addFrame(source.copy(0, 330, 320, 400)), ScrollFrameOutcome::Skipped);
+        QCOMPARE(gap.stats().lastSkipReason, ScrollSkipReason::RangeExhausted);
+        gap.addFrame(source.copy(0, 335, 320, 400));
+        QCOMPARE(gap.stats().gaps, 1);
+        gap.finalize();
+        gap.finalize();
+        QCOMPARE(gap.stats().warnings, 1);
+        QCOMPARE(gap.stats().unverifiedTails, 0);
+        ScrollStitcher tail;
+        tail.addFrame(source.copy(0, 0, 320, 400));
+        tail.addFrame(source.copy(0, 900, 320, 400));
+        QCOMPARE(tail.stats().warnings, 0);
+        tail.finalize();
+        tail.takeResult();
+        QCOMPARE(tail.stats().unverifiedTails, 1);
+        QCOMPARE(tail.stats().warnings, 1);
+        ScrollStitcher interrupted;
+        interrupted.addFrame(source.copy(0, 0, 320, 400));
+        interrupted.addFrame(source.copy(0, 900, 320, 400));
+        interrupted.addWarning();
+        interrupted.finalize();
+        QCOMPARE(interrupted.stats().warnings, 1);
+        QCOMPARE(interrupted.stats().interruptions, 1);
+        QCOMPARE(interrupted.stats().unverifiedTails, 0);
+    }
+    void frameRateComparison_data()
+    {
+        QTest::addColumn<int>("fps");
+        QTest::addColumn<bool>("text");
+        QTest::addColumn<double>("speed");
+        for (int fps : {60, 120})
+            for (bool text : {false, true})
+                for (double speed : {111.0, 222.37})
+                    QTest::newRow(
+                        qPrintable(QStringLiteral("%1-%2-%3").arg(fps).arg(text).arg(speed)))
+                        << fps << text << speed;
+    }
+    void frameRateComparison()
+    {
+        QFETCH(int, fps);
+        QFETCH(bool, text);
+        QFETCH(double, speed);
+        const QImage source = text ? textDocument(22) : document(800, 8200);
+        ScrollStitcher stitcher;
+        int unreliable = 0;
+        // 同一 4 秒路径与起始相位；222.37px/s 在此时段无整数相位周期。
+        for (int index = 0; index <= fps * 4; ++index)
+        {
+            stitcher.addFrame(smoothFrame(source, 6.17 + index * speed / fps));
+            unreliable += !stitcher.stats().lastFrameReliable;
+        }
+        stitcher.finalize();
+        const auto& d = stitcher.diagnostics();
+        qInfo() << "帧率矩阵：fps / 文本 / 速度 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄"
+                << fps << text << speed << stitcher.stats().lengthPx << unreliable
+                << stitcher.stats().warnings << d.exactAnchors << d.rangeAnchors
+                << d.maximumReferenceAge;
+        QCOMPARE(unreliable, 0);
+        QCOMPARE(stitcher.stats().warnings, 0);
+        QVERIFY(std::abs(stitcher.stats().lengthPx - (640 + qRound(speed * 4))) <= 1);
     }
     void verticalAndBidirectional()
     {
@@ -325,10 +489,12 @@ class ScrollStitcherTest : public QObject
         QCOMPARE(stitcher.addFrame(blank), ScrollFrameOutcome::Skipped);
         QCOMPARE(stitcher.addFrame(source.copy(0, 500, 320, 400)), ScrollFrameOutcome::Skipped);
         QCOMPARE(stitcher.result(), initial);
-        QCOMPARE(stitcher.stats().warnings, 1);
+        QCOMPARE(stitcher.stats().warnings, 0);
         QCOMPARE(stitcher.addFrame(source.copy(0, 60, 320, 400)), ScrollFrameOutcome::Accepted);
         QCOMPARE(stitcher.result(), source.copy(0, 0, 320, 460));
         QCOMPARE(stitcher.stats().skipped, 2);
+        stitcher.finalize();
+        QCOMPARE(stitcher.stats().warnings, 0);
     }
     void staticAndAxisLock()
     {
@@ -340,7 +506,10 @@ class ScrollStitcherTest : public QObject
         QCOMPARE(stitcher.addFrame(source.copy(0, 60, 320, 400)), ScrollFrameOutcome::Accepted);
         QCOMPARE(stitcher.addFrame(source.copy(60, 60, 320, 400)), ScrollFrameOutcome::AxisLocked);
         QCOMPARE(stitcher.stats().axis, ScrollAxis::Vertical);
+        QCOMPARE(stitcher.stats().warnings, 0);
+        stitcher.finalize();
         QCOMPARE(stitcher.stats().warnings, 1);
+        QCOMPARE(stitcher.stats().unverifiedTails, 1);
     }
     void limits_data()
     {
@@ -375,7 +544,9 @@ class ScrollStitcherTest : public QObject
         const QImage before = ambiguous.result();
         QCOMPARE(ambiguous.addFrame(periodic.copy(0, 12, 320, 400)), ScrollFrameOutcome::Skipped);
         QCOMPARE(ambiguous.result(), before);
-        QVERIFY(ambiguous.stats().warnings);
+        QCOMPARE(ambiguous.stats().warnings, 0);
+        ambiguous.finalize();
+        QCOMPARE(ambiguous.stats().unverifiedTails, 1);
         const QImage source = document(1200, 1600);
         ScrollStitcher diagonal;
         diagonal.addFrame(source.copy(0, 0, 320, 400));

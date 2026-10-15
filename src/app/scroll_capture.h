@@ -54,6 +54,14 @@ class ScrollCaptureSession final : public QObject
     QTimer autoTimer_;
     QTimer frameTimeout_;
     QElapsedTimer elapsed_;
+    void logDiagnostics() const;
+    ScrollDistribution arrivalIntervals_;
+    ScrollDistribution processingTimes_;
+    qint64 lastArrivalNs_ = -1;
+    qint64 firstArrivalNs_ = -1;
+    int postedEvents_ = 0;
+    int suspensions_ = 0;
+    bool trace_ = false;
     qint64 lastMotionMs_ = 0;
     qint64 lastRefreshMs_ = -500;
     int speed_ = 1;

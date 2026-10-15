@@ -489,6 +489,14 @@ void ApplicationController::finishScrollCapture()
         return;
     QImage image = scrollSession_->takeResult();
     const auto stats = scrollSession_->stats();
+    if (image.isNull() && stats.limitReached)
+    {
+        // 预算连首帧也容不下，先关闭高层级采集窗，再明确说明，避免静默消失。
+        clearScrollCapture(scrollCancelledOutcome);
+        fail(scrollCancelledOutcome,
+             QStringLiteral("选区过大或可用内存不足，无法创建长图；请缩小选区后重试。"));
+        return;
+    }
     const auto display = retryDisplay_;
     const QRect region = retryRegion_;
     const auto restoreFocus = scrollRestoreFocus_;

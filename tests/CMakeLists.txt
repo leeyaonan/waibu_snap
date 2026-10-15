@@ -74,6 +74,8 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     scrollResultPreviewCropOutput scrollResultFullOverview scrollResultCloseConfirmation scrollControllerLifecycle
     scrollControllerRetryAndQuit scrollControllerPermissionDialogAndQuitCancel
     scrollResultSavePinAndLimit scrollUnreliableFramesNeverTriggerBottom
+    scrollLatestUnreliableFramePreventsBottom scrollHiccupsHaveNoWarningOrRetry scrollCropRetainsCaptureAxis
+    scrollBudgetExhaustionIsVisible
     fullScreenToolbarUsesInsideBottom toolbarStaysReachableWithSystemChrome
     toolbarCompactIconsAndTooltips toolbarOptionsFollowActiveTool toolbarStatusPillIndependent
     toolbarStatusPillTimesOut
@@ -161,3 +163,18 @@ set_target_properties(scroll_stitcher_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME scroll_stitcher COMMAND scroll_stitcher_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/scroll-stitcher-output.txt,txt")
 set_tests_properties(scroll_stitcher PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# 真实浏览器取证需人工摆放窗口及已有权限，不纳入无头 CTest。
+qt_add_executable(scroll_capture_probe integration/scroll_capture_probe.cpp)
+target_link_libraries(scroll_capture_probe PRIVATE waibusnap_ui waibusnap_options)
+set_target_properties(scroll_capture_probe PROPERTIES WIN32_EXECUTABLE FALSE)
+
+if(APPLE)
+    target_sources(scroll_capture_probe PRIVATE integration/scroll_probe_display_macos.mm)
+    target_compile_options(scroll_capture_probe PRIVATE -fobjc-arc)
+    target_link_libraries(scroll_capture_probe PRIVATE "${AppKit_FRAMEWORK}")
+    set_target_properties(scroll_capture_probe PROPERTIES MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "local.waibusnap.scroll-probe")
+elseif(WIN32)
+    target_sources(scroll_capture_probe PRIVATE integration/scroll_probe_display_windows.cpp)
+endif()
