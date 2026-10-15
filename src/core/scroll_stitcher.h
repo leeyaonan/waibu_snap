@@ -16,7 +16,7 @@ struct ScrollStitchLimits
     qint64 maxLengthPx = 20000;
     qint64 maxAreaPx = 30000000;
     qreal devicePixelRatio = 1;
-    qint64 workingSetBytes = 120000000;
+    qint64 workingSetBytes = 224000000;
     static ScrollStitchLimits forDisplay(qreal dpr, qint64 logicalLength = 12000,
                                          qint64 logicalArea = 6000000);
 };

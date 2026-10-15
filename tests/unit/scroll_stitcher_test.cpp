@@ -366,11 +366,13 @@ class ScrollStitcherTest : public QObject
             QCOMPARE(normal.lengthLimit() / dpr, 12000);
             QVERIFY(!normal.stats().memoryLimited);
         }
-        ScrollStitcher wide(ScrollStitchLimits::forDisplay(2));
+        auto constrained = ScrollStitchLimits::forDisplay(2);
+        constrained.workingSetBytes = 64000000;
+        ScrollStitcher wide(constrained);
         wide.addFrame(document(2400, 1600));
         QVERIFY(wide.stats().memoryLimited);
         QVERIFY(wide.lengthLimit() < 10000);
-        QVERIFY(wide.lengthLimit() * 2400 * 4 + qint64(2400) * 1600 * 20 <= 120000000);
+        QVERIFY(wide.lengthLimit() * 2400 * 4 + qint64(2400) * 1600 * 13 <= 64000000);
         ScrollStitchLimits exhaustedLimits;
         exhaustedLimits.workingSetBytes = 1;
         ScrollStitcher exhausted(exhaustedLimits);
@@ -378,6 +380,41 @@ class ScrollStitcherTest : public QObject
         QVERIFY(exhausted.stats().memoryLimited);
         QVERIFY(exhausted.takeResult().isNull());
         QCOMPARE(exhausted.stats().accepted, 0);
+        {
+            ScrollStitcher oversized(ScrollStitchLimits::forDisplay(2));
+            oversized.addFrame(document(4400, 2800));
+            QVERIFY(oversized.stats().memoryLimited);
+            QVERIFY(oversized.stats().lengthPx > 0);
+            QVERIFY(oversized.lengthLimit() * 4400 * 4 + qint64(4400) * 2800 * 13 <= 224000000);
+        }
+        {
+            ScrollStitcher impossible(ScrollStitchLimits::forDisplay(2));
+            QCOMPARE(impossible.addFrame(document(5000, 4000)), ScrollFrameOutcome::LimitReached);
+            QVERIFY(impossible.stats().memoryLimited);
+            QCOMPARE(impossible.stats().accepted, 0);
+            QVERIFY(impossible.takeResult().isNull());
+        }
+    }
+    void fourKSourceKeepsLogicalLimits_data()
+    {
+        QTest::addColumn<QSize>("sourceSize");
+        for (QSize size :
+             {QSize(2400, 1600), QSize(2800, 1800), QSize(3024, 1700), QSize(3024, 1964),
+              QSize(3600, 2000), QSize(3840, 2080), QSize(4000, 2200)})
+            QTest::newRow(qPrintable(QStringLiteral("%1x%2").arg(size.width()).arg(size.height())))
+                << size;
+    }
+    void fourKSourceKeepsLogicalLimits()
+    {
+        QFETCH(QSize, sourceSize);
+        ScrollStitcher stitcher(ScrollStitchLimits::forDisplay(2));
+        QCOMPARE(stitcher.addFrame(document(sourceSize.width(), sourceSize.height())),
+                 ScrollFrameOutcome::Accepted);
+        QVERIFY(!stitcher.stats().memoryLimited);
+        QCOMPARE(stitcher.lengthLimit(), std::min<qint64>(24000, 24000000 / sourceSize.width()));
+        QCOMPARE(stitcher.stats().lengthPx, sourceSize.height());
+        qInfo() << "4K预算：源尺寸 / 物理上限 / 内存收敛" << sourceSize << stitcher.lengthLimit()
+                << stitcher.stats().memoryLimited;
     }
     void warningReasonsAndFinalization()
     {

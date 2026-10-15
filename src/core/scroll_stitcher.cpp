@@ -297,15 +297,17 @@ ScrollStitcher::ScrollStitcher(ScrollStitchLimits limits) : limits_(limits)
 {
     limits_.maxLengthPx = std::clamp<qint64>(limits_.maxLengthPx, 1, 4000000);
     limits_.maxAreaPx = std::clamp<qint64>(limits_.maxAreaPx, 1, 30000000);
-    limits_.workingSetBytes = std::clamp<qint64>(limits_.workingSetBytes, 1, 120000000);
+    // 默认覆盖 4K 源缓存与 96MB 画布；显式预算最多 512MB，防止误传无限放大。
+    limits_.workingSetBytes = std::clamp<qint64>(limits_.workingSetBytes, 1, 512000000);
     stats_.devicePixelRatio = std::isfinite(limits_.devicePixelRatio)
                                   ? std::clamp(limits_.devicePixelRatio, qreal(1), qreal(4))
                                   : 1;
 }
 qint64 ScrollStitcher::canvasAreaBudget() const
 {
-    // 为源帧、像素参考、灰度 / 粗图及局部验证留 20 字节 / 源像素余量。
-    const qint64 reserve = qint64(previous_.width()) * previous_.height() * 20;
+    // 独立进程连续喂位移帧，以峰值 RSS 扣除空载与已触达画布测源缓存（含分配器滞留）。
+    // 独立核验为 9.3–10.6B/px；取 13B/px 约留四分之一余量，复测见 tests/README.md。
+    const qint64 reserve = qint64(previous_.width()) * previous_.height() * 13;
     return std::min(limits_.maxAreaPx, std::max<qint64>(0, limits_.workingSetBytes - reserve) / 4);
 }
 qint64 ScrollStitcher::lengthLimit() const

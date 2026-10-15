@@ -164,6 +164,11 @@ add_test(NAME scroll_stitcher COMMAND scroll_stitcher_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/scroll-stitcher-output.txt,txt")
 set_tests_properties(scroll_stitcher PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# 独立进程配合系统峰值 RSS 计量，不受整个单测进程的分配器历史影响。
+qt_add_executable(scroll_memory_probe integration/scroll_memory_probe.cpp)
+target_link_libraries(scroll_memory_probe PRIVATE waibusnap_core waibusnap_options)
+set_target_properties(scroll_memory_probe PROPERTIES WIN32_EXECUTABLE FALSE)
+
 # 真实浏览器取证需人工摆放窗口及已有权限，不纳入无头 CTest。
 qt_add_executable(scroll_capture_probe integration/scroll_capture_probe.cpp)
 target_link_libraries(scroll_capture_probe PRIVATE waibusnap_ui waibusnap_options)
