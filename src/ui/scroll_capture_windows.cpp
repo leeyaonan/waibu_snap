@@ -95,7 +95,7 @@ ScrollControlBar::ScrollControlBar(QRect region, QRect available)
     connect(cancel, &QPushButton::clicked, this, &ScrollControlBar::cancelRequested);
     noticeTimeout_.setSingleShot(true);
     connect(&noticeTimeout_, &QTimer::timeout, this, [this] { setNotice({}); });
-    statistics_ = QStringLiteral("已拼接 0 px · 0 帧");
+    statistics_ = QStringLiteral("已拼接 0 逻辑 px · 0 帧");
     setAutomatic(false);
     winId();
     configureStickerWindowBehavior(windowHandle());
@@ -129,10 +129,12 @@ void ScrollControlBar::refreshStatus()
 }
 void ScrollControlBar::setStatistics(ScrollStitchStats stats, qint64 limit)
 {
-    statistics_ =
-        stats.lengthPx >= limit * 9 / 10
-            ? QStringLiteral("已拼接 %1 px（接近上限）").arg(stats.lengthPx)
-            : QStringLiteral("已拼接 %1 px · %2 帧").arg(stats.lengthPx).arg(stats.frames);
+    const qint64 logicalLimit = qRound64(limit / stats.devicePixelRatio);
+    statistics_ = stats.logicalLength() >= logicalLimit * 9 / 10
+                      ? QStringLiteral("已拼接 %1 逻辑 px（接近上限）").arg(stats.logicalLength())
+                      : QStringLiteral("已拼接 %1 逻辑 px · %2 帧")
+                            .arg(stats.logicalLength())
+                            .arg(stats.frames);
     refreshStatus();
 }
 void ScrollControlBar::setNotice(const QString& text)
@@ -141,8 +143,9 @@ void ScrollControlBar::setNotice(const QString& text)
         return;
     notice_ = text;
     noticeTimeout_.stop();
-    if (text == QStringLiteral("画面重叠不足或内容变化，部分帧未拼接。") ||
-        text.startsWith(QStringLiteral("检测到另一方向")))
+    if (text == QStringLiteral("位移超出可验证重叠范围，可能有内容未采集。") ||
+        text.startsWith(QStringLiteral("检测到另一方向")) ||
+        text.startsWith(QStringLiteral("已按内存预算")))
         noticeTimeout_.start(2500);
     refreshStatus();
 }

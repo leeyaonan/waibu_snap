@@ -1,0 +1,314 @@
+baseline-1.txt
+空载进程：未分配源图或画布。
+        0.03 real         0.00 user         0.00 sys
+            13008896  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 880  page reclaims
+                 218  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   1  voluntary context switches
+                 143  involuntary context switches
+           134788220  instructions retired
+            63073936  cycles elapsed
+             3228176  peak memory footprint
+
+baseline-2.txt
+空载进程：未分配源图或画布。
+        0.01 real         0.00 user         0.00 sys
+            12992512  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1083  page reclaims
+                  15  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  38  involuntary context switches
+           115267751  instructions retired
+            47234841  cycles elapsed
+             3211792  peak memory footprint
+
+baseline-3.txt
+空载进程：未分配源图或画布。
+        0.01 real         0.00 user         0.00 sys
+            13008896  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1084  page reclaims
+                  15  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  33  involuntary context switches
+           114896555  instructions retired
+            43931419  cycles elapsed
+             3228176  peak memory footprint
+
+cache-1.txt
+{"低置信":0,"内存收敛":false,"帧":2,"接受":2,"模式":"cache","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":2201,"画布字节":35216000,"结果宽":4000,"结果高":2201,"警告":0,"跳过":0}
+        0.04 real         0.02 user         0.01 sys
+           142131200  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                8904  page reclaims
+                  75  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   1  voluntary context switches
+                  71  involuntary context switches
+           423664994  instructions retired
+           134054097  cycles elapsed
+           131498656  peak memory footprint
+
+cache-2.txt
+{"低置信":0,"内存收敛":false,"帧":2,"接受":2,"模式":"cache","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":2201,"画布字节":35216000,"结果宽":4000,"结果高":2201,"警告":0,"跳过":0}
+        0.04 real         0.02 user         0.01 sys
+           142114816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                8962  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  42  involuntary context switches
+           416249998  instructions retired
+           129058868  cycles elapsed
+           131482272  peak memory footprint
+
+cache-3.txt
+{"低置信":0,"内存收敛":false,"帧":2,"接受":2,"模式":"cache","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":2201,"画布字节":35216000,"结果宽":4000,"结果高":2201,"警告":0,"跳过":0}
+        0.04 real         0.02 user         0.01 sys
+           142032896  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                8956  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   1  voluntary context switches
+                  39  involuntary context switches
+           417566514  instructions retired
+           134460789  cycles elapsed
+           131400352  peak memory footprint
+
+dynamic-1.txt
+{"低置信":0,"内存收敛":false,"帧":15,"接受":15,"模式":"dynamic","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":0}
+        0.21 real         0.19 user         0.01 sys
+           208486400  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               13010  page reclaims
+                  20  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   1  voluntary context switches
+                  82  involuntary context switches
+          2904110319  instructions retired
+           753252839  cycles elapsed
+           197853928  peak memory footprint
+
+dynamic-2.txt
+{"低置信":0,"内存收敛":false,"帧":15,"接受":15,"模式":"dynamic","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":0}
+        0.22 real         0.19 user         0.01 sys
+           208453632  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               13010  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 229  involuntary context switches
+          2905856110  instructions retired
+           768762371  cycles elapsed
+           197804752  peak memory footprint
+
+dynamic-3.txt
+{"低置信":0,"内存收敛":false,"帧":15,"接受":15,"模式":"dynamic","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":0}
+        0.22 real         0.19 user         0.01 sys
+           208470016  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               13011  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 192  involuntary context switches
+          2905824124  instructions retired
+           764391604  cycles elapsed
+           197821136  peak memory footprint
+
+normal-1.txt
+{"低置信":0,"内存收敛":false,"帧":15,"接受":15,"模式":"normal","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":0}
+        0.15 real         0.13 user         0.01 sys
+           202964992  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               12675  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  77  involuntary context switches
+          2132082918  instructions retired
+           538269789  cycles elapsed
+           192365264  peak memory footprint
+
+normal-2.txt
+{"低置信":0,"内存收敛":false,"帧":15,"接受":15,"模式":"normal","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":0}
+        0.15 real         0.13 user         0.01 sys
+           202915840  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               12672  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  63  involuntary context switches
+          2133857053  instructions retired
+           536752963  cycles elapsed
+           192316112  peak memory footprint
+
+normal-3.txt
+{"低置信":0,"内存收敛":false,"帧":15,"接受":15,"模式":"normal","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":0}
+        0.15 real         0.13 user         0.01 sys
+           202915840  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               12673  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  51  involuntary context switches
+          2133365018  instructions retired
+           543631863  cycles elapsed
+           192316112  peak memory footprint
+
+unreliable-1.txt
+{"低置信":1,"内存收敛":false,"帧":16,"接受":15,"模式":"unreliable","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":1}
+        0.18 real         0.15 user         0.01 sys
+           208338944  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               13003  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  78  involuntary context switches
+          2520443239  instructions retired
+           623992526  cycles elapsed
+           197739216  peak memory footprint
+
+unreliable-2.txt
+{"低置信":1,"内存收敛":false,"帧":16,"接受":15,"模式":"unreliable","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":1}
+        0.17 real         0.15 user         0.01 sys
+           208437248  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               13010  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   1  voluntary context switches
+                  42  involuntary context switches
+          2521599253  instructions retired
+           622595970  cycles elapsed
+           197837520  peak memory footprint
+
+unreliable-3.txt
+{"低置信":1,"内存收敛":false,"帧":16,"接受":15,"模式":"unreliable","源像素":8800000,"源宽":4000,"源高":2200,"物理上限":6000,"画布字节":96000000,"结果宽":4000,"结果高":6000,"警告":0,"跳过":1}
+        0.18 real         0.16 user         0.01 sys
+           208355328  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               13004  page reclaims
+                  17  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  53  involuntary context switches
+          2522004502  instructions retired
+           628775999  cycles elapsed
+           197755600  peak memory footprint

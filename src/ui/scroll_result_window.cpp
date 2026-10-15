@@ -27,6 +27,7 @@ class ScrollResultView final : public QWidget
         setObjectName(QStringLiteral("scrollResultView"));
         setMouseTracking(true);
     }
+    void setVertical(bool vertical) { vertical_ = vertical; }
     void setImage(const QImage& image)
     {
         image_ = image;
@@ -150,7 +151,7 @@ class ScrollResultView final : public QWidget
     void mouseReleaseEvent(QMouseEvent*) override { dragging_ = 0; }
 
   private:
-    bool vertical() const { return image_.height() >= image_.width(); }
+    bool vertical() const { return vertical_; }
     int axisLength() const { return vertical() ? image_.height() : image_.width(); }
     QImage image_;
     qreal scale_ = 1;
@@ -158,6 +159,7 @@ class ScrollResultView final : public QWidget
     int cropEnd_ = 0;
     int dragging_ = 0;
     bool cropping_ = false;
+    bool vertical_ = true;
 };
 ScrollResultWindow::ScrollResultWindow(QImage image, ScrollStitchStats stats,
                                        ScrollResultActions actions)
@@ -181,21 +183,26 @@ ScrollResultWindow::ScrollResultWindow(QImage image, ScrollStitchStats stats,
     auto* retry = new QPushButton(QStringLiteral("重试"), warning);
     retry->setObjectName(QStringLiteral("scrollResultRetryButton"));
     warningLayout->addWidget(retry);
+    const QString limitText =
+        stats.memoryLimited
+            ? QStringLiteral("已达内存预算上限，结果已保留；缩窄选区可采集更长内容。")
+            : QStringLiteral("已达长度上限，结果已保留。");
     if (stats.warnings)
     {
         message->setText(
-            QStringLiteral("⚠ 本次采集有 %1 处可能不完整（滚动过快或内容变化），建议重试。")
+            QStringLiteral(
+                "⚠ 本次采集有 %1 处可能不完整（重叠范围不足、尾部未验证或采集中断），建议重试。")
                 .arg(stats.warnings));
         warning->setStyleSheet(QStringLiteral("background: #4a3a12; color: #f0c674;"));
     }
     else if (stats.limitReached)
     {
-        message->setText(QStringLiteral("已达长度上限，结果已保留。"));
+        message->setText(limitText);
         warning->setStyleSheet(QStringLiteral("background: #1f3a24; color: #9fd8a8;"));
     }
     if (stats.warnings && stats.limitReached)
     {
-        auto* limit = new QLabel(QStringLiteral("已达长度上限，结果已保留。"), this);
+        auto* limit = new QLabel(limitText, this);
         limit->setObjectName(QStringLiteral("scrollResultLimitBar"));
         limit->setStyleSheet(QStringLiteral("background: #1f3a24; color: #9fd8a8; padding: 6px;"));
         layout->addWidget(limit);
@@ -212,6 +219,8 @@ ScrollResultWindow::ScrollResultWindow(QImage image, ScrollStitchStats stats,
             });
     scrollArea_ = new QScrollArea(this);
     view_ = new ScrollResultView(scrollArea_);
+    view_->setVertical(stats.motionDetected ? stats.axis == ScrollAxis::Vertical
+                                            : image_.height() >= image_.width());
     view_->setImage(image_);
     scrollArea_->setWidget(view_);
     scrollArea_->setAlignment(Qt::AlignHCenter);

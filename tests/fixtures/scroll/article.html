@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh"><meta charset="utf-8"><title>WaibuSnap 长图对照文章</title>
+<style>
+body{margin:0;background:white;color:#292929;font:16px/24px Arial,sans-serif}
+header{background:#eee;padding:12px}article{width:760px;margin:0 20px}p{margin:0;height:48px;overflow:hidden;border-bottom:1px solid #ddd}
+#motion{width:400px;height:200px;background:#b96528;animation:color 0.7s infinite alternate}
+@keyframes color{to{background:#3477b0}}
+</style><header>WaibuSnap 浏览器对照夹具 · 本地生成 · 500 段 / 每段 49px · 两浏览器同源<br>
+<button onclick="window.scrollTo(0,0)">返回页首</button>
+<button onclick="document.getElementById('motion').hidden=!document.getElementById('motion').hidden">动态块</button>
+</header><article><div id="motion"></div><div id="content"></div></article>
+<script>
+let seed=73;
+for(let i=0;i<500;i++){
+ const p=document.createElement('p');let words='';
+ for(let j=0;j<9;j++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;words+=seed.toString(36)+' ';}
+ p.textContent=String(i).padStart(4,'0')+' · 长图对照：每段编号与纹理唯一，检查接缝、重复与缺失。 '+words;
+ document.getElementById('content').append(p);
+}
+</script></html>

@@ -1,0 +1,18 @@
+修复前动态块夹具
+QINFO  : ScrollStitcherTest::dynamicContent(0-0-80) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 false false QSize(80, 60) 0 0 640
+QINFO  : ScrollStitcherTest::dynamicContent(0-0-400) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 false false QSize(400, 200) 20 1 640
+QINFO  : ScrollStitcherTest::dynamicContent(0-1-80) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 false true QSize(80, 60) 0 0 640
+QINFO  : ScrollStitcherTest::dynamicContent(0-1-400) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 false true QSize(400, 200) 20 1 640
+QINFO  : ScrollStitcherTest::dynamicContent(1-0-80) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 true false QSize(80, 60) 0 0 997
+QINFO  : ScrollStitcherTest::dynamicContent(1-0-400) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 true false QSize(400, 200) 21 2 997
+QINFO  : ScrollStitcherTest::dynamicContent(1-1-80) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 true true QSize(80, 60) 0 0 997
+QINFO  : ScrollStitcherTest::dynamicContent(1-1-400) 动态块：运动 / 文本 / 尺寸 / 不可靠 / 警告 / 长度 true true QSize(400, 200) 100 1 697
+60/120 合成相位矩阵
+QINFO  : ScrollStitcherTest::frameRateComparison(60-0-111) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 60 false 111 1084 0 0 12 0 20
+QINFO  : ScrollStitcherTest::frameRateComparison(60-0-222.37) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 60 false 222.37 1530 0 0 14 0 17
+QINFO  : ScrollStitcherTest::frameRateComparison(60-1-111) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 60 true 111 1084 0 0 12 0 20
+QINFO  : ScrollStitcherTest::frameRateComparison(60-1-222.37) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 60 true 222.37 1529 0 0 14 0 17
+QINFO  : ScrollStitcherTest::frameRateComparison(120-0-111) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 120 false 111 1084 0 0 12 0 40
+QINFO  : ScrollStitcherTest::frameRateComparison(120-0-222.37) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 120 false 222.37 1530 0 0 14 0 34
+QINFO  : ScrollStitcherTest::frameRateComparison(120-1-111) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 120 true 111 1084 0 0 12 0 40
+QINFO  : ScrollStitcherTest::frameRateComparison(120-1-222.37) 帧率矩阵：fps / 文本 / 长度 / 不可靠 / 警告 / 同相锚 / 边界锚 / 最长龄 120 true 222.37 1529 0 0 14 0 34
