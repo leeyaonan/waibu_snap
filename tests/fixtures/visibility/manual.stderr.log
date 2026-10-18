@@ -1,0 +1,77 @@
+屏幕： "BenQ PD2706U" QRect(0,0 1920x1080) 2
+屏幕： "内建视网膜显示器" QRect(-1512,98 1512x982) 2
+真实采集目标： QRect(-1512,98 1512x982)
+截图键 F1 已启用（Fn 模式由系统决定）。
+截图会话开始：source= "manual-probe"
+截图捕获完成，耗时  126  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 1  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 2  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 3  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 4  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 5  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 6  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+2026-10-18 15:45:51.955 overlay_visibility_probe[39469:24065760] error messaging the mach port for IMKCFRunLoopWakeUpReliable
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 7  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 8  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 9  ordered= true  before: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0  after: onScreen=1 windowNumber=68136 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+截图会话结束：outcome= 2 ，用时  55297  ms
+截图会话开始：source= "hotkey"
+无法读取显示器捕获信息（错误 -3801），请检查权限与显示器连接后重试。
+截图会话结束：outcome= 7 ，用时  1526  ms
+*** Terminating app due to uncaught exception 'NSInternalInconsistencyException', reason: 'Invalid message sent to event "NSEvent: type=MouseExited loc=(-1213.3,-1036.43) time=920043.3 flags=0 win=0x79e2dc8780 winNum=4294967296 ctxt=0x0 evNum=0 trackNum=79e342cc30 userData=0x0"'
+*** First throw call stack:
+(
+	0   CoreFoundation                      0x0000000183aca8c0 __exceptionPreprocess + 176
+	1   libobjc.A.dylib                     0x000000018352860c objc_exception_throw + 88
+	2   Foundation                          0x00000001852114d8 -[NSCalendarDate initWithCoder:] + 0
+	3   AppKit                              0x00000001881a8f80 -[NSEvent clickCount] + 152
+	4   overlay_visibility_probe            0x00000001021340a0 _ZN9waibusnap12_GLOBAL__N_114safeClickCountEP7NSEventP13objc_selector + 72
+	5   libqcocoa.dylib                     0x000000010242333c qt_plugin_instance + 186732
+	6   CoreFoundation                      0x0000000183a4f1a0 __CFNOTIFICATIONCENTER_IS_CALLING_OUT_TO_AN_OBSERVER__ + 148
+	7   CoreFoundation                      0x0000000183ade394 ___CFXRegistrationPost_block_invoke + 92
+	8   CoreFoundation                      0x0000000183ade2d8 _CFXRegistrationPost + 440
+	9   CoreFoundation                      0x0000000183a1b3d0 _CFXNotificationPost + 688
+	10  Foundation                          0x000000018510c38c -[NSNotificationCenter postNotificationName:object:userInfo:] + 88
+	11  AppKit                              0x00000001885bd154 -[NSMenuTrackingSession sendBeginTrackingNotifications] + 188
+	12  AppKit                              0x00000001885c4b98 -[NSMenuTrackingSession beginTrackingSession:] + 644
+	13  AppKit                              0x0000000188571bac +[NSContextMenuImpl presentPopup:fromView:withContext:animated:async:completionBlock:] + 432
+	14  AppKit                              0x00000001888b6880 _NSPopUpMenu + 1992
+	15  AppKit                              0x00000001888b5fe0 -[NSCocoaMenuImpl popUpMenu:atLocation:width:view:selectedItemIndexProvider:font:positioningRect:flags:options:] + 432
+	16  AppKit                              0x00000001888b5e08 -[NSCocoaMenuImpl popUpMenu:atLocation:width:forView:withSelectedItem:withFont:withFlags:withOptions:] + 96
+	17  AppKit                              0x000000018887682c +[NSStatusBarButtonCell popUpStatusBarMenu:ofItem:ofBar:inRect:ofView:withEvent:] + 744
+	18  AppKit                              0x000000018887ed1c -[NSStatusItem popUpStatusItemMenu:] + 108
+	19  AppKit                              0x000000018887f348 -[NSStatusItem _beginExpandedInterfaceSession:] + 600
+	20  AppKit                              0x000000018864a60c -[NSSceneStatusItem _beginExpandedInterfaceSession:] + 192
+	21  AppKit                              0x00000001886491b0 __33-[NSSceneStatusItem _setupScene:]_block_invoke.25 + 320
+	22  AppKit                              0x0000000188e96618 __swift_closure_destructor.106 + 28764
+	23  AppKit                              0x0000000188e96794 __swift_closure_destructor.106 + 29144
+	24  FrontBoardServices                  0x00000001a0137cc8 -[FBSSceneObserver scene:handlePrivateActions:] + 80
+	25  FrontBoardServices                  0x00000001a00fb864 -[FBSScene updater:didReceiveActions:forExtension:] + 736
+	26  FrontBoardServices                  0x00000001a0123e28 __71-[FBSWorkspaceScenesClient sceneID:sendActions:toExtension:completion:]_block_invoke + 204
+	27  FrontBoardServices                  0x00000001a00debbc -[FBSWorkspace _calloutQueue_executeCalloutFromSource:withBlock:] + 180
+	28  libdispatch.dylib                   0x00000001837f25a0 _dispatch_client_callout + 16
+	29  libdispatch.dylib                   0x00000001837dd700 _dispatch_block_invoke_direct + 284
+	30  BoardServices                       0x00000001a01c6ca4 __BSSERVICEMAINRUNLOOPQUEUE_IS_CALLING_OUT_TO_A_BLOCK__ + 48
+	31  BoardServices                       0x00000001a01c5ac8 BSServiceMainRunLoopSourceHandler + 232
+	32  CoreFoundation                      0x0000000183a5a944 __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__ + 28
+	33  CoreFoundation                      0x0000000183a5a8d8 __CFRunLoopDoSource0 + 224
+	34  CoreFoundation                      0x0000000183a5a610 __CFRunLoopDoSources0 + 232
+	35  CoreFoundation                      0x0000000183a591e0 __CFRunLoopRun + 832
+	36  CoreFoundation                      0x0000000183b3382c _CFRunLoopRunSpecificWithOptions + 536
+	37  HIToolbox                           0x0000000190e8c590 RunCurrentEventLoopInMode + 320
+	38  HIToolbox                           0x0000000190e8f91c ReceiveNextEventCommon + 492
+	39  HIToolbox                           0x0000000191012380 _BlockUntilNextEventMatchingListInMode + 48
+	40  AppKit                              0x000000018835329c _DPSBlockUntilNextEventMatchingListInMode + 292
+	41  AppKit                              0x00000001880104fc _DPSNextEvent + 580
+	42  AppKit                              0x0000000188888748 -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:] + 780
+	43  AppKit                              0x000000018888826c -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:] + 292
+	44  AppKit                              0x000000018800390c -[NSApplication run] + 396
+	45  libqcocoa.dylib                     0x0000000102403830 qt_plugin_instance + 56928
+	46  QtCore                              0x00000001044e1938 _ZN10QEventLoop4execE6QFlagsINS_17ProcessEventsFlagEE + 592
+	47  QtCore                              0x00000001044d7f04 _ZN16QCoreApplication4execEv + 228
+	48  overlay_visibility_probe            0x00000001020d757c main + 2500
+	49  dyld                                0x00000001835c3e80 start + 6688
+)
+libc++abi: terminating due to uncaught exception of type NSException

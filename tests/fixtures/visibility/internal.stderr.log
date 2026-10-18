@@ -1,0 +1,62 @@
+屏幕： "BenQ PD2706U" QRect(0,0 1920x1080) 2
+屏幕： "内建视网膜显示器" QRect(-1512,98 1512x982) 2
+真实采集目标： QRect(-1512,98 1512x982)
+截图键 F1 已启用（Fn 模式由系统决定）。
+截图会话开始：source= "injected"
+截图捕获完成，耗时  113  ms
+覆盖层首帧完成
+覆盖层尚未在屏就绪（保留超时保护）： onScreen=0 windowNumber=68038 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层在屏自愈：reason= 就绪检查  attempt= 1  ordered= true  before: onScreen=0 windowNumber=68038 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258  after: onScreen=1 windowNumber=68038 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 2  ordered= true  before: onScreen=1 windowNumber=68038 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258  after: onScreen=1 windowNumber=68038 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68038 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  758  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  29  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68045 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 1  ordered= true  before: onScreen=1 windowNumber=68045 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258  after: onScreen=1 windowNumber=68045 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  196  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  38  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68048 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  197  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  43  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68051 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  208  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  36  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68054 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 1  ordered= true  before: onScreen=1 windowNumber=68054 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258  after: onScreen=1 windowNumber=68054 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  237  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  33  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68057 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 1  ordered= true  before: onScreen=1 windowNumber=68057 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258  after: onScreen=1 windowNumber=68057 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  219  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  29  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68060 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 1  ordered= true  before: onScreen=1 windowNumber=68060 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258  after: onScreen=1 windowNumber=68060 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  181  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  30  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68063 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+覆盖层在屏自愈：reason= NSWindowDidChangeOcclusionStateNotification  attempt= 1  ordered= true  before: onScreen=1 windowNumber=68063 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258  after: onScreen=1 windowNumber=68063 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  213  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  28  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68066 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  194  ms
+截图会话开始：source= "injected"
+截图捕获完成，耗时  29  ms
+覆盖层首帧完成
+覆盖层可交互就绪（停止超时保护） onScreen=1 windowNumber=68069 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258
+截图会话结束：outcome= 2 ，用时  194  ms
