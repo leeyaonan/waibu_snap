@@ -54,6 +54,19 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     auto* generalPage = addPage(QStringLiteral("通用"), QStringLiteral("settingsGeneralPage"));
     auto* savePage = addPage(QStringLiteral("保存"), QStringLiteral("settingsSavePage"));
     auto* capturePage = addPage(QStringLiteral("截图"), QStringLiteral("settingsCapturePage"));
+    auto* stickerPage = addPage(QStringLiteral("贴图"), QStringLiteral("settingsStickerPage"));
+    auto* stickerLayout = new QVBoxLayout(stickerPage);
+    stickerCloseReminderCheck_ = new QCheckBox(QStringLiteral("关闭未保存贴图前提醒"), stickerPage);
+    stickerCloseReminderCheck_->setObjectName(QStringLiteral("stickerCloseReminderCheck"));
+    stickerCloseReminderCheck_->setChecked(saveSettings_.stickerCloseReminder);
+    stickerLayout->addWidget(stickerCloseReminderCheck_);
+    auto* stickerHelp = new QLabel(
+        QStringLiteral("关闭提醒后，单张未保存贴图将直接关闭。应用退出时仍会确认未保存贴图。"),
+        stickerPage);
+    stickerHelp->setObjectName(QStringLiteral("stickerCloseReminderHelp"));
+    stickerHelp->setWordWrap(true);
+    stickerLayout->addWidget(stickerHelp);
+    stickerLayout->addStretch();
     auto* generalLayout = new QVBoxLayout(generalPage);
     auto* savePageLayout = new QVBoxLayout(savePage);
     auto* captureLayout = new QVBoxLayout(capturePage);
@@ -483,6 +496,8 @@ void SettingsDialog::save()
         error = saveSettings_.saveRatios(collectRatios());
     if (error.isEmpty() && saveSettings_.saveShapeTemplates)
         error = saveSettings_.saveShapeTemplates(shapeTemplates_);
+    if (error.isEmpty() && saveSettings_.saveStickerCloseReminder)
+        error = saveSettings_.saveStickerCloseReminder(stickerCloseReminderCheck_->isChecked());
     if (!error.isEmpty())
     {
         status_->setText(error);

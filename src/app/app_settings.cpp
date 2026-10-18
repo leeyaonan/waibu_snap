@@ -15,6 +15,7 @@ namespace waibusnap
 namespace
 {
 const QString sequenceKey = QStringLiteral("hotkey/sequence");
+const QString stickerCloseReminderKey = QStringLiteral("sticker/confirmUnsavedClose");
 }
 AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
 {
@@ -53,6 +54,41 @@ SavePreferences AppSettings::loadSavePreferences() const
         preferences.format = ImageFormat::Jpeg;
     // 非法键独立回退；读取不修复文件，也不触碰热键键。
     return preferences;
+}
+bool AppSettings::loadStickerCloseReminder() const
+{
+    if (stickerCloseReminderWriteFailed_)
+        return true;
+    // 先验证实际文件可读，避免 QSettings 缓存掩盖路径失效或权限变化。
+    QFile file(filePath_);
+    if (!file.open(QIODevice::ReadOnly))
+        return true;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    const QString value = settings.value(stickerCloseReminderKey, true).toString();
+    // 不用 toBool() 容忍任意字符串；只有明确 false 才允许跳过确认。
+    return settings.status() != QSettings::NoError || value != QStringLiteral("false");
+}
+QString AppSettings::saveStickerCloseReminder(bool enabled) const
+{
+    stickerCloseReminderWriteFailed_ = true;
+    const QString error = QStringLiteral("贴图关闭提醒设置写入失败，已保持提醒开启，请重试保存。");
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()))
+        return error;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    settings.setValue(stickerCloseReminderKey, enabled);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        // 失败的 false 不能留在进程共享的待写缓存中影响其他贴图。
+        settings.setValue(stickerCloseReminderKey, true);
+        return error;
+    }
+    stickerCloseReminderWriteFailed_ = false;
+    return {};
 }
 CaptureRatioSettings AppSettings::loadCaptureRatios() const
 {

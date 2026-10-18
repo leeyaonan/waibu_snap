@@ -18,6 +18,8 @@ class AppSettings
     explicit AppSettings(QString filePath = {});
     LoadedHotkey loadHotkey() const;
     SavePreferences loadSavePreferences() const;
+    bool loadStickerCloseReminder() const;
+    QString saveStickerCloseReminder(bool enabled) const;
     CaptureRatioSettings loadCaptureRatios() const;
     QString shapeTemplateDir() const;
     QVector<ShapeTemplateEntry> loadShapeTemplates(QString* notice = nullptr) const;
@@ -31,6 +33,7 @@ class AppSettings
 
   private:
     QString filePath_;
+    mutable bool stickerCloseReminderWriteFailed_ = false;
 };
 struct HotkeyStartup
 {
