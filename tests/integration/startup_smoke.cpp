@@ -43,6 +43,7 @@
 #include <QProcessEnvironment>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSignalSpy>
@@ -2584,7 +2585,9 @@ class StartupSmokeTest final : public QObject
     void stickerHiddenQuitDefaultDialogStillConfirms()
     {
         using namespace waibusnap;
-        StickerManager manager;
+        StickerActions actions;
+        actions.loadCloseReminder = [] { return false; };
+        StickerManager manager(nullptr, actions);
         QVERIFY(manager.create(sampleFrame().pixels, {80, 90}).success);
         auto window = manager.windows().first();
         manager.hideAll();
@@ -2597,6 +2600,7 @@ class StartupSmokeTest final : public QObject
                                    qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
                                if (!dialog)
                                    return;
+                               QVERIFY(!dialog->checkBox());
                                text = dialog->text();
                                for (auto* button : dialog->buttons())
                                    labels.append(button->text());
@@ -3797,6 +3801,227 @@ class StartupSmokeTest final : public QObject
         QVERIFY(labels.contains(QStringLiteral("全部放弃")));
         QVERIFY(sticker && sticker->isVisible());
     }
+    void stickerCloseReminderDialog_data()
+    {
+        QTest::addColumn<int>("choice");
+        QTest::addColumn<bool>("checked");
+        QTest::addColumn<int>("saveKind");
+        QTest::newRow("checked-discard") << 2 << true << 0;
+        QTest::newRow("unchecked-discard") << 2 << false << 0;
+        QTest::newRow("checked-cancel") << 0 << true << 0;
+        QTest::newRow("checked-escape") << 3 << true << 0;
+        QTest::newRow("checked-dialog-close") << 4 << true << 0;
+        QTest::newRow("checked-save") << 1 << true << 0;
+        QTest::newRow("checked-panel-cancel") << 1 << true << 1;
+        QTest::newRow("checked-save-failure") << 1 << true << 2;
+    }
+    void stickerCloseReminderDialog()
+    {
+        using namespace waibusnap;
+        // Qt 控件事件无法操作 NSAlert 的独立复选框；此处验证 QWidget 确认框链路。
+        // 生产仍沿用原生面板，系统复选框的点击与焦点留给真机验收。
+        const bool oldNativeDialogs = QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+        const auto restoreNativeDialogs = qScopeGuard(
+            [oldNativeDialogs]
+            { QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, oldNativeDialogs); });
+        QFETCH(int, choice);
+        QFETCH(bool, checked);
+        QFETCH(int, saveKind);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        int writes = 0, panels = 0, confirmations = 0;
+        StickerActions actions;
+        actions.loadCloseReminder = [&] { return settings.loadStickerCloseReminder(); };
+        actions.saveCloseReminder = [&](bool enabled)
+        {
+            ++writes;
+            return settings.saveStickerCloseReminder(enabled);
+        };
+        actions.chooseSavePath = [&](QWidget*, const QString&)
+        {
+            ++panels;
+            return saveKind == 1
+                       ? QString()
+                       : temporary.filePath(saveKind == 2 ? QStringLiteral("不存在/失败.png")
+                                                          : QStringLiteral("保存.png"));
+        };
+        StickerManager manager(nullptr, actions);
+        QVERIFY(manager.create(sampleFrame().pixels, {80, 90}).success);
+        QVERIFY(manager.create(sampleFrame().pixels, {180, 190}).success);
+        const auto first = manager.windows().first();
+        const auto second = manager.windows().last();
+        QTimer response;
+        response.setSingleShot(true);
+        connect(&response, &QTimer::timeout, this,
+                [&]
+                {
+                    auto* dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                    QVERIFY(dialog);
+                    ++confirmations;
+                    auto* check = dialog->checkBox();
+                    QVERIFY(check && !check->isChecked());
+                    QCOMPARE(check->text(), QStringLiteral("不再提醒"));
+                    QVERIFY(dialog->defaultButton());
+                    QCOMPARE(dialog->defaultButton()->text(), QStringLiteral("取消"));
+                    check->setChecked(checked);
+                    if (choice == 3)
+                        QTest::keyClick(dialog, Qt::Key_Escape);
+                    else if (choice == 4)
+                        dialog->close();
+                    else
+                    {
+                        const QString label = choice == 0   ? QStringLiteral("取消")
+                                              : choice == 1 ? QStringLiteral("保存")
+                                                            : QStringLiteral("放弃");
+                        for (auto* button : dialog->buttons())
+                            if (button->text() == label)
+                                button->click();
+                    }
+                });
+        response.start(0);
+        const bool closes = choice == 2 || (choice == 1 && saveKind == 0);
+        QCOMPARE(first->close(), closes);
+        response.stop();
+        QCOMPARE(confirmations, 1);
+        const bool disabled = choice == 2 && checked;
+        QCOMPARE(writes, disabled ? 1 : 0);
+        QCOMPARE(AppSettings(path).loadStickerCloseReminder(), !disabled);
+        QCOMPARE(panels, choice == 1 ? 1 : 0);
+        QCOMPARE(manager.count(), closes ? 1 : 2);
+        QVERIFY(second && second->isVisible() && !second->isSaved());
+        if (!closes)
+            QVERIFY(first && first->isVisible() && !first->isSaved());
+        // 同一管理器中原已存在的另一张窗口立即读取新偏好。
+        choice = 0;
+        response.start(0);
+        QCOMPARE(second->close(), disabled);
+        response.stop();
+        QCOMPARE(confirmations, disabled ? 1 : 2);
+        QCOMPARE(writes, disabled ? 1 : 0);
+    }
+    void stickerCloseReminderWriteFailureStillConfirms()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        // INI 目标为目录，触发真实同步失败。
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        QVERIFY(QDir().mkpath(path));
+        AppSettings settings(path);
+        int confirmations = 0;
+        StickerActions actions;
+        actions.loadCloseReminder = [&] { return settings.loadStickerCloseReminder(); };
+        actions.saveCloseReminder = [&](bool enabled)
+        { return settings.saveStickerCloseReminder(enabled); };
+        actions.confirmClose = [&](QWidget*)
+        {
+            ++confirmations;
+            return StickerCloseConfirmation{StickerCloseDecision::Discard, true};
+        };
+        StickerManager manager(nullptr, actions);
+        for (int index = 0; index < 2; ++index)
+        {
+            QVERIFY(manager.create(sampleFrame().pixels, {80, 90}).success);
+            QVERIFY(manager.windows().first()->close());
+            QVERIFY(settings.loadStickerCloseReminder());
+        }
+        QCOMPARE(confirmations, 2);
+        QCOMPARE(manager.count(), 0);
+    }
+    void controllerStickerCloseReminderSettingsAndClipboard()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        RunOptions options;
+        options.settingsFile = temporary.filePath(QStringLiteral("settings.ini"));
+        int confirmations = 0;
+        StickerActions actions;
+        actions.confirmClose = [&](QWidget*)
+        {
+            ++confirmations;
+            return StickerCloseConfirmation{StickerCloseDecision::Discard, true};
+        };
+        AutostartStub startup;
+        ApplicationController controller(*qApp, options, actions,
+                                         {[] { return sampleFrame().pixels; }}, startup.actions());
+        QVERIFY(controller.stickers().create(sampleFrame().pixels, {80, 90}).success);
+        clipboardAction(controller)->trigger();
+        QVERIFY(controller.stickers().create(sampleFrame().pixels, {180, 190}).success);
+        auto screenshot = controller.stickers().windows().first();
+        auto clipboard = controller.stickers().windows()[1];
+        auto remaining = controller.stickers().windows().last();
+        QVERIFY(screenshot->close());
+        QVERIFY(!AppSettings(options.settingsFile).loadStickerCloseReminder());
+        QVERIFY(clipboard->close());
+        QCOMPARE(confirmations, 1);
+        QCOMPARE(controller.stickers().count(), 1);
+        bool handled = false;
+        QTimer::singleShot(
+            0, &controller,
+            [&]
+            {
+                auto* dialog = qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                auto* tabs = dialog->findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
+                tabs->setCurrentWidget(
+                    dialog->findChild<QWidget*>(QStringLiteral("settingsStickerPage")));
+                auto* check =
+                    dialog->findChild<QCheckBox*>(QStringLiteral("stickerCloseReminderCheck"));
+                QVERIFY(check && !check->isChecked());
+                QTest::mouseClick(check, Qt::LeftButton, Qt::NoModifier,
+                                  QPoint(8, check->height() / 2));
+                QVERIFY(check->isChecked());
+                dialog->findChild<QPushButton*>(QStringLiteral("saveSettingsButton"))->click();
+                QCOMPARE(dialog->result(), int(QDialog::Accepted));
+                handled = true;
+            });
+        controller.menu()->actions().at(3)->trigger();
+        QVERIFY(handled);
+        QVERIFY(AppSettings(options.settingsFile).loadStickerCloseReminder());
+        QVERIFY(remaining && remaining->isVisible() && !remaining->isSaved());
+        QVERIFY(remaining->close());
+        QCOMPARE(confirmations, 2);
+    }
+    void stickerCloseReminderSettingsFailureAndRetry()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        QVERIFY(settings.saveStickerCloseReminder(false).isEmpty());
+        QVERIFY(QFile::rename(path, path + QStringLiteral(".old")));
+        QVERIFY(QDir().mkpath(path));
+        SaveSettingsActions actions;
+        actions.stickerCloseReminder = false;
+        actions.saveStickerCloseReminder = [&](bool enabled)
+        { return settings.saveStickerCloseReminder(enabled); };
+        AutostartStub startup;
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions, startup.actions());
+        dialog.show();
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(3);
+        auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("stickerCloseReminderCheck"));
+        check->setChecked(true);
+        auto* save = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
+        save->click();
+        QVERIFY(dialog.isVisible());
+        QVERIFY(check->isChecked());
+        QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("settingsStatus"))
+                    ->text()
+                    .contains(QStringLiteral("提醒设置写入失败")));
+        QVERIFY(settings.loadStickerCloseReminder());
+        QVERIFY(QDir(path).removeRecursively());
+        QVERIFY(QFile::rename(path + QStringLiteral(".old"), path));
+        save->click();
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(AppSettings(path).loadStickerCloseReminder());
+    }
     void stickerCloseDecisionsAndSaveRetries_data()
     {
         QTest::addColumn<int>("decision");
@@ -3952,6 +4177,7 @@ class StartupSmokeTest final : public QObject
         StickerManager* current = nullptr;
         QVector<QWidget*> order;
         StickerActions actions;
+        actions.loadCloseReminder = [] { return false; };
         actions.confirmQuit = [&](int count)
         {
             ++summaries;
@@ -7489,13 +7715,13 @@ class StartupSmokeTest final : public QObject
         dialog.show();
         auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
         QVERIFY(tabs);
-        QCOMPARE(tabs->count(), 3);
+        QCOMPARE(tabs->count(), 4);
         QCOMPARE(tabs->currentIndex(), 0);
         const QStringList titles = {QStringLiteral("通用"), QStringLiteral("保存"),
-                                    QStringLiteral("截图")};
-        const QStringList pages = {QStringLiteral("settingsGeneralPage"),
-                                   QStringLiteral("settingsSavePage"),
-                                   QStringLiteral("settingsCapturePage")};
+                                    QStringLiteral("截图"), QStringLiteral("贴图")};
+        const QStringList pages = {
+            QStringLiteral("settingsGeneralPage"), QStringLiteral("settingsSavePage"),
+            QStringLiteral("settingsCapturePage"), QStringLiteral("settingsStickerPage")};
         const QList<QStringList> controls = {
             {QStringLiteral("hotkeyEditor"), QStringLiteral("hotkeyHelp"),
              QStringLiteral("autostartCheck"), QStringLiteral("autostartHelp")},
@@ -7505,11 +7731,13 @@ class StartupSmokeTest final : public QObject
             {QStringLiteral("ratioList"), QStringLiteral("ratioWidthInput"),
              QStringLiteral("ratioHeightInput"), QStringLiteral("ratioAddButton"),
              QStringLiteral("ratioRestoreButton"), QStringLiteral("quickRatioCombo"),
-             QStringLiteral("shapeTemplateList"), QStringLiteral("shapeTemplateImportButton")}};
+             QStringLiteral("shapeTemplateList"), QStringLiteral("shapeTemplateImportButton")},
+            {QStringLiteral("stickerCloseReminderCheck"),
+             QStringLiteral("stickerCloseReminderHelp")}};
         dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
         // 最小宽度下，长状态提示和两个列表仍不挤占公共底栏。
         dialog.resize(dialog.minimumSize());
-        for (int page = 0; page < 3; ++page)
+        for (int page = 0; page < 4; ++page)
         {
             QCOMPARE(tabs->tabText(page), titles[page]);
             QCOMPARE(tabs->widget(page)->objectName(), pages[page]);
@@ -7542,6 +7770,7 @@ class StartupSmokeTest final : public QObject
                 QVERIFY(!tabRect.intersects(rect));
             }
         }
+        tabs->setCurrentIndex(2);
         // 动态列表的末行可通过原滚动区到达。
         for (const auto& name :
              {QStringLiteral("ratioDelete7"), QStringLiteral("shapeTemplateDelete19")})
@@ -7580,6 +7809,7 @@ class StartupSmokeTest final : public QObject
                     QVERIFY(label->height() >= label->heightForWidth(label->width()));
             }
         }
+        tabs->setCurrentIndex(3);
         QTest::keyClick(tabs, Qt::Key_Tab, Qt::ControlModifier);
         QCOMPARE(tabs->currentIndex(), 0);
         QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("autostartHelp"))
@@ -7589,7 +7819,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(startup.requests.isEmpty());
         const QString evidence = qEnvironmentVariable("WAIBUSNAP_SETTINGS_EVIDENCE_DIR");
         if (!evidence.isEmpty())
-            for (int page = 0; page < 3; ++page)
+            for (int page = 0; page < 4; ++page)
             {
                 tabs->setCurrentIndex(page);
                 QApplication::processEvents();
@@ -7603,7 +7833,7 @@ class StartupSmokeTest final : public QObject
     {
         QTest::addColumn<int>("decision");
         QTest::addColumn<int>("lastPage");
-        for (int page = 0; page < 3; ++page)
+        for (int page = 0; page < 4; ++page)
         {
             QTest::newRow(qPrintable(QStringLiteral("save-page-%1").arg(page))) << 0 << page;
             QTest::newRow(qPrintable(QStringLiteral("cancel-page-%1").arg(page))) << 1 << page;
@@ -7652,6 +7882,11 @@ class StartupSmokeTest final : public QObject
             writes.append(QStringLiteral("模板"));
             return settings.saveShapeTemplates(entries);
         };
+        actions.saveStickerCloseReminder = [&](bool enabled)
+        {
+            writes.append(QStringLiteral("贴图"));
+            return settings.saveStickerCloseReminder(enabled);
+        };
         AutostartStub startup;
         startup.state = {true, true, {}};
         auto autostart = startup.actions();
@@ -7695,7 +7930,11 @@ class StartupSmokeTest final : public QObject
         auto* shape = dialog.findChild<QCheckBox*>(QStringLiteral("shapeTemplateToggle0"));
         shape->setChecked(false);
         wide->setValue(7);
-        for (int page : {0, 1, 2, 0, 2, 1, lastPage})
+        tabs->setCurrentIndex(3);
+        auto* reminder = dialog.findChild<QCheckBox*>(QStringLiteral("stickerCloseReminderCheck"));
+        QVERIFY(reminder && reminder->isChecked());
+        reminder->setChecked(false);
+        for (int page : {0, 1, 2, 3, 0, 2, 1, lastPage})
             tabs->setCurrentIndex(page);
         QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F2));
         QVERIFY(!check->isChecked());
@@ -7707,13 +7946,15 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(quick->currentText(), QStringLiteral("5:4"));
         QVERIFY(!dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle0"))->isChecked());
         QVERIFY(!shape->isChecked());
+        QVERIFY(!reminder->isChecked());
         QVERIFY(writes.isEmpty());
         QCOMPARE(startup.queries, 1);
         if (decision == 2)
         {
             QWidget* focus = lastPage == 0   ? static_cast<QWidget*>(editor)
                              : lastPage == 1 ? static_cast<QWidget*>(format)
-                                             : static_cast<QWidget*>(wide);
+                             : lastPage == 2 ? static_cast<QWidget*>(wide)
+                                             : static_cast<QWidget*>(reminder);
             focus->setFocus();
             QTest::keyClick(focus, Qt::Key_Escape);
         }
@@ -7728,7 +7969,8 @@ class StartupSmokeTest final : public QObject
         {
             QCOMPARE(writes, (QStringList{QStringLiteral("热键"), QStringLiteral("保存"),
                                           QStringLiteral("启动"), QStringLiteral("比例"),
-                                          QStringLiteral("模板")}));
+                                          QStringLiteral("模板"), QStringLiteral("贴图")}));
+            QVERIFY(!AppSettings(path).loadStickerCloseReminder());
             QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
             QCOMPARE(settings.loadSavePreferences().quickDirectory, temporary.path());
             QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);

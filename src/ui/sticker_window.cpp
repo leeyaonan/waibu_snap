@@ -5,9 +5,11 @@
 #include "ui/annotation_color_palette.h"
 #include "ui/annotation_text_edit.h"
 #include <QAction>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QContextMenuEvent>
+#include <QDebug>
 #include <QFocusEvent>
 #include <QGridLayout>
 #include <QGuiApplication>
@@ -66,11 +68,15 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
             dialog.addButton(QStringLiteral("放弃"), QMessageBox::DestructiveRole);
             dialog.setDefaultButton(cancel);
             dialog.setEscapeButton(cancel);
+            auto* doNotRemind = new QCheckBox(QStringLiteral("不再提醒"), &dialog);
+            doNotRemind->setObjectName(QStringLiteral("stickerDoNotRemindCheck"));
+            dialog.setCheckBox(doNotRemind);
             dialog.exec();
-            return dialog.clickedButton() == save ? StickerCloseDecision::Save
-                   : dialog.clickedButton() == cancel || !dialog.clickedButton()
-                       ? StickerCloseDecision::Cancel
-                       : StickerCloseDecision::Discard;
+            const auto decision = dialog.clickedButton() == save ? StickerCloseDecision::Save
+                                  : dialog.clickedButton() == cancel || !dialog.clickedButton()
+                                      ? StickerCloseDecision::Cancel
+                                      : StickerCloseDecision::Discard;
+            return StickerCloseConfirmation{decision, doNotRemind->isChecked()};
         };
     winId();
     if (QScreen* target = QGuiApplication::screenAt(position))
@@ -554,12 +560,13 @@ void StickerWindow::closeEvent(QCloseEvent* event)
             return;
         }
         finishText(true);
-        if (!saved_)
+        if (!saved_ && (!actions_.loadCloseReminder || actions_.loadCloseReminder()))
         {
             confirmingClose_ = true;
             QPointer<StickerWindow> self(this);
             const auto confirm = actions_.confirmClose;
-            const auto decision = confirm(this);
+            const auto confirmation = confirm(this);
+            const auto decision = confirmation.decision;
             if (!self)
                 return;
             if (closed_)
@@ -573,6 +580,15 @@ void StickerWindow::closeEvent(QCloseEvent* event)
                 updateEditToolbar();
                 event->ignore();
                 return;
+            }
+            if (!self)
+                return;
+            if (decision == StickerCloseDecision::Discard && confirmation.doNotRemind &&
+                actions_.saveCloseReminder)
+            {
+                const QString error = actions_.saveCloseReminder(false);
+                if (!error.isEmpty())
+                    qWarning().noquote() << error;
             }
             if (!self)
                 return;

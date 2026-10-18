@@ -41,6 +41,87 @@ class HotkeySettingsTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void stickerCloseReminderDefaultsRoundTripAndIsolation()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("中文 设置/settings.ini"));
+        AppSettings settings(path);
+        QVERIFY(settings.loadStickerCloseReminder());
+        QVERIFY(!QFile::exists(path));
+        QVERIFY(settings.saveHotkey(QKeySequence(Qt::Key_F2)).isEmpty());
+        QVERIFY(settings.saveSavePreferences({temporary.path(), ImageFormat::Jpeg}).isEmpty());
+        for (bool enabled : {false, true, false})
+        {
+            QVERIFY(settings.saveStickerCloseReminder(enabled).isEmpty());
+            QCOMPARE(settings.loadStickerCloseReminder(), enabled);
+            QCOMPARE(AppSettings(path).loadStickerCloseReminder(), enabled);
+            QSettings ini(path, QSettings::IniFormat);
+            QCOMPARE(ini.value(QStringLiteral("sticker/confirmUnsavedClose")).toBool(), enabled);
+            QCOMPARE(ini.allKeys().size(), 4);
+            QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+            QCOMPARE(settings.loadSavePreferences().quickDirectory, temporary.path());
+            QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
+        }
+        QVERIFY(settings.saveHotkey(defaultScreenshotHotkey()).isEmpty());
+        QVERIFY(!settings.loadStickerCloseReminder());
+    }
+    void stickerCloseReminderInvalidValues_data()
+    {
+        QTest::addColumn<QByteArray>("contents");
+        QTest::addColumn<bool>("enabled");
+        QTest::newRow("true") << QByteArray("[sticker]\nconfirmUnsavedClose=true\n") << true;
+        QTest::newRow("false") << QByteArray("[sticker]\nconfirmUnsavedClose=false\n") << false;
+        QTest::newRow("missing") << QByteArray("[hotkey]\nsequence=F2\n") << true;
+        QTest::newRow("empty") << QByteArray("[sticker]\nconfirmUnsavedClose=\n") << true;
+        QTest::newRow("garbage") << QByteArray("[sticker]\nconfirmUnsavedClose=garbage\n") << true;
+        QTest::newRow("number") << QByteArray("[sticker]\nconfirmUnsavedClose=0\n") << true;
+        QTest::newRow("list") << QByteArray("[sticker]\nconfirmUnsavedClose=false,true\n") << true;
+        QTest::newRow("malformed")
+            << QByteArray("[sticker]\nconfirmUnsavedClose=false\n[broken\n") << true;
+    }
+    void stickerCloseReminderInvalidValues()
+    {
+        QFETCH(QByteArray, contents);
+        QFETCH(bool, enabled);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(contents), qint64(contents.size()));
+        file.close();
+        QCOMPARE(waibusnap::AppSettings(path).loadStickerCloseReminder(), enabled);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), contents);
+    }
+    void stickerCloseReminderReadWriteFailuresAndRetry()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        QVERIFY(settings.saveStickerCloseReminder(false).isEmpty());
+        QVERIFY(QFile::rename(path, path + QStringLiteral(".old")));
+        QVERIFY(QDir().mkpath(path));
+        QVERIFY(settings.loadStickerCloseReminder());
+        // 目标为目录，真实 QSettings 同步失败；不能缓存未落盘的 false。
+        QVERIFY(!settings.saveStickerCloseReminder(false).isEmpty());
+        QVERIFY(settings.loadStickerCloseReminder());
+        QVERIFY(AppSettings(path).loadStickerCloseReminder());
+        AppSettings blocked(path + QStringLiteral(".old/child.ini"));
+        QVERIFY(!blocked.saveStickerCloseReminder(false).isEmpty());
+        QVERIFY(blocked.loadStickerCloseReminder());
+        QVERIFY(QDir(path).removeRecursively());
+        QVERIFY(QFile::rename(path + QStringLiteral(".old"), path));
+        QVERIFY(settings.loadStickerCloseReminder());
+        QVERIFY(settings.saveStickerCloseReminder(true).isEmpty());
+        QVERIFY(AppSettings(path).loadStickerCloseReminder());
+        QVERIFY(settings.saveStickerCloseReminder(false).isEmpty());
+        QVERIFY(!settings.loadStickerCloseReminder());
+    }
     void savePreferencesDefaultsRoundTripAndHotkeyIsolation()
     {
         using namespace waibusnap;

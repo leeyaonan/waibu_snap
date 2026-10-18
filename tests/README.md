@@ -789,3 +789,25 @@ Qt::Tool 默认失活隐藏是独立风险，覆盖层现补 WA_MacAlwaysShowToo
 - macOS 原生 Tab 点击 / 键盘焦点切换、长路径和系统长提示的观感；多比例 / 模板列表滚动手感。
 - 系统实际快捷键录制 / 冲突、登录项待批准提示与保存后重开回读；Qt 合成键盘事件与系统替身不替代真实操作。
 - Windows 11 实机与高 DPI 的完整中文标签、列表滚动、目录选择、快捷键录制和底部按钮可达；CI 不替代真机体验。
+
+## v005 批次 5：贴图关闭「不再提醒」（2026-10-18）
+
+来源愿景 v005，交互与持久化设计见工作区 `docs/design/sticker-close-preference.md`。新增 `sticker/confirmUnsavedClose`，缺省提醒开启。确认框「不再提醒」只在放弃分支写入；取消 / Esc / 关闭确认框 / 保存成功 / 保存面板取消 / 保存失败都不改变偏好。关闭时实时读取，成功修改立即作用于已有其他贴图；截图与剪贴板贴图共用控制器注入的 AppSettings 回调。保存状态保持独立，应用退出的汇总与逐张保存不读取此偏好，隐藏贴图照常计入。
+
+### 自动化覆盖
+
+- `hotkey_settings` 新增 10 项（共 **53 项**）：默认且不建文件、true / false 往返、热键 / 保存目录 / 格式隔离；缺失 / 空值 / 非法字符串 / 数字 / 列表 / 损坏 INI 安全回退且原文件不改写；真实目录目标同步失败、父目录被文件占用、缓存保护、路径修复后的显式重试。
+- `stickerCloseReminderDialog` **8 行**：实际 QMessageBox 的默认取消、复选框默认未选中、勾选 / 不勾选放弃、勾选后取消 / Esc / 关闭对话框 / 保存成功 / 保存面板取消 / 写出失败；核对写入次数与磁盘偏好，下张已有贴图是否再次确认、其他图片未保存状态与生命周期独立。
+- `stickerCloseReminderWriteFailureStillConfirms`：真实设置写入失败后当前放弃仍关闭，下一张继续确认。
+- `controllerStickerCloseReminderSettingsAndClipboard`：截图来源和剪贴板来源共用偏好；从真实托盘设置入口开启「关闭未保存贴图前提醒」，已存在的第三张贴图立即恢复确认。
+- `stickerCloseReminderSettingsFailureAndRetry`：保存失败显示中文原因、保持窗口和草稿、运行时提醒回退开启；路径恢复后重试成功。
+- `settingsTabsReachability` 扩至四页，新增「贴图」开关 / 帮助的归属与可达、Ctrl+Tab 循环；`settingsTabsDraftAndPersistence` **9 → 12 行**，从每页分别保存 / 取消 / Esc，切页保留提醒草稿，保存顺序在模板后追加贴图，取消 / Esc 文件逐字节不变。
+- 原退出矩阵 **5 行**在单张提醒关闭的条件下运行：取消、逐张保存、第二张取消 / 失败、全部放弃，以及已有重入保护；默认退出确认无复选框，隐藏未保存贴图照常确认。上述新增用例和原单张关闭矩阵均加入独立 **2 倍 DPR** 子集。
+
+确认框测试只操作 QWidget 控件。Cocoa 的 NSAlert 有独立复选框，Qt 合成事件无法驱动该原生控件，因此此用例临时启用 `AA_DontUseNativeDialogs` 并以作用域保护恢复；生产继续沿用原生 QMessageBox。自动化不能证明 NSAlert 复选框真实点击已验收。所有设置、图片输出和出图均在临时目录；剪贴板注入构造图像，不操作系统剪贴板。
+
+### 验证与人工边界
+
+独立目录 `WAIBUSNAP_BUILD_DIR=build/verify-sticker-close`，未动 `build/macos`。本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release 的 `build-project.sh`、`test-project.sh` 全部 **17 项 CTest**（含真实 OCR / 原生窗口）、主冒烟 **472 → 486**、高 DPI 冒烟 **405 → 430**、设置单测 **53 项**、Cocoa 专项 **33 项**、clang-format **18.1.8** 的 `lint-code.sh` 与 `git diff --check` 全部通过，均 0 失败 / 0 跳过。Cocoa 专项核对 QWidget 确认框链路、四页设置与退出语义；四页短 / 长提示共八张构造数据截图已生成，新增贴图页目视无截断或重叠。最终应用以既有 `WaibuSnap Dev` / `local.waibusnap.dev` 稳定签名并校验通过。初轮沙箱内系统服务连接受限的窗口 / OCR 失败，已用正常系统上下文的标准全套复验；NSAlert 复选框合成事件的限制按上文明确保留。双端 CI 的运行链接与结论在本批 PR 登记。
+
+人工待验收：macOS 原生确认框「不再提醒」真实点击、键盘默认焦点和取消 / 保存手感；关闭提醒后重启仍直接关闭、设置重新开启后重启恢复确认；原生保存面板取消 / 失败，以及 Windows 11 / 高 DPI 标签与对话框观感。CI 与合成事件不替代这些实机项。

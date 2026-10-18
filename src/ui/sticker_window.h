@@ -31,11 +31,23 @@ enum class StickerQuitDecision
     SaveAll,
     DiscardAll
 };
+struct StickerCloseConfirmation
+{
+    StickerCloseConfirmation(StickerCloseDecision decision = StickerCloseDecision::Cancel,
+                             bool doNotRemind = false)
+        : decision(decision), doNotRemind(doNotRemind)
+    {
+    }
+    StickerCloseDecision decision;
+    bool doNotRemind;
+};
 struct StickerActions : ImageSaveActions
 {
     std::function<ImageOutputResult(const QImage&)> copyImage;
-    std::function<StickerCloseDecision(QWidget*)> confirmClose;
+    std::function<StickerCloseConfirmation(QWidget*)> confirmClose;
     std::function<StickerQuitDecision(int)> confirmQuit;
+    std::function<bool()> loadCloseReminder;
+    std::function<QString(bool)> saveCloseReminder;
 };
 class StickerWindow final : public QWidget
 {

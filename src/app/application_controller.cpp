@@ -25,13 +25,18 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
       settings_(options_.settingsFile),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
       displays_(createDisplayTopology()), capture_(createCaptureProvider()),
-      windows_(createWindowEnumerator()), stickers_(nullptr,
-                                                    [this, &stickerActions]
-                                                    {
-                                                        stickerActions.loadSavePreferences = [this]
-                                                        { return settings_.loadSavePreferences(); };
-                                                        return std::move(stickerActions);
-                                                    }()),
+      windows_(createWindowEnumerator()),
+      stickers_(nullptr,
+                [this, &stickerActions]
+                {
+                    stickerActions.loadSavePreferences = [this]
+                    { return settings_.loadSavePreferences(); };
+                    stickerActions.loadCloseReminder = [this]
+                    { return settings_.loadStickerCloseReminder(); };
+                    stickerActions.saveCloseReminder = [this](bool enabled)
+                    { return settings_.saveStickerCloseReminder(enabled); };
+                    return std::move(stickerActions);
+                }()),
       clipboardActions_(std::move(clipboardActions)), autostartActions_(std::move(autostartActions))
 {
     if (!autostartActions_.query || !autostartActions_.setEnabled)
@@ -218,7 +223,9 @@ void ApplicationController::openSettings()
          [this](const QVector<ShapeTemplateEntry>& entries)
          { return settings_.saveShapeTemplates(entries); },
          [this](const QStringList& paths) { return settings_.importShapeTemplates(paths); },
-         {}},
+         {},
+         settings_.loadStickerCloseReminder(),
+         [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); }},
         autostartActions_);
     dialog.exec();
     settingsOpen_ = false;

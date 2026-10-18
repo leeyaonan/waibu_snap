@@ -27,6 +27,8 @@ struct SaveSettingsActions
     std::function<QString(const QVector<ShapeTemplateEntry>&)> saveShapeTemplates;
     std::function<ShapeTemplateImport(const QStringList&)> importShapeTemplates;
     std::function<QStringList(QWidget*)> chooseShapeTemplatePaths;
+    bool stickerCloseReminder = true;
+    std::function<QString(bool)> saveStickerCloseReminder;
 };
 class SettingsDialog final : public QDialog
 {
@@ -72,5 +74,6 @@ class SettingsDialog final : public QDialog
     QComboBox* format_ = nullptr;
     AutostartActions autostartActions_;
     QCheckBox* autostartCheck_ = nullptr;
+    QCheckBox* stickerCloseReminderCheck_ = nullptr;
 };
 }
