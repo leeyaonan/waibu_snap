@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -37,17 +38,34 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
             { return autostart->setEnabled(enabled); };
     }
     setWindowTitle(QStringLiteral("WaibuSnap 设置"));
-    setMinimumWidth(440);
+    setMinimumSize(560, 600);
     auto* layout = new QVBoxLayout(this);
-    auto* title = new QLabel(QStringLiteral("截图快捷键"), this);
-    layout->addWidget(title);
-    editor_ = new QKeySequenceEdit(this);
+    auto* tabs = new QTabWidget(this);
+    tabs->setObjectName(QStringLiteral("settingsTabs"));
+    layout->addWidget(tabs, 1);
+    // 页面一次创建，切换不重建草稿；新类别（如贴图）在这里加入独立页面。
+    const auto addPage = [tabs](const QString& title, const QString& name)
+    {
+        auto* page = new QWidget(tabs);
+        page->setObjectName(name);
+        tabs->addTab(page, title);
+        return page;
+    };
+    auto* generalPage = addPage(QStringLiteral("通用"), QStringLiteral("settingsGeneralPage"));
+    auto* savePage = addPage(QStringLiteral("保存"), QStringLiteral("settingsSavePage"));
+    auto* capturePage = addPage(QStringLiteral("截图"), QStringLiteral("settingsCapturePage"));
+    auto* generalLayout = new QVBoxLayout(generalPage);
+    auto* savePageLayout = new QVBoxLayout(savePage);
+    auto* captureLayout = new QVBoxLayout(capturePage);
+    auto* title = new QLabel(QStringLiteral("截图快捷键"), generalPage);
+    generalLayout->addWidget(title);
+    editor_ = new QKeySequenceEdit(generalPage);
     editor_->setObjectName(QStringLiteral("hotkeyEditor"));
     editor_->setMaximumSequenceLength(1);
     editor_->setKeySequence(current);
     editor_->setClearButtonEnabled(true);
     title->setBuddy(editor_);
-    layout->addWidget(editor_);
+    generalLayout->addWidget(editor_);
     editor_->installEventFilter(this);
     for (QObject* child : editor_->findChildren<QObject*>())
         child->installEventFilter(this);
@@ -56,11 +74,11 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
             "支持 F1–F12，或带 Ctrl / Command、Control、Alt / Option 的字母和数字。\n"
             "Mac 的 F1 可能需要配合 Fn / 地球键或系统功能键模式；应用不修改系统键盘设置。\n"
             "窗口打开期间暂停截图快捷键。"),
-        this);
+        generalPage);
     help->setObjectName(QStringLiteral("hotkeyHelp"));
     help->setWordWrap(true);
-    layout->addWidget(help);
-    auto* saveGroup = new QGroupBox(QStringLiteral("保存"), this);
+    generalLayout->addWidget(help);
+    auto* saveGroup = new QGroupBox(QStringLiteral("保存"), savePage);
     auto* saveLayout = new QVBoxLayout(saveGroup);
     saveLayout->addWidget(
         new QLabel(QStringLiteral("快速保存目录（留空时每次选择路径）"), saveGroup));
@@ -113,8 +131,9 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     saveLayout->addWidget(lossNotice);
     connect(format_, &QComboBox::currentIndexChanged, lossNotice,
             [lossNotice](int index) { lossNotice->setVisible(index == 1); });
-    layout->addWidget(saveGroup);
-    auto* startupGroup = new QGroupBox(QStringLiteral("启动"), this);
+    savePageLayout->addWidget(saveGroup);
+    savePageLayout->addStretch();
+    auto* startupGroup = new QGroupBox(QStringLiteral("启动"), generalPage);
     auto* startupLayout = new QVBoxLayout(startupGroup);
     autostartCheck_ = new QCheckBox(QStringLiteral("登录时自动启动"), startupGroup);
     autostartCheck_->setObjectName(QStringLiteral("autostartCheck"));
@@ -131,19 +150,22 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
             ? QStringLiteral("已在系统设置中等待批准，请在「登录项」中允许。")
             : QStringLiteral("默认关闭。开启后，下次登录时自动运行；状态以系统注册为准。"));
     startupLayout->addWidget(startupHelp);
-    layout->addWidget(startupGroup);
+    generalLayout->addWidget(startupGroup);
+    generalLayout->addStretch();
     const auto ratios = sanitizedRatioSettings(saveSettings_.ratios);
     for (const auto& ratio : ratios.enabled)
         ratioRows_.append({ratio, true});
     for (const auto& ratio : ratios.disabled)
         ratioRows_.append({ratio, false});
     quickRatio_ = ratios.quick;
-    auto* ratioGroup = new QGroupBox(QStringLiteral("截图比例"), this);
+    auto* ratioGroup = new QGroupBox(QStringLiteral("截图比例"), capturePage);
     auto* ratioLayout = new QVBoxLayout(ratioGroup);
     // 滚动区的最小高度必须传到分组与对话框，防止首次布局压入添加行。
     ratioLayout->setSizeConstraint(QLayout::SetMinimumSize);
     ratioScroll_ = new QScrollArea(ratioGroup);
     ratioScroll_->setWidgetResizable(true);
+    // 长列表由滚动区承接，最小高度计算不采用整列内容的建议高度。
+    ratioScroll_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Ignored);
     ratioScroll_->setMinimumHeight(160);
     ratioScroll_->setMaximumHeight(240);
     ratioLayout->addWidget(ratioScroll_);
@@ -237,10 +259,11 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
                     index < 0 ? std::nullopt : parseAspectRatio(quickRatioCombo_->itemText(index));
             });
     rebuildRatioList();
-    layout->addWidget(ratioGroup);
+    captureLayout->addWidget(ratioGroup);
     shapeTemplates_ = saveSettings_.shapeTemplates;
-    auto* shapeGroup = new QGroupBox(QStringLiteral("形状模板"), this);
+    auto* shapeGroup = new QGroupBox(QStringLiteral("形状模板"), capturePage);
     auto* shapeLayout = new QVBoxLayout(shapeGroup);
+    shapeLayout->setSizeConstraint(QLayout::SetMinimumSize);
     shapeTemplateScroll_ = new QScrollArea(shapeGroup);
     shapeTemplateScroll_->setWidgetResizable(true);
     shapeTemplateScroll_->setMinimumHeight(70);
@@ -277,7 +300,8 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
                 status_->setVisible(!result.error.isEmpty());
             });
     rebuildShapeTemplateList();
-    layout->addWidget(shapeGroup);
+    captureLayout->addWidget(shapeGroup);
+    captureLayout->addStretch();
     status_ = new QLabel(notice, this);
     status_->setObjectName(QStringLiteral("settingsStatus"));
     status_->setTextFormat(Qt::PlainText);
@@ -418,8 +442,8 @@ bool SettingsDialog::event(QEvent* event)
                      event->type() == QEvent::LayoutRequest))
     {
         // 普通最小高度不计实际宽度下的文本换行，首屏或错误提示可能挤占底部按钮。
-        const int height =
-            std::max(layout()->minimumSize().height(), layout()->minimumHeightForWidth(width()));
+        const int height = std::max(
+            {600, layout()->minimumSize().height(), layout()->minimumHeightForWidth(width())});
         if (minimumHeight() != height)
         {
             setMinimumHeight(height);

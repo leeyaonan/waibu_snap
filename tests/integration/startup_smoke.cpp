@@ -47,6 +47,8 @@
 #include <QScrollArea>
 #include <QSignalSpy>
 #include <QString>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTest>
@@ -4327,6 +4329,7 @@ class StartupSmokeTest final : public QObject
         SettingsDialog dialog(
             QKeySequence(Qt::Key_F1), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             actions, startup);
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(2);
         dialog.show();
         QVERIFY(dialog.findChild<QWidget*>(QStringLiteral("shapeTemplateList")));
         QApplication::processEvents();
@@ -4362,6 +4365,7 @@ class StartupSmokeTest final : public QObject
         SettingsDialog cancel(
             QKeySequence(Qt::Key_F1), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             actions, startup);
+        cancel.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(2);
         cancel.show();
         cancel.findChild<QPushButton*>(QStringLiteral("shapeTemplateDelete0"))->click();
         cancel.findChild<QPushButton*>(QStringLiteral("shapeTemplateImportButton"))->click();
@@ -4391,6 +4395,7 @@ class StartupSmokeTest final : public QObject
         SettingsDialog failed(
             QKeySequence(Qt::Key_F1), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             failure, startup);
+        failed.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(2);
         failed.show();
         QVERIFY(failed.findChild<QLabel*>(QStringLiteral("shapeTemplateEmptyNotice"))->isVisible());
         failed.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"))->click();
@@ -4858,6 +4863,7 @@ class StartupSmokeTest final : public QObject
         SettingsDialog dialog(
             defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             actions, autostart.actions());
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(2);
         dialog.show();
         const auto findButton = [&dialog](const char* name)
         { return dialog.findChild<QPushButton*>(QString::fromLatin1(name)); };
@@ -4976,6 +4982,7 @@ class StartupSmokeTest final : public QObject
         SettingsDialog dialog(
             defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             actions, autostart.actions());
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(2);
         dialog.show();
         auto* quick = dialog.findChild<QComboBox*>(QStringLiteral("quickRatioCombo"));
         auto* empty = dialog.findChild<QLabel*>(QStringLiteral("ratioEmptyNotice"));
@@ -7345,6 +7352,7 @@ class StartupSmokeTest final : public QObject
                 return QString();
             },
             {}, nullptr, actions);
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(1);
         dialog.show();
         auto* directory = dialog.findChild<QLineEdit*>(QStringLiteral("quickDirectory"));
         auto* format = dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"));
@@ -7434,6 +7442,7 @@ class StartupSmokeTest final : public QObject
                 QVERIFY(dialog);
                 QCOMPARE(dialog->findChild<QLineEdit*>(QStringLiteral("quickDirectory"))->text(),
                          directory);
+                dialog->findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(1);
                 QTest::mouseClick(
                     dialog->findChild<QPushButton*>(QStringLiteral("clearDirectoryButton")),
                     Qt::LeftButton);
@@ -7454,6 +7463,293 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(panels, 2);
         QVERIFY(window->isSaved());
         QVERIFY(AppSettings(options.settingsFile).loadSavePreferences().quickDirectory.isEmpty());
+    }
+    void settingsTabsReachability_data()
+    {
+        QTest::addColumn<bool>("longNotice");
+        QTest::newRow("normal") << false;
+        QTest::newRow("long-notice") << true;
+    }
+    void settingsTabsReachability()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, longNotice);
+        AutostartStub startup;
+        startup.state.pendingApproval = true;
+        SaveSettingsActions actions;
+        for (int index = 0; index < 20; ++index)
+            actions.shapeTemplates.append({QStringLiteral("template%1.png").arg(index),
+                                           QStringLiteral("测试模板 %1").arg(index), true});
+        const QString notice =
+            longNotice ? QStringLiteral("测试状态：设置未保存，请检查目录或系统授权。 ").repeated(8)
+                       : QStringLiteral("测试状态：设置未保存。");
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, notice,
+            nullptr, actions, startup.actions());
+        dialog.show();
+        auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
+        QVERIFY(tabs);
+        QCOMPARE(tabs->count(), 3);
+        QCOMPARE(tabs->currentIndex(), 0);
+        const QStringList titles = {QStringLiteral("通用"), QStringLiteral("保存"),
+                                    QStringLiteral("截图")};
+        const QStringList pages = {QStringLiteral("settingsGeneralPage"),
+                                   QStringLiteral("settingsSavePage"),
+                                   QStringLiteral("settingsCapturePage")};
+        const QList<QStringList> controls = {
+            {QStringLiteral("hotkeyEditor"), QStringLiteral("hotkeyHelp"),
+             QStringLiteral("autostartCheck"), QStringLiteral("autostartHelp")},
+            {QStringLiteral("quickDirectory"), QStringLiteral("chooseDirectoryButton"),
+             QStringLiteral("clearDirectoryButton"), QStringLiteral("saveFormat"),
+             QStringLiteral("jpegLossNotice")},
+            {QStringLiteral("ratioList"), QStringLiteral("ratioWidthInput"),
+             QStringLiteral("ratioHeightInput"), QStringLiteral("ratioAddButton"),
+             QStringLiteral("ratioRestoreButton"), QStringLiteral("quickRatioCombo"),
+             QStringLiteral("shapeTemplateList"), QStringLiteral("shapeTemplateImportButton")}};
+        dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
+        // 最小宽度下，长状态提示和两个列表仍不挤占公共底栏。
+        dialog.resize(dialog.minimumSize());
+        for (int page = 0; page < 3; ++page)
+        {
+            QCOMPARE(tabs->tabText(page), titles[page]);
+            QCOMPARE(tabs->widget(page)->objectName(), pages[page]);
+            QTest::mouseClick(tabs->tabBar(), Qt::LeftButton, Qt::NoModifier,
+                              tabs->tabBar()->tabRect(page).center());
+            QCOMPARE(tabs->currentIndex(), page);
+            QApplication::processEvents();
+            if (!longNotice)
+                QVERIFY(dialog.height() <= 760);
+            QVERIFY(tabs->tabBar()->tabRect(page).width() >=
+                    tabs->tabBar()->fontMetrics().horizontalAdvance(titles[page]));
+            for (const auto& name : controls[page])
+            {
+                auto* control = dialog.findChild<QWidget*>(name);
+                QVERIFY2(control, qPrintable(name));
+                QVERIFY(tabs->widget(page)->isAncestorOf(control));
+                QVERIFY2(control->isVisible(), qPrintable(name));
+                QVERIFY(!control->visibleRegion().isEmpty());
+            }
+            for (const auto& name :
+                 {QStringLiteral("settingsStatus"), QStringLiteral("saveSettingsButton"),
+                  QStringLiteral("cancelSettingsButton")})
+            {
+                auto* control = dialog.findChild<QWidget*>(name);
+                QVERIFY(control && control->isVisible());
+                QVERIFY(!tabs->isAncestorOf(control));
+                const QRect rect(control->mapTo(&dialog, QPoint()), control->size());
+                QVERIFY(dialog.rect().contains(rect));
+                const QRect tabRect(tabs->mapTo(&dialog, QPoint()), tabs->size());
+                QVERIFY(!tabRect.intersects(rect));
+            }
+        }
+        // 动态列表的末行可通过原滚动区到达。
+        for (const auto& name :
+             {QStringLiteral("ratioDelete7"), QStringLiteral("shapeTemplateDelete19")})
+        {
+            auto* control = dialog.findChild<QPushButton*>(name);
+            QVERIFY(control);
+            auto* scroll =
+                qobject_cast<QScrollArea*>(control->parentWidget()->parentWidget()->parentWidget());
+            QVERIFY(scroll);
+            scroll->ensureWidgetVisible(control);
+            QApplication::processEvents();
+            QVERIFY(control->isVisible());
+            QVERIFY(scroll->viewport()->rect().contains(
+                QRect(control->mapTo(scroll->viewport(), QPoint()), control->size())));
+            auto* group = scroll->parentWidget();
+            for (auto* sibling :
+                 group->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly))
+            {
+                if (sibling == scroll || !sibling->isVisible())
+                    continue;
+                QVERIFY(group->rect().contains(sibling->geometry()));
+                QVERIFY2(
+                    !scroll->geometry().intersects(sibling->geometry()),
+                    qPrintable(QStringLiteral("%1 / %2：列表 %3,%4,%5,%6；控件 %7,%8,%9,%10")
+                                   .arg(QString::fromLatin1(sibling->metaObject()->className()),
+                                        sibling->objectName())
+                                   .arg(scroll->x())
+                                   .arg(scroll->y())
+                                   .arg(scroll->width())
+                                   .arg(scroll->height())
+                                   .arg(sibling->x())
+                                   .arg(sibling->y())
+                                   .arg(sibling->width())
+                                   .arg(sibling->height())));
+                if (auto* label = qobject_cast<QLabel*>(sibling); label && label->wordWrap())
+                    QVERIFY(label->height() >= label->heightForWidth(label->width()));
+            }
+        }
+        QTest::keyClick(tabs, Qt::Key_Tab, Qt::ControlModifier);
+        QCOMPARE(tabs->currentIndex(), 0);
+        QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("autostartHelp"))
+                    ->text()
+                    .contains(QStringLiteral("等待批准")));
+        QCOMPARE(startup.queries, 1);
+        QVERIFY(startup.requests.isEmpty());
+        const QString evidence = qEnvironmentVariable("WAIBUSNAP_SETTINGS_EVIDENCE_DIR");
+        if (!evidence.isEmpty())
+            for (int page = 0; page < 3; ++page)
+            {
+                tabs->setCurrentIndex(page);
+                QApplication::processEvents();
+                QVERIFY(dialog.grab().save(QDir(evidence).filePath(
+                    QStringLiteral("settings-%1-%2.png")
+                        .arg(longNotice ? QStringLiteral("long") : QStringLiteral("normal"))
+                        .arg(page))));
+            }
+    }
+    void settingsTabsDraftAndPersistence_data()
+    {
+        QTest::addColumn<int>("decision");
+        QTest::addColumn<int>("lastPage");
+        for (int page = 0; page < 3; ++page)
+        {
+            QTest::newRow(qPrintable(QStringLiteral("save-page-%1").arg(page))) << 0 << page;
+            QTest::newRow(qPrintable(QStringLiteral("cancel-page-%1").arg(page))) << 1 << page;
+            QTest::newRow(qPrintable(QStringLiteral("escape-page-%1").arg(page))) << 2 << page;
+        }
+    }
+    void settingsTabsDraftAndPersistence()
+    {
+        using namespace waibusnap;
+        QFETCH(int, decision);
+        QFETCH(int, lastPage);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        const auto original = defaultScreenshotHotkey();
+        QVERIFY(settings.saveHotkey(original).isEmpty());
+        const QString maskPath = temporary.filePath(QStringLiteral("模板.png"));
+        QImage mask(4, 4, QImage::Format_ARGB32);
+        mask.fill(Qt::white);
+        QVERIFY(mask.save(maskPath));
+        const auto imported = settings.importShapeTemplates({maskPath});
+        QVERIFY(imported.error.isEmpty());
+        QVERIFY(settings.saveShapeTemplates(imported.imported).isEmpty());
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray before = file.readAll();
+        file.close();
+        QStringList writes;
+        SaveSettingsActions actions;
+        actions.shapeTemplates = settings.loadShapeTemplates();
+        actions.shapeTemplateDir = settings.shapeTemplateDir();
+        actions.chooseDirectory = [&](QWidget*, const QString&) { return temporary.path(); };
+        actions.savePreferences = [&](const SavePreferences& preferences)
+        {
+            writes.append(QStringLiteral("保存"));
+            return settings.saveSavePreferences(preferences);
+        };
+        actions.saveRatios = [&](const CaptureRatioSettings& ratios)
+        {
+            writes.append(QStringLiteral("比例"));
+            return settings.saveCaptureRatios(ratios);
+        };
+        actions.saveShapeTemplates = [&](const QVector<ShapeTemplateEntry>& entries)
+        {
+            writes.append(QStringLiteral("模板"));
+            return settings.saveShapeTemplates(entries);
+        };
+        AutostartStub startup;
+        startup.state = {true, true, {}};
+        auto autostart = startup.actions();
+        const auto setEnabled = autostart.setEnabled;
+        autostart.setEnabled = [&](bool enabled)
+        {
+            writes.append(QStringLiteral("启动"));
+            return setEnabled(enabled);
+        };
+        SettingsDialog dialog(
+            original,
+            [&](const QKeySequence& sequence)
+            {
+                writes.append(QStringLiteral("热键"));
+                return settings.saveHotkey(sequence);
+            },
+            {}, nullptr, actions, autostart);
+        dialog.show();
+        auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
+        QVERIFY(tabs);
+        auto* editor = dialog.findChild<QKeySequenceEdit*>(QStringLiteral("hotkeyEditor"));
+        editor->setFocus();
+        QTest::keyClick(editor, Qt::Key_F2);
+        QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F2));
+        auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"));
+        check->setChecked(false);
+        tabs->setCurrentIndex(1);
+        dialog.findChild<QPushButton*>(QStringLiteral("chooseDirectoryButton"))->click();
+        auto* format = dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"));
+        format->setCurrentIndex(1);
+        QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("jpegLossNotice"))->isVisible());
+        tabs->setCurrentIndex(2);
+        auto* wide = dialog.findChild<QDoubleSpinBox*>(QStringLiteral("ratioWidthInput"));
+        auto* high = dialog.findChild<QDoubleSpinBox*>(QStringLiteral("ratioHeightInput"));
+        wide->setValue(5);
+        high->setValue(4);
+        dialog.findChild<QPushButton*>(QStringLiteral("ratioAddButton"))->click();
+        dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle0"))->setChecked(false);
+        auto* quick = dialog.findChild<QComboBox*>(QStringLiteral("quickRatioCombo"));
+        quick->setCurrentText(QStringLiteral("5:4"));
+        auto* shape = dialog.findChild<QCheckBox*>(QStringLiteral("shapeTemplateToggle0"));
+        shape->setChecked(false);
+        wide->setValue(7);
+        for (int page : {0, 1, 2, 0, 2, 1, lastPage})
+            tabs->setCurrentIndex(page);
+        QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F2));
+        QVERIFY(!check->isChecked());
+        QCOMPARE(dialog.findChild<QLineEdit*>(QStringLiteral("quickDirectory"))->text(),
+                 temporary.path());
+        QCOMPARE(format->currentIndex(), 1);
+        QCOMPARE(wide->value(), 7.0);
+        QCOMPARE(high->value(), 4.0);
+        QCOMPARE(quick->currentText(), QStringLiteral("5:4"));
+        QVERIFY(!dialog.findChild<QCheckBox*>(QStringLiteral("ratioToggle0"))->isChecked());
+        QVERIFY(!shape->isChecked());
+        QVERIFY(writes.isEmpty());
+        QCOMPARE(startup.queries, 1);
+        if (decision == 2)
+        {
+            QWidget* focus = lastPage == 0   ? static_cast<QWidget*>(editor)
+                             : lastPage == 1 ? static_cast<QWidget*>(format)
+                                             : static_cast<QWidget*>(wide);
+            focus->setFocus();
+            QTest::keyClick(focus, Qt::Key_Escape);
+        }
+        else
+            QTest::mouseClick(dialog.findChild<QPushButton*>(
+                                  decision == 0 ? QStringLiteral("saveSettingsButton")
+                                                : QStringLiteral("cancelSettingsButton")),
+                              Qt::LeftButton);
+        QVERIFY(!dialog.isVisible());
+        QCOMPARE(dialog.result(), decision == 0 ? int(QDialog::Accepted) : int(QDialog::Rejected));
+        if (decision == 0)
+        {
+            QCOMPARE(writes, (QStringList{QStringLiteral("热键"), QStringLiteral("保存"),
+                                          QStringLiteral("启动"), QStringLiteral("比例"),
+                                          QStringLiteral("模板")}));
+            QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+            QCOMPARE(settings.loadSavePreferences().quickDirectory, temporary.path());
+            QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
+            const auto ratios = settings.loadCaptureRatios();
+            QCOMPARE(ratios.enabled.size(), 8);
+            QCOMPARE(serializeRatioList(ratios.disabled), QStringLiteral("1:1"));
+            QCOMPARE(formatAspectRatio(*ratios.quick), QStringLiteral("5:4"));
+            const auto shapes = settings.loadShapeTemplates();
+            QCOMPARE(shapes.size(), 1);
+            QVERIFY(!shapes[0].enabled);
+            QCOMPARE(startup.queries, 2);
+            QCOMPARE(startup.requests, QVector<bool>{false});
+        }
+        else
+        {
+            QVERIFY(writes.isEmpty());
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            QCOMPARE(file.readAll(), before);
+            QCOMPARE(startup.queries, 1);
+            QVERIFY(startup.requests.isEmpty());
+        }
     }
     void settingsMetadataValidationFailureAndPersistence()
     {

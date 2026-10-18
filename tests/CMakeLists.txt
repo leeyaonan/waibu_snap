@@ -96,6 +96,7 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     ratioSelectionImmediateAdjust ratioSizeTextFormats ratioKeyboardAndWindowSnap
     ratioBarLayoutAndPanelGestures ratioAllDisabledOnlyFree ratioSettingsDialogRoundTrip
     ratioSettingsCancelEmptyAndSaveFailure
+    settingsTabsReachability settingsTabsDraftAndPersistence
     trayIconUsesEmbeddedPlatformAssets
     ocrModeLifecycle ocrSelection ocrCopyDispatchAndSavedState
     ocrDelayedProgressExitAndStaleResult ocrDialogEscAndRetry ocrDialogLoadingAndEmpty
