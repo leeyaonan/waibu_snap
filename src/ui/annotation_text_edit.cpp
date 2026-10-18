@@ -1,8 +1,14 @@
 #include "ui/annotation_text_edit.h"
+#include <QAbstractTextDocumentLayout>
+#include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QScopedValueRollback>
+#include <QTextFrame>
+#include <QtMath>
+#include <algorithm>
 namespace waibusnap
 {
 AnnotationTextEdit::AnnotationTextEdit(QWidget* parent) : QTextEdit(parent)
@@ -11,8 +17,53 @@ AnnotationTextEdit::AnnotationTextEdit(QWidget* parent) : QTextEdit(parent)
     setAcceptRichText(false);
     setLineWrapMode(QTextEdit::NoWrap);
     setTabChangesFocus(false);
-    setPlaceholderText(QStringLiteral("输入说明，可换行\n⌘ / Ctrl+Enter 完成 · Esc 取消编辑"));
+    setFrameShape(QFrame::NoFrame);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setPlaceholderText(QStringLiteral("输入文字"));
+    setToolTip(QStringLiteral("可换行 · ⌘ / Ctrl+Enter 完成 · Esc 取消编辑"));
+    QPalette transparent = palette();
+    transparent.setColor(QPalette::Base, Qt::transparent);
+    setPalette(transparent);
+    setAutoFillBackground(false);
+    viewport()->setAutoFillBackground(false);
+    setAttribute(Qt::WA_OpaquePaintEvent, false);
+    viewport()->setAttribute(Qt::WA_OpaquePaintEvent, false);
     document()->setDocumentMargin(0);
+    connect(this, &QTextEdit::textChanged, this, &AnnotationTextEdit::updateEditorGeometry);
+    connect(document()->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged, this,
+            &AnnotationTextEdit::updateEditorGeometry);
+}
+void AnnotationTextEdit::setEditingArea(QPoint origin, QRect bounds)
+{
+    bounds_ = bounds;
+    if (bounds_.isEmpty())
+        return;
+    // 起笔先给一行与初始宽度留出空间；后续固定起点增长，不在输入时跳动文字。
+    const int initialWidth = std::min(240, bounds_.width());
+    const int initialHeight = std::min(qCeil(QFontMetricsF(font()).height()), bounds_.height());
+    origin_ = {std::clamp(origin.x(), bounds_.left(), bounds_.right() - initialWidth + 1),
+               std::clamp(origin.y(), bounds_.top(), bounds_.bottom() - initialHeight + 1)};
+    updateEditorGeometry();
+}
+void AnnotationTextEdit::updateEditorGeometry()
+{
+    if (bounds_.isEmpty() || updatingGeometry_)
+        return;
+    // resize 会再次触发文档排版通知，只处理本轮；不替换文档或移动光标 / 预编辑。
+    QScopedValueRollback<bool> guard(updatingGeometry_, true);
+    // clear / setPlainText 会重置根框架；仅行尾留出光标宽度，不改变文本左上起点。
+    QTextFrameFormat frame = document()->rootFrame()->frameFormat();
+    if (frame.rightMargin() != cursorWidth())
+    {
+        frame.setRightMargin(cursorWidth());
+        document()->rootFrame()->setFrameFormat(frame);
+    }
+    const int desiredWidth = std::clamp(qCeil(document()->idealWidth()) + cursorWidth(), 240, 400);
+    const int desiredHeight =
+        std::min(240, qCeil(std::max(document()->size().height(), QFontMetricsF(font()).height())));
+    setGeometry(QRect(origin_, QSize(std::min(desiredWidth, bounds_.right() - origin_.x() + 1),
+                                     std::min(desiredHeight, bounds_.bottom() - origin_.y() + 1))));
 }
 bool AnnotationTextEdit::event(QEvent* event)
 {

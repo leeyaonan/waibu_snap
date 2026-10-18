@@ -951,7 +951,9 @@ void StickerWindow::startText(QPointF point)
     textDraft_ = Annotation{AnnotationType::Text, style_, physicalPoint(point), {}, {}, {}};
     QPalette palette = textEditor_->palette();
     palette.setColor(QPalette::Text, style_.color);
-    palette.setColor(QPalette::Base, QColor(25, 25, 25));
+    QColor placeholder = style_.color;
+    placeholder.setAlpha(160);
+    palette.setColor(QPalette::PlaceholderText, placeholder);
     textEditor_->setPalette(palette);
     textEditor_->clear();
     positionTextEditor();
@@ -961,15 +963,15 @@ void StickerWindow::startText(QPointF point)
 }
 void StickerWindow::positionTextEditor()
 {
-    if (!textEditor_)
+    if (!textEditor_ || textDraft_.type != AnnotationType::Text)
         return;
     const qreal factor = scale_ / screenDpr();
     QFont editorFont = annotationFont(textDraft_.style);
     editorFont.setPointSizeF(textDraft_.style.textSize * factor * 72.0 / logicalDpiY());
     textEditor_->setFont(editorFont);
     const QPoint point = (textDraft_.first * factor).toPoint();
-    textEditor_->setGeometry(point.x(), point.y(), std::max(1, std::min(360, width() - point.x())),
-                             std::max(1, std::min(140, height() - point.y())));
+    textEditor_->setEditingArea(point, rect());
+    textDraft_.first = physicalPoint(textEditor_->pos());
 }
 void StickerWindow::finishText(bool commit, bool restoreFocus)
 {

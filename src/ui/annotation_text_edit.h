@@ -9,6 +9,7 @@ class AnnotationTextEdit final : public QTextEdit
     explicit AnnotationTextEdit(QWidget* parent);
     bool isComposing() const { return composing_; }
     void clearPreedit();
+    void setEditingArea(QPoint origin, QRect bounds);
 
   signals:
     void commitRequested();
@@ -20,6 +21,10 @@ class AnnotationTextEdit final : public QTextEdit
     void inputMethodEvent(QInputMethodEvent* event) override;
 
   private:
+    void updateEditorGeometry();
     bool composing_ = false;
+    bool updatingGeometry_ = false;
+    QPoint origin_;
+    QRect bounds_;
 };
 }
