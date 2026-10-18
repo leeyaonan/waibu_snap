@@ -134,3 +134,13 @@ Windows 使用 SDK 自带 C++/WinRT 和 `windowsapp` 系统库，工作线程 MT
 `ScrollResultWindow` 自绘可见源矩形，避免创建按缩放倍数增长的整图预览；复制全分辨率，保存复用 image_save，钉图用纯函数 `scaledToFit` 等比缩小到目标屏可用物理宽高的 85% 内。裁剪沿会话采集轴，支持上下或左右端手柄、应用 / 重置 / 退出裁剪；改变图像后重新标记未输出。警告重试复用捕获流程、原显示器与区域，布局不匹配时提示重新框选。
 
 真实 Chrome / Safari 双屏取证、分类诊断与重锚时点见 `tests/README.md`；`WAIBUSNAP_SCROLL_TRACE=1` 开启逐帧数值日志。手动小步滚轮不能替代连续触控板惯性，复杂网页重栅格化、速度档手感、全屏 / Space 与进程峰值 RSS 仍待验证。
+
+## 截图会话系统在屏安全网（2026-10-18）
+
+`window_visibility.h` 返回可用性、系统在屏、自有窗口号、活动 Space、occlusion、层级、collectionBehavior 与原生失活隐藏状态。macOS 每次按需用 CGWindowList OnScreenOnly 匹配 PID + NSWindow.windowNumber；Space / occlusion 只作诊断，不替代系统列表。Windows 为 IsWindowVisible / IsIconic 的有限等价检查，尚不检测 DWM cloak / 像素遮挡。查询不会创建原生窗口，空闲不轮询。
+
+覆盖层设置 WA_MacAlwaysShowToolWindow，由会话显式管理隐藏。就绪之前系统未在屏时保留 15 秒保护并恢复后重新采样；就绪之后看门狗每 5 秒检查，首次系统缺失启动独立 20 秒连续异常宽限，先自愈、下 tick 复查，失败码 12。原来的 Qt 隐藏 / 缺失按会话年龄 20 秒复位仍保留。查询失败也不会无限占锁。
+
+`observeOverlayWindow` 的 RAII 观察器监听 Space / 唤醒 / 屏幕参数 / 本窗 occlusion，合并 100ms 后排入 GUI 循环，结束先注销、旧 token / 已销毁目标不响应。自愈恢复层级 25、orderFrontRegardless，普通覆盖层必要时激活；长图双窗不激活。系统面板 open、Qt 模态、退出确认保护与 lower/raise 的原生降级标记都阻止抬升。显示器拓扑真正改变仍沿用取消 / 长图保留结果的既有策略。
+
+贴图创建、恢复与显示重配只留诊断，当前不自动复位、关闭或轮询长驻窗口。collectionBehavior 保持 Qt 现值，候选 CanJoinAllSpaces / FullScreenAuxiliary 的独立结论见测试记录。

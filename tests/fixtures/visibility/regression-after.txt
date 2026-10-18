@@ -1,0 +1,249 @@
+********* Start testing of StartupSmokeTest *********
+Config: Using QtTest library 6.11.2, Qt 6.11.2 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 16.0.0 (clang-1600.0.26.3)), macos 27.0.1
+PASS   : StartupSmokeTest::initTestCase()
+QWARN  : StartupSmokeTest::controllerNativeInvisibleRegression(known-off-screen) This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerNativeInvisibleRegression(known-off-screen) 覆盖层在屏自愈：reason= 会话看门狗  attempt= 1  ordered= true  before: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1  after: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerNativeInvisibleRegression(known-off-screen) 覆盖层在屏自愈：reason= 会话看门狗  attempt= 2  ordered= true  before: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1  after: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerNativeInvisibleRegression(known-off-screen) 截图会话结束：outcome= 12 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerNativeInvisibleRegression(known-off-screen)
+QWARN  : StartupSmokeTest::controllerNativeInvisibleRegression(query-unavailable) This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerNativeInvisibleRegression(query-unavailable) 覆盖层在屏自愈：reason= 会话看门狗  attempt= 1  ordered= true  before: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=0 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1  after: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=0 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerNativeInvisibleRegression(query-unavailable) 覆盖层在屏自愈：reason= 会话看门狗  attempt= 2  ordered= true  before: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=0 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1  after: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=0 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerNativeInvisibleRegression(query-unavailable) 截图会话结束：outcome= 12 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerNativeInvisibleRegression(query-unavailable)
+QWARN  : StartupSmokeTest::controllerNativeVisibilityRecoversAndReadies() This plugin does not support raise()
+QWARN  : StartupSmokeTest::controllerNativeVisibilityRecoversAndReadies() qt.qpa.fonts: Populating font family aliases took 27 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+QINFO  : StartupSmokeTest::controllerNativeVisibilityRecoversAndReadies() 覆盖层尚未在屏就绪（保留超时保护）： onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerNativeVisibilityRecoversAndReadies() 覆盖层在屏自愈：reason= 就绪检查  attempt= 1  ordered= true  before: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1  after: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerNativeVisibilityRecoversAndReadies() 截图会话看门狗确认在屏恢复： onScreen=1 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerNativeVisibilityRecoversAndReadies() 截图会话结束：outcome= 9 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerNativeVisibilityRecoversAndReadies()
+QWARN  : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(modal) This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(modal) 覆盖层在屏自愈：reason= 会话看门狗  attempt= 1  ordered= true  before: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1  after: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(modal) 截图会话结束：outcome= 9 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(modal)
+QWARN  : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(native-panel-without-qt-modal) This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(native-panel-without-qt-modal) 覆盖层在屏自愈：reason= 会话看门狗  attempt= 1  ordered= true  before: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1  after: onScreen=0 windowNumber=67471 isOnActiveSpace=0 occlusionState=0 visibilityAvailable=1 windowLevel=25 collectionBehavior=0 nativeVisible=-1 hidesOnDeactivate=-1
+QINFO  : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(native-panel-without-qt-modal) 截图会话结束：outcome= 9 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerVisibilityModalAndPanelGuard(native-panel-without-qt-modal)
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+QWARN  : StartupSmokeTest::controllerVisibleSessionPressure() This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerVisibleSessionPressure() 截图会话结束：outcome= 2 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerVisibleSessionPressure()
+QINFO  : StartupSmokeTest::controllerSessionWatchdogRecovery(missing) 截图会话结束：outcome= 12 ，用时  21000  ms
+QINFO  : StartupSmokeTest::controllerSessionWatchdogRecovery(missing) 截图会话结束：outcome= 9 ，用时  0  ms
+PASS   : StartupSmokeTest::controllerSessionWatchdogRecovery(missing)
+QINFO  : StartupSmokeTest::controllerSessionWatchdogRecovery(hidden) 截图会话结束：outcome= 12 ，用时  21000  ms
+QINFO  : StartupSmokeTest::controllerSessionWatchdogRecovery(hidden) 截图会话结束：outcome= 9 ，用时  0  ms
+PASS   : StartupSmokeTest::controllerSessionWatchdogRecovery(hidden)
+QINFO  : StartupSmokeTest::controllerSessionWatchdogRecovery(destroyed) 截图会话结束：outcome= 12 ，用时  21000  ms
+QINFO  : StartupSmokeTest::controllerSessionWatchdogRecovery(destroyed) 截图会话结束：outcome= 9 ，用时  0  ms
+PASS   : StartupSmokeTest::controllerSessionWatchdogRecovery(destroyed)
+PASS   : StartupSmokeTest::controllerSessionWatchdogGuards(inactive)
+QINFO  : StartupSmokeTest::controllerSessionWatchdogGuards(capture-grace) 截图会话结束：outcome= 9 ，用时  19000  ms
+PASS   : StartupSmokeTest::controllerSessionWatchdogGuards(capture-grace)
+QWARN  : StartupSmokeTest::controllerSessionWatchdogGuards(visible-overlay) This plugin does not support raise()
+QINFO  : StartupSmokeTest::controllerSessionWatchdogGuards(visible-overlay) 截图会话结束：outcome= 9 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerSessionWatchdogGuards(visible-overlay)
+QINFO  : StartupSmokeTest::controllerSessionWatchdogGuards(modal-dialog) 截图会话结束：outcome= 9 ，用时  30000  ms
+PASS   : StartupSmokeTest::controllerSessionWatchdogGuards(modal-dialog)
+PASS   : StartupSmokeTest::cleanupTestCase()
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 134ms
+********* Finished testing of StartupSmokeTest *********

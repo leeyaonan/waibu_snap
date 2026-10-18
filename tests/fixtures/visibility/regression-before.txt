@@ -1,0 +1,10 @@
+********* Start testing of StartupSmokeTest *********
+Config: Using QtTest library 6.11.2, Qt 6.11.2 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 16.0.0 (clang-1600.0.26.3)), macos 27.0.1
+PASS   : StartupSmokeTest::initTestCase()
+QWARN  : StartupSmokeTest::controllerNativeInvisibleRegression() This plugin does not support raise()
+FAIL!  : StartupSmokeTest::controllerNativeInvisibleRegression() '!controller.active()' returned FALSE. ()
+   Loc: [/Users/rot/dev/project/waibu_snap_workspace/waibu_snap/tests/integration/startup_smoke.cpp(3005)]
+QINFO  : StartupSmokeTest::controllerNativeInvisibleRegression() 截图会话结束：outcome= 9 ，用时  30000  ms
+PASS   : StartupSmokeTest::cleanupTestCase()
+Totals: 2 passed, 1 failed, 0 skipped, 0 blacklisted, 8ms
+********* Finished testing of StartupSmokeTest *********

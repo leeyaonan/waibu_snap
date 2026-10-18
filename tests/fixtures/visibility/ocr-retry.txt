@@ -1,0 +1,7 @@
+Test project /Users/rot/dev/project/waibu_snap_workspace/waibu_snap/build/macos
+    Start 13: text_recognizer_real_engine
+1/1 Test #13: text_recognizer_real_engine ......   Passed    1.04 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   1.04 sec

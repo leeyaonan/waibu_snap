@@ -46,6 +46,7 @@ class SelectionOverlay final : public QWidget
     QString selectedOcrText() const;
     QVector<QRectF> ocrHighlightBoxes() const;
     QRect hoveredWindowPixels() const { return hoveredWindowPixels_; }
+    bool systemPanelOpen() const { return saveDialogOpen_; }
     bool hasPainted() const { return painted_; }
     bool isSelectionSaved() const { return saved_; }
     QString selectionSizeText() const;

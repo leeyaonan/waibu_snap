@@ -228,8 +228,10 @@ void ApplicationController::trigger(const QString& source)
     const qint64 t0 = monotonicNs();
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
     {
-        qWarning() << "截图触发被忽略：active=" << active_ << " quitting=" << quitting_
-                   << " resolvingQuit=" << resolvingQuit_ << " settingsOpen=" << settingsOpen_;
+        qWarning().noquote()
+            << "截图触发被忽略：active=" << active_ << " quitting=" << quitting_
+            << " resolvingQuit=" << resolvingQuit_ << " settingsOpen=" << settingsOpen_
+            << visibilityQuery_(overlay_ ? overlay_->windowHandle() : nullptr).diagnostic();
         return;
     }
     if (!retryDisplay_)
@@ -327,45 +329,20 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
                 qInfo() << "覆盖层首帧完成";
                 metrics_.paintComplete = timestamp;
                 // 排到 backing store flush 之后，再观察目标屏刷新；不能用 paintEvent 当可见终点。
-                QTimer::singleShot(
-                    0, this,
-                    [this, token]
-                    {
-                        if (!active_ || token != token_ || !overlay_ || scrollFlowActive_)
-                            return;
-                        observation_ = observePresentation(
-                            overlay_->windowHandle(), this,
-                            [this, token](PresentationSample sample)
-                            {
-                                if (!active_ || token != token_ || !overlay_ || scrollFlowActive_)
-                                    return;
-                                if (!sample.available || !overlay_->isVisible() ||
-                                    !overlay_->isActiveWindow())
-                                {
-                                    fail(8,
-                                         QStringLiteral(
-                                             "未观察到可交互覆盖窗口，本次不计入有效性能样本。"));
-                                    return;
-                                }
-                                captureTimeout_.stop();
-                                qInfo() << "覆盖层可交互就绪（停止超时保护）";
-                                metrics_.visibleProxy = sample.observedAtNs;
-                                metrics_.interactive = monotonicNs();
-                                metrics_.refreshIntervalMs = sample.refreshIntervalMs;
-                                if (options_.testMode)
-                                    QTimer::singleShot(options_.holdMs, this,
-                                                       [this, token]
-                                                       {
-                                                           if (active_ && token == token_)
-                                                               finish({}, 2);
-                                                       });
-                            });
-                    });
+                QTimer::singleShot(0, this,
+                                   [this, token]
+                                   {
+                                       if (!active_ || token != token_ || !overlay_ ||
+                                           scrollFlowActive_)
+                                           return;
+                                       watchPresentation(token);
+                                   });
             });
     overlay_->show();
     overlay_->raise();
     overlay_->activateWindow();
     overlay_->setFocus(Qt::ActiveWindowFocusReason);
+    watchOverlayWindow(overlay_, true);
     if (!retryRegion_.isEmpty())
     {
         const QRect region = retryRegion_;
@@ -419,6 +396,7 @@ void ApplicationController::beginScrollCapture(RegionCaptureRequest request)
     {
         window->winId();
         raiseOverlayAboveSystemChrome(window->windowHandle());
+        watchOverlayWindow(window, false);
         const quint64 id = regionCaptureWindowId(window->windowHandle());
         if (id)
             request.excludedWindowIds.append(id);
@@ -617,6 +595,9 @@ void ApplicationController::finish(QRect pixels, int outcome)
     if (!active_)
         return;
     ++token_;
+    windowObservations_.clear();
+    invisibleSinceNs_ = 0;
+    visibilityRecoveryAttempts_ = 0;
     clearScrollCapture(outcome);
     retryDisplay_.reset();
     retryRegion_ = {};
@@ -672,26 +653,125 @@ void ApplicationController::fail(int outcome, const QString& explanation)
     QMessageBox::information(nullptr, QStringLiteral("截图未完成"), explanation);
     finish({}, outcome);
 }
+bool ApplicationController::visibilityRecoveryBlocked() const
+{
+    return QApplication::activeModalWidget() || resolvingQuit_ || quitting_ ||
+           (overlay_ && overlay_->systemPanelOpen());
+}
+void ApplicationController::watchOverlayWindow(QWidget* window, bool activate)
+{
+    const auto token = token_;
+    const QPointer<QWidget> target(window);
+    auto observation = observeOverlayWindow(window->windowHandle(), this,
+                                            [this, token, target, activate](const QString& reason)
+                                            {
+                                                if (active_ && token == token_ && target)
+                                                    recoverOverlayWindow(target, activate, reason);
+                                            });
+    if (observation)
+        windowObservations_.push_back(std::move(observation));
+}
+void ApplicationController::recoverOverlayWindow(QWidget* window, bool activate,
+                                                 const QString& reason)
+{
+    if (!window || !window->isVisible() || visibilityRecoveryBlocked())
+        return;
+    const auto before = visibilityQuery_(window->windowHandle());
+    const bool ordered = visibilityRecovery_(window->windowHandle(), activate && !before.onScreen);
+    ++visibilityRecoveryAttempts_;
+    qInfo().noquote() << "覆盖层在屏自愈：reason=" << reason
+                      << " attempt=" << visibilityRecoveryAttempts_ << " ordered=" << ordered
+                      << " before:" << before.diagnostic()
+                      << " after:" << visibilityQuery_(window->windowHandle()).diagnostic();
+    // 即刻结果仅供诊断；是否持续恢复必须在下一次看门狗 / 呈现采样重新读取。
+}
+void ApplicationController::watchPresentation(quint64 token)
+{
+    if (!active_ || token != token_ || !overlay_ || scrollFlowActive_ || metrics_.interactive)
+        return;
+    observation_ =
+        observePresentation(overlay_->windowHandle(), this, [this, token](PresentationSample sample)
+                            { presentationCompleted(token, sample); });
+}
+void ApplicationController::presentationCompleted(quint64 token, PresentationSample sample)
+{
+    if (!active_ || token != token_ || !overlay_ || scrollFlowActive_ || metrics_.interactive)
+        return;
+    const auto visibility = visibilityQuery_(overlay_->windowHandle());
+    if (!visibility.available || !visibility.onScreen || visibilityRecoveryBlocked())
+    {
+        qInfo().noquote() << "覆盖层尚未在屏就绪（保留超时保护）：" << visibility.diagnostic();
+        if (!visibilityRecoveryBlocked() && !invisibleSinceNs_)
+        {
+            invisibleSinceNs_ = monotonicNs();
+            recoverOverlayWindow(overlay_, true, QStringLiteral("就绪检查"));
+        }
+        // 恢复后重新观察刷新，不把旧采样当成新窗口的呈现证据。
+        QTimer::singleShot(250, this, [this, token] { watchPresentation(token); });
+        return;
+    }
+    if (!sample.available || !overlay_->isVisible() || !overlay_->isActiveWindow())
+    {
+        fail(8, QStringLiteral("未观察到可交互覆盖窗口，本次不计入有效性能样本。"));
+        return;
+    }
+    invisibleSinceNs_ = 0;
+    captureTimeout_.stop();
+    qInfo().noquote() << "覆盖层可交互就绪（停止超时保护）" << visibility.diagnostic();
+    metrics_.visibleProxy = sample.observedAtNs;
+    metrics_.interactive = monotonicNs();
+    metrics_.refreshIntervalMs = sample.refreshIntervalMs;
+    if (options_.testMode)
+        QTimer::singleShot(options_.holdMs, this,
+                           [this, token]
+                           {
+                               if (active_ && token == token_)
+                                   finish({}, 2);
+                           });
+}
 void ApplicationController::checkSessionWatchdog()
 {
-    if (!active_ || scrollFlowActive_)
+    if (!active_ || scrollSession_)
         return;
-    if (QApplication::activeModalWidget())
+    if (visibilityRecoveryBlocked())
+    {
+        invisibleSinceNs_ = 0;
         return;
+    }
+    const auto visibility = visibilityQuery_(overlay_ ? overlay_->windowHandle() : nullptr);
+    const qint64 now = monotonicNs();
+    const qint64 age = now - metrics_.t0;
     if (overlay_ && overlay_->isVisible())
+    {
+        if (visibility.available && visibility.onScreen)
+        {
+            if (invisibleSinceNs_)
+                qInfo().noquote() << "截图会话看门狗确认在屏恢复：" << visibility.diagnostic();
+            invisibleSinceNs_ = 0;
+            return;
+        }
+        if (!invisibleSinceNs_)
+            invisibleSinceNs_ = now;
+        if (now - invisibleSinceNs_ < 20'000'000'000LL)
+        {
+            qWarning().noquote() << "截图会话看门狗发现真实在屏异常：" << visibility.diagnostic()
+                                 << " 连续异常ms=" << (now - invisibleSinceNs_) / 1000000;
+            recoverOverlayWindow(overlay_, true, QStringLiteral("会话看门狗"));
+            return;
+        }
+    }
+    else if (age < 20'000'000'000LL)
         return;
-    const qint64 age = monotonicNs() - metrics_.t0;
-    if (age < 20'000'000'000LL)
-        return;
-    // 将状态泄漏的后果从必须退出重开降级为自动恢复 + 日志留证，不是掩盖问题；
-    // 发现异常残留日志后仍需继续定位根因。空闲不轮询，正常可见覆盖层与模态不复位。
-    qWarning().nospace() << "截图会话异常残留，已自动复位：active=" << active_
-                         << " overlay=" << (overlay_ != nullptr)
-                         << " overlayVisible=" << (overlay_ ? overlay_->isVisible() : false)
-                         << " observation=" << (observation_ != nullptr)
-                         << " captureTimeoutActive=" << captureTimeout_.isActive()
-                         << " settingsOpen=" << settingsOpen_ << " resolvingQuit=" << resolvingQuit_
-                         << " quitting=" << quitting_ << " 会话年龄ms=" << age / 1000000;
+    qWarning().nospace().noquote()
+        << "截图会话异常残留，已自动复位：active=" << active_
+        << " overlay=" << (overlay_ != nullptr)
+        << " overlayVisible=" << (overlay_ ? overlay_->isVisible() : false) << " "
+        << visibility.diagnostic() << " observation=" << (observation_ != nullptr)
+        << " captureTimeoutActive=" << captureTimeout_.isActive()
+        << " settingsOpen=" << settingsOpen_ << " resolvingQuit=" << resolvingQuit_
+        << " quitting=" << quitting_ << " 会话年龄ms=" << age / 1000000
+        << " 连续异常ms=" << (invisibleSinceNs_ ? (now - invisibleSinceNs_) / 1000000 : 0)
+        << " 自愈次数=" << visibilityRecoveryAttempts_;
     finish({}, 12);
 }
 void ApplicationController::cleanup()

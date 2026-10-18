@@ -1,0 +1,18 @@
+Start testing: Oct 18 15:49 CST
+----------------------------------------------------------
+13/16 Testing: text_recognizer_real_engine
+13/16 Test: text_recognizer_real_engine
+Command: "/Users/rot/dev/project/waibu_snap_workspace/waibu_snap/build/macos/tests/text_recognizer_test" "-o" "/Users/rot/dev/project/waibu_snap_workspace/waibu_snap/build/macos/tests/text-recognizer-output.txt,txt"
+Directory: /Users/rot/dev/project/waibu_snap_workspace/waibu_snap/build/macos/tests
+"text_recognizer_real_engine" start time: Oct 18 15:49 CST
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   1.04 sec
+----------------------------------------------------------
+Test Passed.
+"text_recognizer_real_engine" end time: Oct 18 15:49 CST
+"text_recognizer_real_engine" time elapsed: 00:00:01
+----------------------------------------------------------
+
+End testing: Oct 18 15:49 CST

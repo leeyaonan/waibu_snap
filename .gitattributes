@@ -21,3 +21,6 @@
 *.woff binary
 *.woff2 binary
 *.ttf binary
+
+# 原始 Qt 诊断日志保留工具输出的行尾空格。
+tests/fixtures/visibility/*.txt whitespace=-blank-at-eol

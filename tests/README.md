@@ -635,3 +635,47 @@ Chrome / Safari在**每块屏各一组最大化大选区、各一组全屏窗口
 **12/12均memoryLimited=false、低置信=0、警告=0，日志无内存收敛提示**。Chrome SE2417HG大窗口在文章到底后提前结束；其余按时限 / 逻辑帽结束，不能把短于上限的定时结果当作截短。近全屏输出：内置2992×8021（Safari到帽）/ 2992×7870（Chrome定时）；Dell均1904×3151，符合逻辑面积帽。完整[屏幕日志 / 数值分布](fixtures/scroll/memory-budget-browser.json)随提交保存，图像只留本机临时目录。当前Dell为DPR1，此表不能隔离DPR对性能的影响；此前BenQ同DPR60/120对照保留为历史证据，未改动刷新率相关阈值。
 
 本轮本机构建、**90项拼接（原83项保留）+430 /363冒烟**通过，2560×1440位移探针 **3.72138ms**（全量回归时后台有真实浏览器采集），clang-format18.1.8与ObjC捕获门禁通过。16项CTest中系统真实OCR单项仍出现此前Vision错误 /20秒超时，其余15项通过；未修改OCR实现或断言，双端CI以本次追加提交的PR检查为准。
+
+## 2026-10-18：覆盖层 Qt 可见但系统不在屏
+
+实现分支 `fix/overlay-native-visibility`，按用户要求只创建 PR、不合并。事故原始摘要与应用 stderr 位于 [visibility/incident.md](fixtures/visibility/incident.md) / [incident.stderr.log](fixtures/visibility/incident.stderr.log)，原始临时文件路径保持在摘要中；不含截图图像。
+
+### 自动化与原始日志
+
+- 回归先失败：[regression-before.txt](fixtures/visibility/regression-before.txt) 证明旧逻辑在 Qt 可见时永久拒绝复位；新增 mock 支持明确不可见与查询不可用两种输入。
+- [regression-after.txt](fixtures/visibility/regression-after.txt)：15 项聚焦通过，断言首次尝试、19 秒不复位、连续 20 秒码 12、菜单 / 定时器 / 覆盖层释放、下 tick 恢复、未在屏不停止 15 秒保护、真实在屏才就绪、Qt 模态与原生面板单独保护、三处日志字段。100 次合成会话正常取消逐条检查终态 2 / 锁释放 / 覆盖层销毁 / 定时器停止，不等同真实 SCK 连续采集压力测试，也不证明全应用内存零泄漏。
+- [native-final.txt](fixtures/visibility/native-final.txt)：Cocoa 9 项通过，原生 orderOut 后 Qt 仍可见且系统查询缺失；恢复后层级 25 / onScreen=1；降级 0 时恢复被拒、配对 raise 后恢复；四类原生通知逐项投递、100ms 合并、析构后待执行回调与新通知均不执行。通知注入只验证订阅链路，不代表物理唤醒 / Space 操作已验收。
+- 16 个 CTest 项目均在本机分组通过：[ctest-core.txt](fixtures/visibility/ctest-core.txt) 的 14 项 + [native-ctest.txt](fixtures/visibility/native-ctest.txt) + [ocr-retry.txt](fixtures/visibility/ocr-retry.txt)。新增压力用例后受影响的两条冒烟再次通过：[smoke-ctest.txt](fixtures/visibility/smoke-ctest.txt)，普通 436 / 2 倍 DPR 369，零失败 / 跳过。clang-format 18.1.8 与 git diff --check 通过。
+- 如实保留首轮问题：沙箱无 WindowServer，原生测试最初因无屏失败，已补与既有用例一致的无屏跳过；实际原生测试在受控采集同时运行时发生 10 秒超时，测试窗关闭失活隐藏并将原生组上限调为 30 秒后，隔离复验约 2 秒通过；CGWindowList 异步更新改为等待收敛。首轮 Vision 固定样本超过 20 秒（[ocr-first.txt](fixtures/visibility/ocr-first.txt)），独立重试 5 项全部通过（[ocr-last-test.txt](fixtures/visibility/ocr-last-test.txt)）；不隐藏失败，不改 OCR 实现。
+
+### 真机阶段证据与复现结论
+
+本机 macOS 27.0.1 / arm64、Qt 6.11.2：BenQ 主屏 (0,0 1920×1080) @2 与内置非主屏 (-1512,98 1512×982) @2，符合现场的负坐标布局。
+
+中间构建经 LaunchServices + 开发签名执行内置屏 10 次、外屏 10 次真实 SCK 采集，每次 onScreen=1 / level=25 / 终态 2，源图分别 3024×1964、3840×2160，无码 12。原始 [internal.stderr.log](fixtures/visibility/internal.stderr.log) / [internal.jsonl](fixtures/visibility/internal.jsonl)、[external.stderr.log](fixtures/visibility/external.stderr.log) / [external.jsonl](fixtures/visibility/external.jsonl)。这些是实现阶段证据，最终提交尚未重新执行双屏采集。
+
+内置首冷 proxy 651.24ms、9 热中位 92.77ms / 最大 124.46ms；外屏首冷 479.38ms、9 热中位 129.98ms / 最大 143.57ms。采集时还在构建 / 测试，并非正式 NF01、没有同条件 main 对照，不能声称满足冷 ≤400ms 或无性能回归。最终无性能 / 行为回归仍待正式复测。
+
+人工持续会话确实出现多次 occlusion 通知、自愈后 onScreen=1 / hidesOnDeactivate=0，约 55 秒后以 Esc 终态 2 结束。随后 F1 的 SCK 查询返回 -3801、以终态 7 结束并释放会话锁；用户确认拒绝了录屏授权。原始 [manual.stderr.log](fixtures/visibility/manual.stderr.log) / [manual.jsonl](fixtures/visibility/manual.jsonl)。**用户随后明确选择“暂不授权，完成 PR，剩余真机项明确待验收”**；不继续请求权限或重试真实采集。验收探针后来改为独立 bundle id `local.waibusnap.visibility-probe`，避免与正式应用登记混淆，未再运行它。
+
+真实事故的自然触发条件尚未定死。已尝试同一负坐标布局的阶段采集与人工持续窗口，未见自然进入“看不见且 active 卡住”；可重复的故障注入是进程内原生 orderOut。逐项物理操作未收到完成确认，不能从 occlusion 日志倒推已做过锁屏 / 唤醒。
+
+| 场景 | 最终验收状态 |
+| --- | --- |
+| 内置负坐标冷创建、内置 / 外接各 ≥10 次 | 阶段 10+10 通过；最终版本待重新授权后复验 |
+| 锁屏解锁、睡眠唤醒 | 待验收；仅通知注入链路通过 |
+| Mission Control 进出、Space 切换 | 待验收；仅原生窗口故障 / 通知注入通过 |
+| 合盖开盖、显示器重配 | 待验收；真实拓扑变化仍按既有策略结束会话 |
+| 连续真实触发 / 取消 ≥100 次 | 待验收；合成会话 100 次已通过 |
+| 全应用峰值 RSS / 原生资源泄漏 / 正式性能 | 待验收，不能以合成对象清理断言替代 |
+| Windows 原生 / 目标实机 | CI 验证编译和共享回归；实际 IsWindowVisible / IsIconic 行为待验收 |
+
+### collectionBehavior 独立结论
+
+真实 Qt 6.11.2 覆盖层记录 258 = MoveToActiveSpace(2) + FullScreenAuxiliary(256)，后者已存在。原生同型 Tool 测试临时清除互斥项并切换为 257 = CanJoinAllSpaces(1) + FullScreenAuxiliary(256)，当前 Space 下可在屏，随后还原。**未完成真实多 Space / 全屏验证，覆盖层及长图双窗均不默认切换到 CanJoinAllSpaces。**候选不能当作此次事故的已证实修复；后续要同时验证冻结内容跟随 Space、外部全屏共存及长图不抢焦点，不能只看位掩码。
+
+Qt::Tool 默认失活隐藏是独立风险，覆盖层现补 WA_MacAlwaysShowToolWindow（长图双窗原已设置）；事故没有原生隐藏字段，无法认定唯一根因。贴图仅新增创建 / 恢复 / 显示重配诊断，不轮询或强制复位长驻窗口，用户内容不受这轮自愈处理。
+
+### 后续人工复验入口
+
+`overlay_visibility_probe <屏幕序号> <次数，0 表示人工持续会话> <新 JSONL 路径> <临时 INI 路径>` 只替换选屏，不替换捕获 / 在屏查询 / 覆盖层 / finish。macOS 需通过 LaunchServices 启动 .app，使用明确授权的独立验收身份；保持二进制与签名固定，验收期间不重链接。次数 0 时首次自动触发，之后 F1 / Esc 走正常会话，托盘退出。Windows 暂复用未实现的测试选屏桥接，会明确报错，不伪装支持真实采集吊具。

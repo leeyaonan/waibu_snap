@@ -1,4 +1,8 @@
 #pragma once
+#include <QObject>
+#include <QString>
+#include <functional>
+#include <memory>
 class QWindow;
 namespace waibusnap
 {
@@ -8,4 +12,15 @@ void raiseOverlayAboveSystemChrome(QWindow* window);
 // 系统面板结束后必须调用 raiseOverlayAboveSystemChrome 恢复。
 // 空指针、无原生窗口与离屏环境安全返回。
 void lowerOverlayBelowSystemPanels(QWindow* window);
+// 尊重 lower/raise 的面板配对状态；长图辅助窗传 false，禁止抢回目标应用焦点。
+bool reassertOverlayWindow(QWindow* window, bool activate);
+class OverlayWindowObservation
+{
+  public:
+    virtual ~OverlayWindowObservation() = default;
+};
+// 合并系统事件并排入 GUI 事件循环；析构注销所有原生通知与待执行回调。
+std::unique_ptr<OverlayWindowObservation>
+observeOverlayWindow(QWindow* window, QObject* context,
+                     std::function<void(const QString&)> changed);
 }

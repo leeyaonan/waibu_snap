@@ -5,8 +5,10 @@
 #include "interfaces/autostart.h"
 #include "interfaces/capture_provider.h"
 #include "interfaces/global_hotkey.h"
+#include "interfaces/overlay_window_behavior.h"
 #include "interfaces/presentation_observer.h"
 #include "interfaces/window_enumerator.h"
+#include "interfaces/window_visibility.h"
 #include "session/session_metrics.h"
 #include "ui/clipboard_sticker_toast.h"
 #include "ui/scroll_capture_windows.h"
@@ -17,6 +19,7 @@
 #include <QPointer>
 #include <QSystemTrayIcon>
 #include <QTimer>
+#include <vector>
 namespace waibusnap
 {
 struct ClipboardActions
@@ -64,6 +67,11 @@ class ApplicationController final : public QObject
     void finish(QRect pixels, int outcome);
     void fail(int outcome, const QString& explanation);
     void checkSessionWatchdog();
+    void watchPresentation(quint64 token);
+    void presentationCompleted(quint64 token, PresentationSample sample);
+    void watchOverlayWindow(QWidget* window, bool activate);
+    void recoverOverlayWindow(QWidget* window, bool activate, const QString& reason);
+    bool visibilityRecoveryBlocked() const;
     void startSmokeTest();
     void openSettings();
     void refreshStickerActions();
@@ -104,6 +112,11 @@ class ApplicationController final : public QObject
     bool scrollFlowActive_ = false;
     qint64 scrollStartedNs_ = 0;
     quint64 scrollStickerSequence_ = 0;
+    std::function<WindowVisibility(QWindow*)> visibilityQuery_ = queryWindowVisibility;
+    std::function<bool(QWindow*, bool)> visibilityRecovery_ = reassertOverlayWindow;
+    std::vector<std::unique_ptr<OverlayWindowObservation>> windowObservations_;
+    qint64 invisibleSinceNs_ = 0;
+    int visibilityRecoveryAttempts_ = 0;
     SessionMetrics metrics_;
     QTimer captureTimeout_;
     QTimer sessionWatchdog_;
