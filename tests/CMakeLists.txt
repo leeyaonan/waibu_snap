@@ -20,6 +20,12 @@ set_tests_properties(startup_smoke PROPERTIES
     TIMEOUT 60
 )
 
+qt_add_executable(annotation_text_edit_test unit/annotation_text_edit_test.cpp)
+target_link_libraries(annotation_text_edit_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(annotation_text_edit_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME annotation_text_edit COMMAND annotation_text_edit_test)
+set_tests_properties(annotation_text_edit PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 qt_add_executable(selection_geometry_test unit/selection_geometry_test.cpp)
 target_link_libraries(selection_geometry_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(selection_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -80,6 +86,7 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     toolbarCompactIconsAndTooltips toolbarOptionsFollowActiveTool toolbarStatusPillIndependent
     toolbarStatusPillTimesOut
     annotationPaletteReachableAndOutput annotationWheelBothEditors
+    annotationTextTransparentBothEditors
     annotationGroupDefaultsAndMemory annotationGroupPanelGesturesAndPlacement stickerAnnotationGroupsAndMenu
     coverOverlayToolbarFitsNarrowScreens annotationStylesUndoRedoAndDirtyState
     toolbarBackgroundCommitsAndClearsPreedit

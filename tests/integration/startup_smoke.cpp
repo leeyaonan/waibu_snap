@@ -26,6 +26,7 @@
 #include <QEnterEvent>
 #include <QFile>
 #include <QFileInfo>
+#include <QFocusEvent>
 #include <QImageReader>
 #include <QInputMethodEvent>
 #include <QJsonDocument>
@@ -6307,6 +6308,150 @@ class StartupSmokeTest final : public QObject
         editor->setPlainText(QStringLiteral("ABC"));
         QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
         QCOMPARE(overlay.annotations().last().style.textSize, annotationTextSizes[2]);
+    }
+    void annotationTextTransparentBothEditors_data()
+    {
+        QTest::addColumn<bool>("stickerEditor");
+        QTest::addColumn<qreal>("factor");
+        for (qreal dpr : {1.0, 1.5, 2.0})
+            QTest::newRow(qPrintable(QStringLiteral("overlay-%1").arg(dpr))) << false << dpr;
+        for (qreal scale : {0.75, 1.0, 2.0})
+            QTest::newRow(qPrintable(QStringLiteral("sticker-%1").arg(scale))) << true << scale;
+    }
+    void annotationTextTransparentBothEditors()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, stickerEditor);
+        QFETCH(qreal, factor);
+        auto frame = annotationFrame();
+        if (!stickerEditor)
+        {
+            frame.display.devicePixelRatio = factor;
+            frame.pixels = QImage(qRound(800 * factor), qRound(600 * factor),
+                                  QImage::Format_ARGB32_Premultiplied);
+            frame.pixels.fill(Qt::white);
+            frame.pixels.setDevicePixelRatio(factor);
+        }
+        StickerManager manager;
+        SelectionOverlay overlay(frame);
+        QSignalSpy finished(&overlay, &SelectionOverlay::finished);
+        StickerWindow* sticker = nullptr;
+        QWidget* surface = &overlay;
+        if (stickerEditor)
+        {
+            QVERIFY(manager.create(annotationFrame().pixels, {40, 50}, true).success);
+            sticker = manager.windows().first();
+            sticker->setScale(factor, sticker->geometry().center());
+            sticker->setEditing(true);
+            surface = sticker;
+            stickerClick(*sticker, "stickerEditTextToolButton");
+        }
+        else
+        {
+            overlay.show();
+            drag(overlay, {40, 40}, {700, 500});
+            clickAnnotationTool(overlay, "textToolButton");
+        }
+        chooseAnnotationColor(*surface, 5, stickerEditor);
+        QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        auto* editor = surface->findChild<AnnotationTextEdit*>();
+        QVERIFY(editor && editor->isVisible());
+        QCOMPARE(editor->palette().color(QPalette::Base).alpha(), 0);
+        QCOMPARE(editor->viewport()->palette().color(QPalette::Base).alpha(), 0);
+        QCOMPARE(editor->frameShape(), QFrame::NoFrame);
+        QCOMPARE(editor->palette().color(QPalette::Text), annotationColors()[5]);
+        QCOMPARE(editor->width(), 240);
+        const int initialHeight = editor->height();
+        QVERIFY(initialHeight < QFontMetricsF(editor->font()).height() * 2);
+        const QPoint anchor = editor->pos();
+        editor->setPlainText(QString(200, 'W'));
+        QCOMPARE(editor->width(), 400);
+        QCOMPARE(editor->height(), initialHeight);
+        editor->setPlainText(QStringLiteral("第一行\n第二行\n第三行"));
+        QVERIFY(editor->height() > initialHeight * 2);
+        QCOMPARE(editor->width(), 240);
+        const QString text = QString(100, 'W') + '\n' + QStringLiteral("多行原像素\n").repeated(30);
+        editor->setPlainText(text);
+        QCOMPARE(editor->height(), 240);
+        QCOMPARE(editor->width(), 400);
+        QCOMPARE(editor->pos(), anchor);
+        QVERIFY(surface->rect().contains(editor->geometry()));
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QVERIFY(!editor->isVisible());
+        const auto annotations = [&]() -> const QVector<Annotation>&
+        { return stickerEditor ? sticker->annotations() : overlay.annotations(); };
+        QCOMPARE(annotations().size(), qsizetype(1));
+        QCOMPARE(annotations().first().text, text);
+        const qreal physicalFactor =
+            stickerEditor ? sticker->windowHandle()->screen()->devicePixelRatio() / sticker->scale()
+                          : factor;
+        QCOMPARE(annotations().first().first, QPointF(anchor) * physicalFactor);
+        QCOMPARE(annotations().first().style.color, annotationColors()[5]);
+        QCOMPARE(annotations().first().style.textSize, 28);
+        Annotation expected{
+            AnnotationType::Text, {}, QPointF(anchor) * physicalFactor, {}, {}, text};
+        expected.style.color = annotationColors()[5];
+        const QImage source = stickerEditor ? sticker->image() : frame.pixels;
+        const QRect crop = stickerEditor ? source.rect() : overlay.selection();
+        QImage preview = source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        preview.setDevicePixelRatio(1);
+        {
+            QPainter painter(&preview);
+            paintAnnotations(painter, annotations(), source);
+        }
+        const QImage expectedImage = renderAnnotatedSelection(source, {expected}, crop);
+        QCOMPARE(preview.copy(crop), expectedImage);
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("透明多行.png"));
+        QVERIFY(stickerEditor ? sticker->exportToPath(path) : overlay.exportToPath(path));
+        QCOMPARE(QImage(path).convertToFormat(expectedImage.format()), expectedImage);
+
+        // 组合期间扩宽、临时失焦和完成快捷键不能结束标注或丢失候选。
+        QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        editor->setPlainText(QStringLiteral("原文"));
+        editor->moveCursor(QTextCursor::End);
+        QInputMethodEvent preedit(QStringLiteral("中文候选").repeated(50), {});
+        QApplication::sendEvent(editor, &preedit);
+        QVERIFY(editor->isComposing());
+        QCOMPARE(editor->width(), 400);
+        for (auto reason : {Qt::PopupFocusReason, Qt::ActiveWindowFocusReason})
+        {
+            QFocusEvent temporary(QEvent::FocusOut, reason);
+            QApplication::sendEvent(editor, &temporary);
+            QVERIFY(editor->isVisible() && editor->isComposing());
+            QCOMPARE(annotations().size(), qsizetype(1));
+        }
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QVERIFY(editor->isVisible() && editor->isComposing());
+        QInputMethodEvent converted;
+        converted.setCommitString(QStringLiteral("中文"));
+        QApplication::sendEvent(editor, &converted);
+        QTest::keyClick(editor, Qt::Key_Return);
+        editor->insertPlainText(QStringLiteral("下一行"));
+        QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, {450, 350});
+        QCOMPARE(annotations().size(), qsizetype(2));
+        QCOMPARE(annotations().last().text, QStringLiteral("原文中文\n下一行"));
+        QVERIFY(!editor->isComposing());
+        editor->setPlainText(QStringLiteral("取消草稿"));
+        QTest::keyClick(editor, Qt::Key_Escape);
+        QVERIFY(!editor->isVisible());
+        QCOMPARE(annotations().size(), qsizetype(2));
+        QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        editor->setPlainText(QStringLiteral("工具切换提交"));
+        clickAnnotationTool(*surface,
+                            stickerEditor ? "stickerEditFreehandToolButton" : "freehandToolButton");
+        QCOMPARE(annotations().size(), qsizetype(3));
+        QVERIFY(!editor->isVisible());
+        clickAnnotationTool(*surface,
+                            stickerEditor ? "stickerEditTextToolButton" : "textToolButton");
+        QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier,
+                          surface->rect().bottomRight() - QPoint(1, 1));
+        QVERIFY(surface->rect().contains(editor->geometry()));
+        const QPoint edge = editor->pos();
+        editor->setPlainText(QStringLiteral("边缘夹取"));
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QCOMPARE(annotations().last().first, QPointF(edge) * physicalFactor);
+        QCOMPARE(finished.count(), 0);
     }
     void textImeAndEscapeStayInCurrentLayer()
     {

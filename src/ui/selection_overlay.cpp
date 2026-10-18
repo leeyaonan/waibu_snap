@@ -1692,12 +1692,13 @@ void SelectionOverlay::startText(QPointF position)
     textEditor_->setFont(editorFont);
     QPalette palette = textEditor_->palette();
     palette.setColor(QPalette::Text, style_.color);
-    palette.setColor(QPalette::Base, QColor(25, 25, 25));
+    QColor placeholder = style_.color;
+    placeholder.setAlpha(160);
+    palette.setColor(QPalette::PlaceholderText, placeholder);
     textEditor_->setPalette(palette);
-    const QPoint point = position.toPoint();
-    textEditor_->setGeometry(point.x(), point.y(), std::max(1, std::min(360, width() - point.x())),
-                             std::max(1, std::min(140, height() - point.y())));
     textEditor_->clear();
+    textEditor_->setEditingArea(position.toPoint(), rect());
+    textDraft_.first = physicalPoint(textEditor_->pos());
     textEditor_->show();
     textEditor_->raise();
     textEditor_->setFocus(Qt::MouseFocusReason);
