@@ -183,6 +183,8 @@ class SelectionOverlay final : public QWidget
     AnnotationStyle style_;
     std::optional<AnnotationType> activeTool_;
     std::optional<Annotation> draft_;
+    // 刚提交的线宽类标注仍可作为滚轮目标；切换工具 / 新起笔画 / 撤销后清除。
+    bool lastAnnotationSelected_ = false;
     AnnotationTextEdit* textEditor_ = nullptr;
     Annotation textDraft_;
     QVector<QPushButton*> toolButtons_;

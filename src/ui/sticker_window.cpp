@@ -175,6 +175,7 @@ void StickerWindow::setEditing(bool editing)
     widthWheel_.reset();
     wheelRemainder_ = 0;
     draft_.reset();
+    lastAnnotationSelected_ = false;
     dragging_ = false;
     const QRect geometry = this->geometry();
     const QPointF precisePosition = geometryPosition_;
@@ -352,6 +353,7 @@ void StickerWindow::mousePressEvent(QMouseEvent* event)
     if (editing_)
     {
         finishText(true);
+        lastAnnotationSelected_ = false;
         if (!activeTool_)
             return;
         if (activeTool_ == AnnotationType::Text)
@@ -398,8 +400,14 @@ void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton && draft_ && !saveDialogOpen_ && !quitInteraction_)
     {
         updateAnnotation(event->position());
+        const bool widthTool = annotationUsesLineWidth(draft_->type);
         if (history_.add(std::move(*draft_)))
+        {
             markDirty();
+            lastAnnotationSelected_ = widthTool;
+        }
+        else
+            lastAnnotationSelected_ = false;
         draft_.reset();
         updateEditToolbar();
         update();
@@ -428,10 +436,13 @@ void StickerWindow::wheelEvent(QWheelEvent* event)
         wheelRemainder_ = 0;
         if (event->phase() == Qt::ScrollBegin)
             widthWheel_.reset();
-        style_.lineWidth =
+        const int width =
             widthWheel_.adjust(style_.lineWidth, event->angleDelta(), event->pixelDelta());
+        style_.lineWidth = width;
         if (draft_)
-            draft_->style.lineWidth = style_.lineWidth;
+            draft_->style.lineWidth = width;
+        else if (lastAnnotationSelected_ && history_.setLastLineWidth(width))
+            markDirty();
         if (event->phase() == Qt::ScrollEnd)
             widthWheel_.reset();
         updateEditToolbar();
@@ -624,11 +635,13 @@ void StickerWindow::ensureEditToolbar()
     layout->addLayout(tools);
     editMenu_ = new QMenu(this);
     editMenu_->setObjectName(QStringLiteral("stickerEditMenu"));
-    toolBar_ = new QWidget(this);
+    // 二级变体与颜色 / 线宽 / 字号同处参数行；内层只做透明布局容器，
+    // 背景仍由 editToolbar_ 提供，避免主栏上方再浮一条独立黑条。
+    toolBar_ = new QWidget(editToolbar_);
     toolBar_->setObjectName(QStringLiteral("stickerEditToolBar"));
     toolBar_->setCursor(Qt::ArrowCursor);
     toolBar_->setStyleSheet(
-        QStringLiteral("QWidget#stickerEditToolBar { background: #202020; border-radius: 4px; }"
+        QStringLiteral("QWidget#stickerEditToolBar { background: transparent; border: none; }"
                        "QPushButton { background: transparent; border: none; border-radius: 6px; }"
                        "QPushButton:hover { background: #3a3a3a; }"
                        "QPushButton:checked { background: #a65316; }"));
@@ -690,6 +703,7 @@ void StickerWindow::ensureEditToolbar()
     }
     auto* options = new QHBoxLayout;
     layout->addLayout(options);
+    options->addWidget(toolBar_);
     colors_ = new AnnotationColorPalette(editToolbar_, QStringLiteral("stickerEditColor"),
                                          [this](int index)
                                          {
@@ -839,16 +853,12 @@ void StickerWindow::updateEditToolbar()
         }
     }
     toolBar_->setEnabled(available);
+    toolBar_->setVisible(available && grouped);
     editToolbar_->adjustSize();
-    const int subHeight = grouped ? 42 : 0;
-    const bool compact = editToolbar_->width() > width() ||
-                         editToolbar_->height() + subHeight > height() ||
-                         (grouped && toolBar_->width() > width());
+    const bool compact = editToolbar_->width() > width() || editToolbar_->height() > height();
     editToolbar_->move(std::max(0, (width() - editToolbar_->width()) / 2),
                        std::max(0, height() - editToolbar_->height()));
     editToolbar_->setVisible(editing_ && !compact);
-    toolBar_->move(editToolbar_->x(), editToolbar_->y() - 42);
-    toolBar_->setVisible(editing_ && !compact && grouped);
     editMoreButton_->setGeometry(0, 0, std::min(44, width()), std::min(22, height()));
     editMoreButton_->setVisible(editing_ && compact);
     const auto syncMenu = [&](const auto& self, QMenu* menu) -> void
@@ -888,6 +898,7 @@ void StickerWindow::activateTool(AnnotationType type, bool toggle)
     if (!editing_ || hasPendingInteraction() || quitInteraction_ || draft_)
         return;
     finishText(true);
+    lastAnnotationSelected_ = false;
     widthWheel_.reset();
     wheelRemainder_ = 0;
     toolTypes_[annotationToolSlot(type)] = type;
@@ -937,6 +948,7 @@ void StickerWindow::undoAnnotation()
     if (!editing_ || hasPendingInteraction() || quitInteraction_ || draft_)
         return;
     finishText(true);
+    lastAnnotationSelected_ = false;
     if (history_.undo())
         markDirty();
     updateEditToolbar();
@@ -947,6 +959,7 @@ void StickerWindow::redoAnnotation()
     if (!editing_ || hasPendingInteraction() || quitInteraction_ || draft_)
         return;
     finishText(true);
+    lastAnnotationSelected_ = false;
     if (history_.redo())
         markDirty();
     updateEditToolbar();
@@ -964,6 +977,7 @@ void StickerWindow::startText(QPointF point)
         connect(textEditor_, &AnnotationTextEdit::cancelRequested, this,
                 [this] { finishText(false); });
     }
+    lastAnnotationSelected_ = false;
     textDraft_ = Annotation{AnnotationType::Text, style_, physicalPoint(point), {}, {}, {}};
     QPalette palette = textEditor_->palette();
     palette.setColor(QPalette::Text, style_.color);
@@ -997,6 +1011,7 @@ void StickerWindow::finishText(bool commit, bool restoreFocus)
         QGuiApplication::inputMethod()->commit();
     else
         QGuiApplication::inputMethod()->reset();
+    lastAnnotationSelected_ = false;
     textEditor_->clearPreedit();
     textDraft_.text = textEditor_->toPlainText();
     textEditor_->hide();

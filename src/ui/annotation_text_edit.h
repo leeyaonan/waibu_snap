@@ -17,6 +17,7 @@ class AnnotationTextEdit final : public QTextEdit
 
   protected:
     bool event(QEvent* event) override;
+    bool viewportEvent(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void inputMethodEvent(QInputMethodEvent* event) override;
 

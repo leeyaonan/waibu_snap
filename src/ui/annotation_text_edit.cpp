@@ -5,6 +5,9 @@
 #include <QInputMethod>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPen>
 #include <QScopedValueRollback>
 #include <QTextFrame>
 #include <QtMath>
@@ -74,6 +77,27 @@ bool AnnotationTextEdit::event(QEvent* event)
         return true;
     }
     return QTextEdit::event(event);
+}
+bool AnnotationTextEdit::viewportEvent(QEvent* event)
+{
+    const bool handled = QTextEdit::viewportEvent(event);
+    // Qt 的 placeholder 在获得焦点后会隐藏，透明编辑框会因此完全没有落笔提示。
+    // 空文档且有焦点时自绘高对比提示：黑字 + 白描边，深浅底色都可见；
+    // 不画背景或边框，提交后仅保留实际文字。
+    if (event->type() == QEvent::Paint && hasFocus() && document()->isEmpty() && !composing_ &&
+        !placeholderText().isEmpty())
+    {
+        QPainter painter(viewport());
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        const QRect caret = cursorRect();
+        const QFontMetricsF metrics(font());
+        const QPointF baseline(caret.left() + 3.0, std::max(caret.top(), 0) + metrics.ascent());
+        QPainterPath path;
+        path.addText(baseline, font(), placeholderText());
+        painter.strokePath(path, QPen(QColor(255, 255, 255, 230), 2.0));
+        painter.fillPath(path, QColor(0, 0, 0, 190));
+    }
+    return handled;
 }
 void AnnotationTextEdit::inputMethodEvent(QInputMethodEvent* event)
 {

@@ -69,6 +69,9 @@ class AnnotationHistory
     static constexpr int capacity = 20;
     const QVector<Annotation>& annotations() const { return annotations_; }
     bool add(Annotation annotation);
+    // 调整最近一条标注的线宽；仅用于刚绘制完、仍处于可调选中态的图形。
+    // 不新增历史项，清空重做栈；返回是否实际改变。
+    bool setLastLineWidth(int width);
     bool canUndo() const { return annotations_.size() > firstUndoable_; }
     bool canRedo() const { return !redo_.isEmpty(); }
     bool undo();
