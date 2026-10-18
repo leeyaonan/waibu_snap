@@ -2,6 +2,7 @@
 #include "core/shape_mask.h"
 #include "core/sticker_geometry.h"
 #include "output/annotation_renderer.h"
+#include "ui/annotation_color_palette.h"
 #include "ui/annotation_text_edit.h"
 #include <QAction>
 #include <QCloseEvent>
@@ -165,6 +166,8 @@ void StickerWindow::setEditing(bool editing)
         return;
     if (!editing)
         finishText(true, false);
+    widthWheel_.reset();
+    wheelRemainder_ = 0;
     draft_.reset();
     dragging_ = false;
     const QRect geometry = this->geometry();
@@ -403,7 +406,37 @@ void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
 }
 void StickerWindow::wheelEvent(QWheelEvent* event)
 {
-    if (closed_ || saveDialogOpen_ || confirmingClose_ || quitInteraction_ || draft_)
+    if (closed_ || saveDialogOpen_ || confirmingClose_ || quitInteraction_)
+        return;
+    for (QWidget* panel : {controls_, static_cast<QWidget*>(moreButton_), editToolbar_, toolBar_,
+                           static_cast<QWidget*>(editMoreButton_)})
+        if (panel && panel->isVisible() && panel->geometry().contains(event->position().toPoint()))
+        {
+            event->accept();
+            return;
+        }
+    if (editing_ && activeTool_ && annotationUsesLineWidth(*activeTool_))
+    {
+        if (!rect().contains(event->position().toPoint()))
+            return;
+        wheelRemainder_ = 0;
+        if (event->phase() == Qt::ScrollBegin)
+            widthWheel_.reset();
+        style_.lineWidth =
+            widthWheel_.adjust(style_.lineWidth, event->angleDelta(), event->pixelDelta());
+        if (draft_)
+            draft_->style.lineWidth = style_.lineWidth;
+        if (event->phase() == Qt::ScrollEnd)
+            widthWheel_.reset();
+        updateEditToolbar();
+        if (event->angleDelta().y() || event->pixelDelta().y())
+            showStatus(QStringLiteral("线宽 %1px").arg(style_.lineWidth), true);
+        update();
+        event->accept();
+        return;
+    }
+    widthWheel_.reset();
+    if (draft_)
         return;
     wheelRemainder_ += event->angleDelta().y() / 120.0;
     const int steps = int(std::trunc(wheelRemainder_));
@@ -641,58 +674,45 @@ void StickerWindow::ensureEditToolbar()
     }
     auto* options = new QHBoxLayout;
     layout->addLayout(options);
-    colors_ = new QComboBox(editToolbar_);
-    widths_ = new QComboBox(editToolbar_);
+    colors_ = new AnnotationColorPalette(editToolbar_, QStringLiteral("stickerEditColor"),
+                                         [this](int index)
+                                         {
+                                             finishText(true);
+                                             style_.color = annotationColors()[index];
+                                             updateEditToolbar();
+                                         });
+    options->addWidget(colors_);
+    auto* colorMenu = editMenu_->addMenu(QStringLiteral("标注颜色"));
+    colorMenu->menuAction()->setData(colors_->objectName());
+    for (auto* button : colors_->findChildren<QPushButton*>())
+    {
+        auto* action = colorMenu->addAction(button->icon(), button->toolTip());
+        action->setData(button->objectName());
+        action->setCheckable(true);
+        connect(action, &QAction::triggered, button, &QPushButton::click);
+    }
+    widthLabel_ = new QLabel(editToolbar_);
+    widthLabel_->setObjectName(QStringLiteral("stickerEditWidthLabel"));
+    widthLabel_->setStyleSheet(QStringLiteral("color: white;"));
+    options->addWidget(widthLabel_);
     sizes_ = new QComboBox(editToolbar_);
-    colors_->setObjectName(QStringLiteral("stickerEditColorCombo"));
-    widths_->setObjectName(QStringLiteral("stickerEditWidthCombo"));
     sizes_->setObjectName(QStringLiteral("stickerEditTextSizeCombo"));
-    const QString colorNames[] = {QStringLiteral("红"), QStringLiteral("黄"), QStringLiteral("蓝")};
-    for (int index = 0; index < 3; ++index)
-    {
-        QPixmap swatch(14, 14);
-        swatch.fill(annotationColors()[index]);
-        colors_->addItem(QIcon(swatch), QStringLiteral("颜色：") + colorNames[index]);
-        widths_->addItem(QStringLiteral("线 %1px").arg(annotationLineWidths[index]));
-        sizes_->addItem(QStringLiteral("字 %1px").arg(annotationTextSizes[index]));
-    }
-    widths_->setCurrentIndex(1);
+    for (const int size : annotationTextSizes)
+        sizes_->addItem(QStringLiteral("字 %1px").arg(size));
     sizes_->setCurrentIndex(1);
-    const QString tips[] = {QStringLiteral("标注颜色"), QStringLiteral("图形线宽（物理像素）"),
-                            QStringLiteral("文本字号（物理像素）")};
-    const QList<QComboBox*> combos = {colors_, widths_, sizes_};
-    for (int index = 0; index < combos.size(); ++index)
+    sizes_->setFocusPolicy(Qt::NoFocus);
+    sizes_->setToolTip(QStringLiteral("文本字号（物理像素）"));
+    sizes_->setAccessibleName(sizes_->toolTip());
+    options->addWidget(sizes_);
+    auto* sizeMenu = editMenu_->addMenu(sizes_->toolTip());
+    sizeMenu->menuAction()->setData(sizes_->objectName());
+    for (int index = 0; index < sizes_->count(); ++index)
     {
-        auto* combo = combos[index];
-        combo->setFocusPolicy(Qt::NoFocus);
-        combo->installEventFilter(this);
-        combo->setToolTip(tips[index]);
-        combo->setAccessibleName(tips[index]);
-        options->addWidget(combo);
-        auto* menu = editMenu_->addMenu(tips[index]);
-        menu->menuAction()->setData(combo->objectName());
-        for (int option = 0; option < combo->count(); ++option)
-        {
-            auto* action = menu->addAction(combo->itemText(option));
-            action->setCheckable(true);
-            connect(action, &QAction::triggered, this,
-                    [combo, option] { combo->setCurrentIndex(option); });
-        }
+        auto* action = sizeMenu->addAction(sizes_->itemText(index));
+        action->setCheckable(true);
+        connect(action, &QAction::triggered, this,
+                [this, index] { sizes_->setCurrentIndex(index); });
     }
-    connect(colors_, &QComboBox::currentIndexChanged, this,
-            [this](int index)
-            {
-                finishText(true);
-                style_.color = annotationColors()[index];
-                updateEditToolbar();
-            });
-    connect(widths_, &QComboBox::currentIndexChanged, this,
-            [this](int index)
-            {
-                finishText(true);
-                style_.lineWidth = annotationLineWidths[index];
-                updateEditToolbar();
-            });
     connect(sizes_, &QComboBox::currentIndexChanged, this,
             [this](int index)
             {
@@ -741,8 +761,12 @@ void StickerWindow::ensureEditToolbar()
                 updateEditToolbar();
                 editMenu_->popup(mapToGlobal(QPoint(0, editMoreButton_->height())));
             });
-    editToolbar_->installEventFilter(this);
-    toolBar_->installEventFilter(this);
+    for (auto* panel : {editToolbar_, toolBar_})
+    {
+        panel->installEventFilter(this);
+        for (auto* child : panel->findChildren<QWidget*>())
+            child->installEventFilter(this);
+    }
 }
 void StickerWindow::updateEditToolbar()
 {
@@ -757,11 +781,15 @@ void StickerWindow::updateEditToolbar()
     // AnnotationTextEdit 的 ShortcutOverride 保证输入期间优先使用文本自身的历史。
     undoShortcut_->setEnabled(available);
     redoShortcut_->setEnabled(available);
-    widths_->setEnabled(activeTool_ != AnnotationType::Text &&
-                        activeTool_ != AnnotationType::Cover &&
-                        activeTool_ != AnnotationType::Mosaic);
+    widthLabel_->setVisible(activeTool_ && annotationUsesLineWidth(*activeTool_));
+    widthLabel_->setText(QStringLiteral("线宽 %1px").arg(style_.lineWidth));
+    widthLabel_->setToolTip(QStringLiteral("画布上滚轮调整线宽（1–24px，每格 1px）"));
+    widthLabel_->setAccessibleName(widthLabel_->text() + QStringLiteral("；") +
+                                   widthLabel_->toolTip());
+    colors_->setColor(style_.color);
     colors_->setEnabled(activeTool_ != AnnotationType::Mosaic);
     sizes_->setEnabled(activeTool_ == AnnotationType::Text);
+    sizes_->setVisible(activeTool_ == AnnotationType::Text);
     auto* grid = static_cast<QGridLayout*>(
         static_cast<QVBoxLayout*>(editToolbar_->layout())->itemAt(0)->layout());
     const int columns = std::clamp(width() / 44, 1, 5);
@@ -819,9 +847,13 @@ void StickerWindow::updateEditToolbar()
                 action->setChecked(button->isChecked());
                 action->setIcon(button->icon());
                 action->setToolTip(button->toolTip());
-                if (!button->text().isEmpty())
+                if (colors_->isAncestorOf(button))
+                    action->setText(button->toolTip());
+                else if (!button->text().isEmpty())
                     action->setText(button->text());
             }
+            if (action->data().toString() == colors_->objectName())
+                action->setEnabled(available && colors_->isEnabled());
             if (auto* combo = findChild<QComboBox*>(action->data().toString()))
             {
                 action->setEnabled(available && combo->isEnabled());
@@ -840,6 +872,8 @@ void StickerWindow::activateTool(AnnotationType type, bool toggle)
     if (!editing_ || hasPendingInteraction() || quitInteraction_ || draft_)
         return;
     finishText(true);
+    widthWheel_.reset();
+    wheelRemainder_ = 0;
     toolTypes_[annotationToolSlot(type)] = type;
     activeTool_ =
         toggle && activeTool_ == type ? std::nullopt : std::optional<AnnotationType>(type);
@@ -959,8 +993,13 @@ void StickerWindow::finishText(bool commit, bool restoreFocus)
 }
 bool StickerWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched != textEditor_ && event->type() == QEvent::Wheel)
+    {
+        event->accept();
+        return true;
+    }
     // NoFocus 选项即使选择同一档也属于点击别处，不能只依赖索引变化或 FocusOut。
-    if ((watched == colors_ || watched == widths_ || watched == sizes_) &&
+    if ((colors_->isAncestorOf(qobject_cast<QWidget*>(watched)) || watched == sizes_) &&
         event->type() == QEvent::MouseButtonPress)
         finishText(true, false);
     if ((watched == editToolbar_ || watched == toolBar_) &&

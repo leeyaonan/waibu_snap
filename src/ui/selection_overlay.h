@@ -21,6 +21,7 @@ class QShortcut;
 namespace waibusnap
 {
 class AnnotationTextEdit;
+class AnnotationColorPalette;
 class OcrDialog;
 struct OverlayActions : ImageSaveActions
 {
@@ -75,6 +76,7 @@ class SelectionOverlay final : public QWidget
     void mouseDoubleClickEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
+    void wheelEvent(QWheelEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
     void keyReleaseEvent(QKeyEvent*) override;
     void closeEvent(QCloseEvent*) override;
@@ -162,12 +164,12 @@ class SelectionOverlay final : public QWidget
     std::optional<AspectRatio> activeRatio_;
     bool shiftRatio_ = false;
     QPointF lastDragPosition_;
-    QVector<QPushButton*> colorButtons_;
-    QVector<QPushButton*> widthButtons_;
+    AnnotationColorPalette* colors_ = nullptr;
+    QLabel* widthLabel_ = nullptr;
+    AnnotationWidthWheel widthWheel_;
     QVector<QPushButton*> textSizeButtons_;
     QVector<QPushButton*> actionButtons_;
     QVector<QLabel*> separators_;
-    QLabel* optionsSeparator_ = nullptr;
     QLabel* status_ = nullptr;
     bool overlayLevelRaised_ = false;
     QTimer statusTimeout_;

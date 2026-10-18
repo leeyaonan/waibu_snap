@@ -6,6 +6,7 @@
 #include "output/annotation_renderer.h"
 #include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
+#include "ui/annotation_color_palette.h"
 #include "ui/annotation_text_edit.h"
 #include "ui/ocr_dialog.h"
 #include "ui/scroll_capture_windows.h"
@@ -26,6 +27,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QShowEvent>
+#include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -160,7 +162,6 @@ void SelectionOverlay::ensureToolbar()
     };
     for (int index = 0; index < 3; ++index)
         separators_.append(makeSeparator(toolbar_));
-    optionsSeparator_ = makeSeparator(optionsBar_);
     toolBar_ = new QWidget(this);
     toolBar_->setObjectName(QStringLiteral("annotationToolBar"));
     toolBar_->setStyleSheet(
@@ -317,46 +318,28 @@ void SelectionOverlay::ensureToolbar()
     connect(actionButtons_[4], &QPushButton::clicked, this, &SelectionOverlay::pinSelection);
     connect(actionButtons_[5], &QPushButton::clicked, this,
             [this] { complete(cancelledSessionOutcome); });
-    const QString colorNames[] = {QStringLiteral("红"), QStringLiteral("黄"), QStringLiteral("蓝")};
-    const QString levels[] = {QStringLiteral("细"), QStringLiteral("中"), QStringLiteral("粗")};
+    colors_ = new AnnotationColorPalette(optionsBar_, QStringLiteral("annotationColor"),
+                                         [this](int index)
+                                         {
+                                             finishText(true, false);
+                                             style_.color = annotationColors()[index];
+                                             updateToolbar();
+                                         });
+    widthLabel_ = new QLabel(optionsBar_);
+    widthLabel_->setObjectName(QStringLiteral("annotationWidthLabel"));
+    widthLabel_->setStyleSheet(QStringLiteral("color: #e8e8e8; background: transparent;"));
     const QString sizeNames[] = {QStringLiteral("小"), QStringLiteral("中"), QStringLiteral("大")};
-    for (int index = 0; index < 3; ++index)
+    for (int index = 0; index < int(annotationTextSizes.size()); ++index)
     {
-        auto* color = makeButton(optionsBar_, QStringLiteral("annotationColor%1Button").arg(index),
-                                 colorNames[index], ToolbarIcon::Color);
-        color->setIcon(toolbarIcon(ToolbarIcon::Color, annotationColors()[index]));
-        auto* width = makeButton(
-            optionsBar_, QStringLiteral("annotationWidth%1Button").arg(index),
-            QStringLiteral("%1 %2 像素").arg(levels[index]).arg(annotationLineWidths[index]),
-            ToolbarIcon::LineWidth);
-        width->setIcon(toolbarIcon(ToolbarIcon::LineWidth, {}, annotationLineWidths[index] / 2.0));
         auto* size = makeButton(
             optionsBar_, QStringLiteral("annotationTextSize%1Button").arg(index),
             QStringLiteral("%1 %2 像素").arg(sizeNames[index]).arg(annotationTextSizes[index]),
             ToolbarIcon::TextSize);
         const qreal scales[] = {0.72, 0.86, 1.0};
         size->setIcon(toolbarIcon(ToolbarIcon::TextSize, {}, scales[index]));
-        for (auto* button : {color, width, size})
-        {
-            button->setCheckable(true);
-            button->setFocusPolicy(Qt::StrongFocus);
-        }
-        colorButtons_.append(color);
-        widthButtons_.append(width);
+        size->setCheckable(true);
+        size->setFocusPolicy(Qt::StrongFocus);
         textSizeButtons_.append(size);
-        connect(color, &QPushButton::clicked, this,
-                [this, index]
-                {
-                    finishText(true, false);
-                    style_.color = annotationColors()[index];
-                    updateToolbar();
-                });
-        connect(width, &QPushButton::clicked, this,
-                [this, index]
-                {
-                    style_.lineWidth = annotationLineWidths[index];
-                    updateToolbar();
-                });
         connect(size, &QPushButton::clicked, this,
                 [this, index]
                 {
@@ -489,24 +472,24 @@ void SelectionOverlay::updateOptionsBar()
         }
     }
     const bool colors = !textMode_ && activeTool_ && activeTool_ != AnnotationType::Mosaic;
-    const bool widths =
-        colors && activeTool_ != AnnotationType::Text && activeTool_ != AnnotationType::Cover;
+    const bool widths = activeTool_ && annotationUsesLineWidth(*activeTool_);
     const bool sizes = colors && activeTool_ == AnnotationType::Text;
-    for (int index = 0; index < 3; ++index)
+    colors_->setVisible(colors);
+    colors_->setColor(style_.color);
+    colors_->move(0, 0);
+    widthLabel_->setVisible(widths);
+    widthLabel_->setText(QStringLiteral("线宽 %1px").arg(style_.lineWidth));
+    widthLabel_->setToolTip(QStringLiteral("画布上滚轮调整线宽（1–24px，每格 1px）"));
+    widthLabel_->setAccessibleName(widthLabel_->text() + QStringLiteral("；") +
+                                   widthLabel_->toolTip());
+    widthLabel_->setGeometry(172, 4, 104, 60);
+    for (int index = 0; index < textSizeButtons_.size(); ++index)
     {
-        colorButtons_[index]->setVisible(colors);
-        widthButtons_[index]->setVisible(widths);
         textSizeButtons_[index]->setVisible(sizes);
-        colorButtons_[index]->setChecked(style_.color == annotationColors()[index]);
-        widthButtons_[index]->setChecked(style_.lineWidth == annotationLineWidths[index]);
         textSizeButtons_[index]->setChecked(style_.textSize == annotationTextSizes[index]);
-        colorButtons_[index]->move(4 + index * 32, 4);
-        widthButtons_[index]->move(121 + index * 32, 4);
-        textSizeButtons_[index]->move(121 + index * 32, 4);
+        textSizeButtons_[index]->move(172 + index * 32, 4);
     }
-    optionsSeparator_->setVisible(widths || sizes);
-    optionsSeparator_->move(108, 7);
-    optionsBar_->setFixedSize(widths || sizes ? 217 : 100, 36);
+    optionsBar_->setFixedSize(widths || sizes ? 276 : 164, 68);
     optionsBar_->setVisible(colors);
 }
 std::optional<AspectRatio> SelectionOverlay::dragRatio() const
@@ -741,7 +724,8 @@ void SelectionOverlay::updateToolbar()
     updateRatioBar();
     updateShapeBar();
     const int toolHeight = toolBar_->isHidden() ? 0 : 42;
-    const int clusterHeight = toolbar_->height() + toolHeight + (optionsBar_->isHidden() ? 0 : 42) +
+    const int clusterHeight = toolbar_->height() + toolHeight +
+                              (optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6) +
                               (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6) +
                               (shapeBar_->isHidden() ? 0 : shapeBar_->height() + 6);
     const QRectF region = logicalSelection();
@@ -758,10 +742,10 @@ void SelectionOverlay::updateToolbar()
     toolbar_->move(x, y);
     toolBar_->move(x, y + toolbar_->height() + 6);
     optionsBar_->move(x, y + toolbar_->height() + 6 + toolHeight);
-    ratioBar_->move(x,
-                    y + toolbar_->height() + 6 + toolHeight + (optionsBar_->isHidden() ? 0 : 42));
+    ratioBar_->move(x, y + toolbar_->height() + 6 + toolHeight +
+                           (optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6));
     shapeBar_->move(x, y + toolbar_->height() + 6 + toolHeight +
-                           (optionsBar_->isHidden() ? 0 : 42) +
+                           (optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6) +
                            (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6));
     const bool enabled = dragMode_ == DragMode::None && !saveDialogOpen_;
     toolbar_->setEnabled(enabled);
@@ -1616,6 +1600,7 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
         return;
     exitTextMode();
     finishText(true);
+    widthWheel_.reset();
     toolTypes_[annotationToolSlot(type)] = type;
     activeTool_ =
         toggle && activeTool_ == type ? std::nullopt : std::optional<AnnotationType>(type);
@@ -1629,6 +1614,34 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
     updateToolbar();
     updateCursor(mapFromGlobal(QCursor::pos()));
     update();
+}
+void SelectionOverlay::wheelEvent(QWheelEvent* event)
+{
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || textMode_ || scrollReady_ || !activeTool_ ||
+        !annotationUsesLineWidth(*activeTool_) || !logicalSelection().contains(event->position()))
+    {
+        widthWheel_.reset();
+        event->ignore();
+        return;
+    }
+    for (auto* panel :
+         {toolbar_, toolBar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
+        if (panel && panel->isVisible() && panel->geometry().contains(event->position().toPoint()))
+        {
+            event->accept();
+            return;
+        }
+    if (event->phase() == Qt::ScrollBegin)
+        widthWheel_.reset();
+    style_.lineWidth =
+        widthWheel_.adjust(style_.lineWidth, event->angleDelta(), event->pixelDelta());
+    if (draft_)
+        draft_->style.lineWidth = style_.lineWidth;
+    updateOptionsBar();
+    if (event->phase() == Qt::ScrollEnd)
+        widthWheel_.reset();
+    update();
+    event->accept();
 }
 void SelectionOverlay::updateAnnotation(QPointF position)
 {
@@ -1712,6 +1725,11 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
 }
 bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched != textEditor_ && event->type() == QEvent::Wheel)
+    {
+        event->accept();
+        return true;
+    }
     if (event->type() == QEvent::MouseButtonPress &&
         (watched == ratioButton_ || watched == shapeButton_ ||
          (shapeBar_ && shapeBar_->isAncestorOf(qobject_cast<QWidget*>(watched))) ||
