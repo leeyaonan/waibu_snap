@@ -107,6 +107,20 @@ bool AnnotationHistory::add(Annotation annotation)
     firstUndoable_ = std::max(firstUndoable_, annotations_.size() - capacity);
     return true;
 }
+bool AnnotationHistory::setLastLineWidth(int width)
+{
+    if (annotations_.isEmpty())
+        return false;
+    Annotation& last = annotations_.last();
+    if (!annotationUsesLineWidth(last.type))
+        return false;
+    width = std::clamp(width, annotationMinimumWidth, annotationMaximumWidth);
+    if (last.style.lineWidth == width)
+        return false;
+    last.style.lineWidth = width;
+    redo_.clear();
+    return true;
+}
 bool AnnotationHistory::undo()
 {
     if (!canUndo())

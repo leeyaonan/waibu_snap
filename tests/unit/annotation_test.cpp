@@ -196,6 +196,33 @@ class AnnotationTest final : public QObject
         QVERIFY(history.add(sample(AnnotationType::Mosaic, 1)));
         QVERIFY(!history.canRedo());
     }
+    void adjustLastLineWidth()
+    {
+        using namespace waibusnap;
+        AnnotationHistory history;
+        QVERIFY(!history.setLastLineWidth(8));
+        QVERIFY(history.add(sample(AnnotationType::Line)));
+        QCOMPARE(history.annotations().last().style.lineWidth, 4);
+        QVERIFY(history.setLastLineWidth(9));
+        QCOMPARE(history.annotations().last().style.lineWidth, 9);
+        QVERIFY(!history.setLastLineWidth(9));
+        QVERIFY(history.setLastLineWidth(100));
+        QCOMPARE(history.annotations().last().style.lineWidth, annotationMaximumWidth);
+        QVERIFY(history.setLastLineWidth(0));
+        QCOMPARE(history.annotations().last().style.lineWidth, annotationMinimumWidth);
+        // 改宽不新增历史项，撤销 / 重做保留最终宽度。
+        QCOMPARE(history.annotations().size(), qsizetype(1));
+        QVERIFY(history.undo());
+        QVERIFY(history.redo());
+        QCOMPARE(history.annotations().last().style.lineWidth, annotationMinimumWidth);
+        // 文本等非线宽标注拒绝修改；新编辑清空重做栈。
+        QVERIFY(history.add(sample(AnnotationType::Text)));
+        QVERIFY(!history.setLastLineWidth(8));
+        QVERIFY(history.undo());
+        QVERIFY(history.canRedo());
+        QVERIFY(history.setLastLineWidth(7));
+        QVERIFY(!history.canRedo());
+    }
     void arrowGeometryScalesAndRotates()
     {
         using namespace waibusnap;

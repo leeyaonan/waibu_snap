@@ -162,11 +162,12 @@ void SelectionOverlay::ensureToolbar()
     };
     for (int index = 0; index < 3; ++index)
         separators_.append(makeSeparator(toolbar_));
-    toolBar_ = new QWidget(this);
+    // 二级变体按钮与颜色 / 线宽同处一条参数栏：toolBar_ 只作为透明内层容器，
+    // 由 optionsBar_ 统一绘制唯一的圆角背景，避免两层黑条上下堆叠。
+    toolBar_ = new QWidget(optionsBar_);
     toolBar_->setObjectName(QStringLiteral("annotationToolBar"));
     toolBar_->setStyleSheet(
-        QStringLiteral("QWidget#annotationToolBar { background: #202020; border: 1px solid "
-                       "#3a3a3a; border-radius: 8px; }") +
+        QStringLiteral("QWidget#annotationToolBar { background: transparent; border: none; }") +
         buttonsStyle);
     toolBar_->setFixedSize(68, 36);
     toolBar_->hide();
@@ -444,7 +445,7 @@ void SelectionOverlay::updateOptionsBar()
 {
     const int activeSlot = activeTool_ ? annotationToolSlot(*activeTool_) : -1;
     const bool grouped = activeSlot == 0 || activeSlot == 1 || activeSlot == 4;
-    int x = 4;
+    int toolX = 4;
     for (auto* button : subtoolButtons_)
     {
         const auto type = static_cast<AnnotationType>(button->property("annotationType").toInt());
@@ -453,11 +454,10 @@ void SelectionOverlay::updateOptionsBar()
         button->setChecked(activeTool_ == type);
         if (visible)
         {
-            button->move(x, 4);
-            x += 32;
+            button->move(toolX, 4);
+            toolX += 32;
         }
     }
-    toolBar_->setVisible(grouped && !textMode_);
     for (int slot = 0; slot < toolButtons_.size(); ++slot)
     {
         auto* button = toolButtons_[slot];
@@ -471,26 +471,54 @@ void SelectionOverlay::updateOptionsBar()
             button->setIcon(toolbarIcon(static_cast<ToolbarIcon>(type)));
         }
     }
+    const bool showTools = grouped && !textMode_;
     const bool colors = !textMode_ && activeTool_ && activeTool_ != AnnotationType::Mosaic;
     const bool widths = activeTool_ && annotationUsesLineWidth(*activeTool_);
     const bool sizes = colors && activeTool_ == AnnotationType::Text;
+    const int barHeight = colors || sizes ? 68 : (showTools ? 44 : 0);
+    // 一级组态、颜色 / 线宽 / 字号全部排在同一条参数栏内：
+    // 左侧是矩形 / 椭圆等变体，右侧是颜色，最后是线宽数值或文本字号。
+    int x = 4;
+    toolBar_->setVisible(showTools);
+    if (showTools)
+    {
+        toolBar_->move(x, (barHeight - toolBar_->height()) / 2);
+        x += toolBar_->width() + 4;
+    }
     colors_->setVisible(colors);
     colors_->setColor(style_.color);
-    colors_->move(0, 0);
+    if (colors)
+    {
+        colors_->move(x, (barHeight - colors_->height()) / 2);
+        x += colors_->width() + 4;
+    }
     widthLabel_->setVisible(widths);
     widthLabel_->setText(QStringLiteral("线宽 %1px").arg(style_.lineWidth));
     widthLabel_->setToolTip(QStringLiteral("画布上滚轮调整线宽（1–24px，每格 1px）"));
     widthLabel_->setAccessibleName(widthLabel_->text() + QStringLiteral("；") +
                                    widthLabel_->toolTip());
-    widthLabel_->setGeometry(172, 4, 104, 60);
+    widthLabel_->setAlignment(Qt::AlignCenter);
+    if (widths)
+    {
+        widthLabel_->setGeometry(x, (barHeight - 28) / 2, 64, 28);
+        x += 64 + 4;
+    }
     for (int index = 0; index < textSizeButtons_.size(); ++index)
     {
         textSizeButtons_[index]->setVisible(sizes);
         textSizeButtons_[index]->setChecked(style_.textSize == annotationTextSizes[index]);
-        textSizeButtons_[index]->move(172 + index * 32, 4);
+        if (sizes)
+            textSizeButtons_[index]->move(x + index * 32, (barHeight - 28) / 2);
     }
-    optionsBar_->setFixedSize(widths || sizes ? 276 : 164, 68);
-    optionsBar_->setVisible(colors);
+    if (sizes)
+        x += int(textSizeButtons_.size()) * 32 + 4;
+    if (!showTools && !colors && !sizes)
+    {
+        optionsBar_->hide();
+        return;
+    }
+    optionsBar_->setFixedSize(x, barHeight);
+    optionsBar_->setVisible(true);
 }
 std::optional<AspectRatio> SelectionOverlay::dragRatio() const
 {
@@ -645,7 +673,8 @@ QImage SelectionOverlay::outputImage() const
 QRect SelectionOverlay::toolbarClusterRect() const
 {
     QRect cluster;
-    for (auto* panel : {toolbar_, toolBar_, optionsBar_, ratioBar_, shapeBar_, scrollReadyBar_})
+    // toolBar_ 是 optionsBar_ 的透明内层容器，几何相对父级，不能直接并入覆盖层坐标。
+    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, shapeBar_, scrollReadyBar_})
         if (panel && !panel->isHidden())
             cluster = cluster.united(panel->geometry());
     return cluster;
@@ -662,7 +691,7 @@ void SelectionOverlay::positionStatus()
     // 由 QLabel 按实际样式计算换行高度，避免字体度量与控件排版差异裁掉末行。
     const int pillHeight = std::max(26, status_->heightForWidth(pillWidth) + 8);
     status_->setFixedHeight(pillHeight);
-    const int x = std::clamp(toolbar_->geometry().right() + 1 - pillWidth, bounds.left(),
+    const int x = std::clamp(toolbarClusterRect().right() + 1 - pillWidth, bounds.left(),
                              std::max(bounds.left(), bounds.right() + 1 - pillWidth));
     const int clusterBottom = toolbarClusterRect().bottom();
     int y = clusterBottom + 11;
@@ -723,14 +752,17 @@ void SelectionOverlay::updateToolbar()
     updateOptionsBar();
     updateRatioBar();
     updateShapeBar();
-    const int toolHeight = toolBar_->isHidden() ? 0 : 42;
-    const int clusterHeight = toolbar_->height() + toolHeight +
-                              (optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6) +
+    const int optionsHeight = optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6;
+    const int clusterHeight = toolbar_->height() + optionsHeight +
                               (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6) +
                               (shapeBar_->isHidden() ? 0 : shapeBar_->height() + 6);
     const QRectF region = logicalSelection();
-    const int x = std::clamp(qRound(region.right()) - toolbar_->width(), bounds.left(),
-                             std::max(bounds.left(), bounds.right() + 1 - toolbar_->width()));
+    const int clusterWidth =
+        std::max({toolbar_->width(), optionsBar_->isHidden() ? 0 : optionsBar_->width(),
+                  ratioBar_->isHidden() ? 0 : ratioBar_->width(),
+                  shapeBar_->isHidden() ? 0 : shapeBar_->width()});
+    const int x = std::clamp(qRound(region.right()) - clusterWidth, bounds.left(),
+                             std::max(bounds.left(), bounds.right() + 1 - clusterWidth));
     int y = qRound(region.bottom()) + 10;
     if (y + clusterHeight > bounds.bottom() + 1)
     {
@@ -740,12 +772,9 @@ void SelectionOverlay::updateToolbar()
     }
     y = std::clamp(y, bounds.top(), std::max(bounds.top(), bounds.bottom() + 1 - clusterHeight));
     toolbar_->move(x, y);
-    toolBar_->move(x, y + toolbar_->height() + 6);
-    optionsBar_->move(x, y + toolbar_->height() + 6 + toolHeight);
-    ratioBar_->move(x, y + toolbar_->height() + 6 + toolHeight +
-                           (optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6));
-    shapeBar_->move(x, y + toolbar_->height() + 6 + toolHeight +
-                           (optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6) +
+    optionsBar_->move(x, y + toolbar_->height() + 6);
+    ratioBar_->move(x, y + toolbar_->height() + 6 + optionsHeight);
+    shapeBar_->move(x, y + toolbar_->height() + 6 + optionsHeight +
                            (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6));
     const bool enabled = dragMode_ == DragMode::None && !saveDialogOpen_;
     toolbar_->setEnabled(enabled);
@@ -1246,6 +1275,7 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
     }
     finishText(true);
     setFocus(Qt::MouseFocusReason);
+    lastAnnotationSelected_ = false;
     press_ = event->position();
     lastDragPosition_ = press_;
     shiftRatio_ = event->modifiers().testFlag(Qt::ShiftModifier);
@@ -1336,8 +1366,14 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
     }
     if (dragMode_ == DragMode::Annotate && draft_)
     {
+        const bool widthTool = annotationUsesLineWidth(draft_->type);
         if (history_.add(std::move(*draft_)))
+        {
             markDirty();
+            lastAnnotationSelected_ = widthTool;
+        }
+        else
+            lastAnnotationSelected_ = false;
         draft_.reset();
     }
     dragMode_ = DragMode::None;
@@ -1600,6 +1636,7 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
         return;
     exitTextMode();
     finishText(true);
+    lastAnnotationSelected_ = false;
     widthWheel_.reset();
     toolTypes_[annotationToolSlot(type)] = type;
     activeTool_ =
@@ -1633,10 +1670,13 @@ void SelectionOverlay::wheelEvent(QWheelEvent* event)
         }
     if (event->phase() == Qt::ScrollBegin)
         widthWheel_.reset();
-    style_.lineWidth =
+    const int width =
         widthWheel_.adjust(style_.lineWidth, event->angleDelta(), event->pixelDelta());
+    style_.lineWidth = width;
     if (draft_)
-        draft_->style.lineWidth = style_.lineWidth;
+        draft_->style.lineWidth = width;
+    else if (lastAnnotationSelected_ && history_.setLastLineWidth(width))
+        markDirty();
     updateOptionsBar();
     if (event->phase() == Qt::ScrollEnd)
         widthWheel_.reset();
@@ -1658,6 +1698,7 @@ void SelectionOverlay::undoAnnotation()
     if (textMode_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
         return;
     finishText(true);
+    lastAnnotationSelected_ = false;
     if (history_.undo())
         markDirty();
     updateToolbar();
@@ -1668,6 +1709,7 @@ void SelectionOverlay::redoAnnotation()
     if (textMode_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
         return;
     finishText(true);
+    lastAnnotationSelected_ = false;
     if (history_.redo())
         markDirty();
     updateToolbar();
@@ -1684,6 +1726,7 @@ void SelectionOverlay::startText(QPointF position)
         connect(textEditor_, &AnnotationTextEdit::cancelRequested, this,
                 [this] { finishText(false); });
     }
+    lastAnnotationSelected_ = false;
     textDraft_ = Annotation{AnnotationType::Text, style_, physicalPoint(position), {}, {}, {}};
     QFont editorFont = annotationFont(style_);
     // 编辑器在逻辑坐标中排版，支持非整数 DPR；提交后的文本按物理像素统一绘制。
@@ -1712,6 +1755,7 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
         QGuiApplication::inputMethod()->commit();
     else
         QGuiApplication::inputMethod()->reset();
+    lastAnnotationSelected_ = false;
     textEditor_->clearPreedit();
     textDraft_.text = textEditor_->toPlainText();
     textEditor_->hide();
@@ -1767,6 +1811,7 @@ void SelectionOverlay::discardAnnotations()
     history_.clear();
     draft_.reset();
     activeTool_.reset();
+    lastAnnotationSelected_ = false;
     updateToolbar();
 }
 void SelectionOverlay::toggleTextMode()
@@ -1780,6 +1825,7 @@ void SelectionOverlay::toggleTextMode()
     {
         finishText(true);
         activeTool_.reset();
+        lastAnnotationSelected_ = false;
         for (auto* button : toolButtons_)
             button->setChecked(false);
         textMode_ = true;
@@ -1800,6 +1846,7 @@ void SelectionOverlay::exitTextMode()
     recognizingText_ = false;
     selectingText_ = false;
     textMode_ = false;
+    lastAnnotationSelected_ = false;
     ocrResult_ = {};
     ocrAnchor_ = {};
     ocrSelection_.clear();

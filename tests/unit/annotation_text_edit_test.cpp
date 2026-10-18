@@ -50,6 +50,51 @@ class AnnotationTextEditTest final : public QObject
         QCOMPARE(editor.document()->documentMargin(), qreal(0));
         QCOMPARE(canvas.grab().toImage(), before);
     }
+    void focusedEmptyHintIsVisible_data()
+    {
+        QTest::addColumn<QColor>("background");
+        QTest::newRow("light") << QColor(Qt::white);
+        QTest::newRow("dark") << QColor(20, 20, 20);
+    }
+    void focusedEmptyHintIsVisible()
+    {
+        QFETCH(QColor, background);
+        QWidget canvas;
+        canvas.resize(500, 300);
+        QPalette palette = canvas.palette();
+        palette.setColor(QPalette::Window, background);
+        canvas.setPalette(palette);
+        canvas.setAutoFillBackground(true);
+        canvas.setAttribute(Qt::WA_StyledBackground, true);
+        canvas.setStyleSheet(QStringLiteral("background-color: %1;").arg(background.name()));
+        canvas.show();
+        waibusnap::AnnotationTextEdit editor(&canvas);
+        editor.setEditingArea({50, 50}, canvas.rect());
+        editor.show();
+        editor.setFocus();
+        QCoreApplication::processEvents();
+        QVERIFY(editor.hasFocus());
+        const QRect hintArea(56, 50, 120, 24);
+        const QImage withHint = canvas.grab().toImage();
+        editor.setPlaceholderText({});
+        editor.viewport()->update();
+        QCoreApplication::processEvents();
+        const QImage withoutHint = canvas.grab().toImage();
+        const qreal scale = qreal(withHint.width()) / canvas.width();
+        const QRect hintPixels(qRound(hintArea.x() * scale), qRound(hintArea.y() * scale),
+                               qRound(hintArea.width() * scale), qRound(hintArea.height() * scale));
+        QVERIFY(withHint.copy(hintPixels) != withoutHint.copy(hintPixels));
+        const QColor actualBackground = withHint.pixelColor(0, 0);
+        bool contrast = false;
+        for (int y = hintPixels.top(); y <= hintPixels.bottom(); ++y)
+            for (int x = hintPixels.left(); x <= hintPixels.right(); ++x)
+            {
+                const int luminance = qGray(withHint.pixel(x, y));
+                contrast |= actualBackground.lightness() > 128 ? luminance < 80 : luminance > 180;
+            }
+        QVERIFY(contrast);
+        editor.hide();
+    }
     void singleLineAndLimits_data()
     {
         QTest::addColumn<int>("pixels");
