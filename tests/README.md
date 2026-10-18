@@ -8,13 +8,13 @@
 | `startup_smoke`（v004 截长图） | 空 / 过小 / 正常入口、提交文本并清标注、准备态返回 / 取消 / 回车、DPR 与可用区矩阵、控制条与穿透描边、权限说明 / 假滚动器投递 / 暂挂 / 方向速度、到底与上限、低置信不触发到底、结果缩放 / 裁剪 / 保存复制钉图 / 警告重试 / 关闭退出确认、13 / 14 指标与看门狗守卫；全部纳入高 DPI 子集 |
 | `aspect_ratio` | 解析 / 两位小数 / 格式化 / 0.1% 去重；四方向 × 极端比例 × 1 / 1.25 / 1.5 / 2 倍 DPR × 屏内 / 越界 / 1px 新建矩阵；八类手柄 × DPR × 越界，固定对角 / 对侧边、中线对称；四边扩缩 / 移动；最大内接与中心调整、宽度优先 / 高度回退、列表容错与 quick 回退链 |
 | `startup_smoke`（v002 按比例截图） | 比例按钮与展开 / 收起、启用项与仅自由、选中项再点取消、会话不记忆；比例新建 / 角 / 边调整、键盘微调与窗口内接；鼠标 Shift 修饰键 / 无移动按下松开 / quick 缺失、三种尺寸文案、即时中心调整；320 / 480 / 565 / 566 / 618 / 619 / 800px 集群定位、换行、面板文本提交、放大镜 / 状态避让、取字中重新识别；设置增删 / 启停 / 重复 / 非法 / 恢复 / 快捷 / 取消 / 失败、首次布局列表 / 添加行 / 底部按钮无重叠、INI 往返与损坏读取不改写。全部进入 2 倍 DPR 子集 |
-| `startup_smoke`（v001 OCR） | 取字模式进入 / 再点退出 / 切工具与九工具入口、保存状态、选区与标注隔离、无放大镜 / 微调；英文 / 中文 / emoji 双击、正反跨行与标点空格拖选、盒与绘制高亮、UTF-16 复制计数、三态快捷键与整图码 10；650 ms 替身进度 / 立即 Esc / 过期结果、退出重进计数；模态弹窗四态 / 重试 / Esc 三层与临时编辑关闭不改图；只读局部纯文本复制、编辑后的粗体 / 斜体 / 下划线（含快捷键）/ 字号 / 颜色 / 两类列表 HTML、双格式 / 纯文本输出、任务析构等待；合成输入含遮盖 / 马赛克且 DPR=1、无词盒整行回落。全部 24 个数据用例进入主套件与 2 倍 DPR 子集 |
+| `startup_smoke`（v001 OCR） | 取字模式进入 / 再点退出 / 切工具与五标注一级组 / 取字及六个子项入口、保存状态、选区与标注隔离、无放大镜 / 微调；英文 / 中文 / emoji 双击、正反跨行与标点空格拖选、盒与绘制高亮、UTF-16 复制计数、三态快捷键与整图码 10；650 ms 替身进度 / 立即 Esc / 过期结果、退出重进计数；模态弹窗四态 / 重试 / Esc 三层与临时编辑关闭不改图；只读局部纯文本复制、编辑后的粗体 / 斜体 / 下划线（含快捷键）/ 字号 / 颜色 / 两类列表 HTML、双格式 / 纯文本输出、任务析构等待；合成输入含遮盖 / 马赛克且 DPR=1、无词盒整行回落。全部 24 个数据用例进入主套件与 2 倍 DPR 子集 |
 | `text_layout` | 连续英数 / 撇号与 CJK、中英混排、空白标点、emoji / ZWJ / 扩展 CJK 代理对；行高中位数段落阈值等号边界、最近词 / 整行回落 / 无词、正反跨行与忠实 UTF-16 切片及非法位置 |
 | `text_recognizer_real_engine` | 固定 12 行 PNG、真实后台任务、实际系统语言列表与引擎可用性、英文关键子串、macOS 支持中文时的关键子串 / 不支持的明确说明；行盒坐标 / 词索引，空白图成功空结果与空图中文错误；Windows 有引擎必须识别成功，无引擎断言中文语言包原因；无静默跳过。默认计时 1 次，`WAIBUSNAP_OCR_BENCHMARK=1` 计时 30 次 |
 | `startup_smoke`（C02 登录启动） | 双向开关与重新打开、双向失败重试、未变化 / 取消 / 编辑器与复选框 Esc 零调用、保存时系统状态变化、待批准与 notice 优先；组合保存顺序与三阶段错误保留 / 重试幂等、无 INI 新键；控制器经菜单保存与重开取消；全部 query / setEnabled 使用替身，2 倍 DPR 子集包含同样 21 个数据用例 |
 | `startup_smoke`（托盘图标） | `trayIconUsesEmbeddedPlatformAssets`：内嵌确认稿能解码且含 alpha、图标非空、macOS 18 / 36px 与模板标记、Windows 彩色版 16 / 32px 与非模板、1x / 2x 输出物理尺寸及 DPR；真实应用子进程在临时工作目录检查托盘图标可解码，再运行原托盘 / 贴图生命周期冒烟；不做像素级外观断言 |
 | `startup_smoke` | 真正应用子进程加载动态库、七项托盘菜单、关闭临时窗口后仍驻留、设置打开期间忽略热键触发，再触发实际托盘「退出」；窗口悬停命中、单击吸附及 3 逻辑像素容差、有选区时悬停抑制、吸附后移动 / 调整 / 清除 / 再吸附、未命中单击、手动拖选替换与手势回到起点不误吸附、枚举错误仍可框选；设置对话框单组合输入、预填、Fn 说明、中文按钮、非法拒绝、注册失败保旧与文件不变、成功持久化、取消 / Esc 不保存；保留首帧、Retina 框选、全部移动 / 八方向调整、复制失败重试与码 10、保存失败 / 取消 / 冲突 / 原文件保护 / 面板焦点 / dirty 标记，以及无输出取消全部用例；受控参数仍需显式测试模式；选区后延迟创建工具栏、六个中文工具按钮 / 切换与取消激活、边角和选区外绘图优先、三档样式、按钮 / 系统快捷键撤销重做与 dirty 标记、分叉清除；文本预编辑保护、候选 / 编辑 / 会话 Esc 分层、中文及换行合成、空编辑不入栈、点击别处 / 工具栏空白 / ⌘或Ctrl+Enter / 复制保存前提交、编辑结束清理预编辑状态；已知直线 PNG 全图逐像素回读、复制与保存内容一致、会话结束历史清空；钉图先提交文本、合成图 / DPR=1 与码 11、失败保留重试、保存状态及负坐标放置继承；两张贴图独立、悬停 / 滚轮锚点 / 按钮缩放夹取与中心稳定、拖动、关闭销毁、编辑态无工具时停用移动；贴图原像素保存 / 复制失败重试、后缀碰撞 / 取消 / 面板期间退出；屏外找回、退出销毁包括待删除窗口 |
-| `startup_smoke`（4b 编辑） | `stickerEditingEntrancesGesturesAndCompactTools`：按钮 / 双击、绘图不拖窗、无工具不移动、滚轮锚点、完成 / Esc 后恢复拖动、编辑态无右键菜单、极小图全部编辑入口；`stickerTextImeEscapeAndCommitBoundaries`：预编辑保护 / Esc 分层、中文换行、空文本 / 点击别处（含同值 NoFocus 选项）/ 切工具 / 完成提交；`stickerHistoryStylesOutputAndDirtyState`：三档样式、20 步 / 标准快捷键、文本历史优先、分叉、保存再编辑、原像素 / DPR=1 和无标注隐式共享；`stickerPendingTextCommitsBeforeOutputsAndNewDrawing`：三字号、保存 / 复制 / 绘图前提交 |
+| `startup_smoke`（4b 编辑） | `stickerEditingEntrancesGesturesAndCompactTools`：按钮 / 双击、绘图不拖窗、无工具不移动、滚轮锚点、完成 / Esc 后恢复拖动、编辑态共用分组右键菜单、极小图全部编辑入口；`stickerTextImeEscapeAndCommitBoundaries`：预编辑保护 / Esc 分层、中文换行、空文本 / 点击别处（含同值 NoFocus 选项）/ 切工具 / 完成提交；`stickerHistoryStylesOutputAndDirtyState`：三档样式、20 步 / 标准快捷键、文本历史优先、分叉、保存再编辑、原像素 / DPR=1 和无标注隐式共享；`stickerPendingTextCommitsBeforeOutputsAndNewDrawing`：三字号、保存 / 复制 / 绘图前提交 |
 | `startup_smoke`（4b 确认） | `stickerDefaultConfirmationDialogsCancel`：真实中文三选一关闭 / 退出对话框取消；`stickerCloseDecisionsAndSaveRetries`：取消 / 放弃 / 保存成功 / 面板取消 / 失败后重试 / 已保存免确认、关闭与退出重入；`stickerCloseSaveFailureRestoresEditingToolbar`：编辑态关闭保存失败后恢复工具条，反馈不遮挡工具并可重试成功；`stickerQuitSummaryOrderFailureAndReentrancy`：汇总取消 / 逐张创建顺序保存 / 中途取消或失败 / 全部放弃，未提交文本先提交、已保存跳过与保留、强制清理不重复确认；`stickerQuitSavedAndControllerCancellation`：无未保存免确认、控制器取消退出及重入不销毁窗口 |
 | `startup_smoke`（S02） | `stickerHideRestorePreservesStateAndHistory`：三张、多档缩放、八类标注、重复操作幂等，几何 / scale / 基图 / 全像素合成图 / 每个标注全部字段 / 保存状态不变，撤销与重做历史保留；`stickerHideCommitsPendingTextWithoutConfirmation`：中文换行文本先提交、退出编辑、不确认 / 不保存；`stickerHiddenCloseAndCleanupDoNotResurrect`：隐藏中 forceClose、延迟销毁前不复活、计数与退出清理及重入保护；`stickerHiddenQuitDecisionsAndReentrancy`：隐藏未保存汇总、取消 / 保存 / 放弃和解析期间 API 空操作；`stickerHiddenQuitDefaultDialogStillConfirms`：默认真实汇总对话框仍弹出；`stickerHiddenRecoveryPreservesVisibility`：直接找回与模拟 screenRemoved 后隐藏保持、恢复位置有效；`stickerMenuAvailabilityAndOverlayIsolation`：两项文案 / objectName / 顺序，四态弹出前和操作后刷新、混合状态、覆盖层选区与 finished 信号不变。全部纳入独立 2 倍屏幕 DPR 子集 |
 | `startup_smoke`（S04） | `selectionNudgeKeys`：1 / 1.5 / 2 源屏 DPR × 三模式 × 四方向、真实重复事件恒 1 源像素、尺寸文本同步、键盘锚点 / 采样与工具栏避让；`selectionNudgeLimits`：四边夹取 / 最小尺寸不翻转、极限按键消费但不标脏；`selectionNudgeIgnoresModifiersAndControlFocus`：混合修饰 / 子控件焦点 / 无选区 / 拖动隔离；`selectionNudgeToolAndTextIsolation`：八工具与 IME 编辑器分层；`selectionNudgeHistoryDirtyAndOutput`：已保存变更标脏、保留重做、撤销仍只作用标注、放大镜可见时 PNG / 复制逐像素合成一致；`selectionNudgeSavePanelAndFinishedIsolation`：面板 / 结束会话隔离；`magnifierMouseSampling`：三种源 DPR 下四角四边 / 中心逐像素原帧采样、负屏坐标、按下显示 / 松开清空；`magnifierFollowsSelectionGestures`：移动与四边调整跟随光标；`magnifierPaintUsesNearestPixels`：画布截图逐设备像素最近邻与黑白双线标记；`magnifierKeyboardTimeoutAndCleanup`：重复重启单计时器、停止后留裕量超时、工具激活 / 关闭清理。全部加入独立 2 倍 DPR 子集 |
@@ -679,3 +679,35 @@ Qt::Tool 默认失活隐藏是独立风险，覆盖层现补 WA_MacAlwaysShowToo
 ### 后续人工复验入口
 
 `overlay_visibility_probe <屏幕序号> <次数，0 表示人工持续会话> <新 JSONL 路径> <临时 INI 路径>` 只替换选屏，不替换捕获 / 在屏查询 / 覆盖层 / finish。macOS 需通过 LaunchServices 启动 .app，使用明确授权的独立验收身份；保持二进制与签名固定，验收期间不重链接。次数 0 时首次自动触发，之后 F1 / Esc 走正常会话，托盘退出。Windows 暂复用未实现的测试选屏桥接，会明确报错，不伪装支持真实采集吊具。
+
+## v005 批次 1：绘制工具分组与标准箭头（2026-10-18）
+
+本批仅实现三组工具合并与箭头形状修正。规格以工作区 `docs/specs/v005-overview.md` 为准；交互、对象名、布局和测试映射见工作区 `docs/design/annotation-tool-groups.md`。更多颜色、滚轮线宽、透明文本、设置 Tab 和关闭提醒偏好留在后续批次。
+
+| 项目 | 改前 | 改后 |
+| --- | --- | --- |
+| 一级标注入口 | 八种类型分别占按钮 | 五个入口：图形、线箭、画笔、文本、隐私；三组默认矩形 / 箭头 / 马赛克 |
+| 子工具状态 | 无分组 | 二级二选一；一级图标 / 提示 / 可访问名同步；每编辑面独立记住子工具；一级再点取消、重新启用沿用子工具 |
+| 覆盖层布局 | 普通 / OCR 单行阈值 630 / 683px；320px 高 172px | 普通 / OCR 单行阈值 534 / 587px；320px 高 140px；保持 44px 单行、已有折行与按钮相对顺序；二级栏参与参数 / 比例 / 形状 / 胶囊 / 放大镜避让 |
+| 贴图入口 | 八按钮、16 项编辑菜单 | 五按钮、13 项编辑菜单；三组各两个子菜单项；编辑态右键打开同一菜单，极小图仍可经更多菜单访问全部类型与样式 |
+| 箭头杆 | RoundCap 画到 last，圆头越过三角尖端 | 平帽杆止于 `arrowHead()` 底边中点，极短段只画头；尖端为 last、两翼对称向后，与线宽联动 |
+
+回归先行：`image_output::arrowTipHasNoShaftCap` 在修复前真实失败（尖端前方像素为 `#ffffd1d1`，预期白色），修复后通过。头长仍为 `min(段长, max(10, 4×线宽))`，半宽为头长 0.45；线宽乘法改用浮点，避免 int 上界溢出。没有修改 AnnotationType 枚举、八类标注的坐标 / 历史语义或输出格式。
+
+新增验证：
+
+- `annotation::arrowGeometryMatrix`：8 个角度 × 4 种线宽（含 1 / 2 / 8 / int 最大值）× 4 种段长（含 0.001px），共 128 行；核对尖端、方向、底边法向 / 对称、头长 / 宽比、翼角及不超过段长；另有零长度、非法线宽、NaN / Inf 边界。
+- `image_output::arrowTipHasNoShaftCap`：零长度 / 0.25 / 2 / 12 / 80px × 线宽 1 / 2 / 4 / 8，核对尖端前无杆帽、单条草稿 / 批量预览 / 裁剪输出逐像素一致。
+- `image_output::arrowRenderingRotates`：8 方向 × 4 线宽，共 32 行，独立参考三角头与平帽杆逐像素比较，再核对 DPR=2 预览与原像素导出一致。正交参考方向精确取整，避免三角函数的微量浮点余值造成伪失败。
+- `annotationGroupDefaultsAndMemory`：三组默认值、同一子项重复点击、一级取消后沿用子工具、图标 / 提示 / 可访问名变化、历史与颜色 / 线宽 / 已保存状态保持。
+- `annotationGroupPanelGesturesAndPlacement`：320 / 480 / 800px × 源 DPR 1 / 1.5 / 2，共 9 行；全屏可用区、与参数 / 比例 / 形状栏同时显示、空白事件消化、文本提交及绘制期间禁用。
+- `stickerAnnotationGroupsAndMenu`：默认值、二级菜单 / 工具栏互相同步、标题 / 图标 / 选中态、空白事件、右键事件路由、退出再进入的选择与历史保留。
+- 既有八类输出、Cover / Mosaic 原像素、撤销重做、OCR 与长图断言保留；测试点击改经真实一级组和对应子按钮，具体类型对象名沿用。三项分组用例全部纳入高 DPI CTest。
+
+本机验证使用 `WAIBUSNAP_BUILD_DIR=build/verify-annotation-groups`，未改动正在使用的 `build/macos`。Qt 6.11.2 / arm64 Release、WaibuSnap Dev / `local.waibusnap.dev` 原证书叶签名；`build-project.sh`、全部 **16 项 CTest**、`test-project.sh`、clang-format **18.1.8** 的 `lint-code.sh` 与 `git diff --check` 通过。统计包含 Qt Test 初始化 / 清理与数据行：主冒烟 **436 → 447**，高 DPI 冒烟 **369 → 380**；`annotation` **11 → 140**，`image_output` **38 → 71**，均零失败 / 零跳过。真实 Cocoa 后端另运行本批分组子集 **13 项**通过；本机系统 OCR 也通过。初轮沙箱缺少图形 / OCR 服务访问，相关验证在正常本机环境复验，未修改权限或绕过测试。
+
+人工待验收：
+
+- macOS 真鼠标点选三组、切换子项、右键与极小贴图菜单的发现性 / 焦点体验，边缘选区与完整屏幕的栏位观感。
+- 极短、粗线、斜向箭头在真实屏幕和 PNG 查看器中的尖端 / 两翼观感。
+- Windows 10 / 11 实机与高 DPI 视觉、菜单与焦点；双端 CI（含 Intel 交叉构建）只证明工程与自动化，不替代硬件验收。

@@ -18,6 +18,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QCursor>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -425,6 +426,37 @@ QPushButton* button(waibusnap::SelectionOverlay& overlay, const char* name)
 {
     return overlay.findChild<QPushButton*>(QString::fromLatin1(name));
 }
+// 沿真实一级入口进入组，再选择具体子工具；再次选择当前工具通过一级按钮取消。
+void clickAnnotationTool(QWidget& editor, const char* name)
+{
+    using namespace waibusnap;
+    const QString requested = QString::fromLatin1(name);
+    auto* target = editor.findChild<QPushButton*>(requested);
+    QVERIFY(target);
+    if (!target->property("annotationType").isValid())
+    {
+        QTest::mouseClick(target, Qt::LeftButton);
+        return;
+    }
+    const auto type = static_cast<AnnotationType>(target->property("annotationType").toInt());
+    QString primaryName = annotationGroupObject(annotationToolSlot(type));
+    if (requested.startsWith(QStringLiteral("stickerEdit")))
+    {
+        primaryName[0] = primaryName[0].toUpper();
+        primaryName.prepend(QStringLiteral("stickerEdit"));
+    }
+    auto* primary = editor.findChild<QPushButton*>(primaryName);
+    QVERIFY(primary);
+    if (target->isChecked())
+        QTest::mouseClick(primary, Qt::LeftButton);
+    else
+    {
+        if (!primary->isChecked())
+            QTest::mouseClick(primary, Qt::LeftButton);
+        if (!target->isChecked())
+            QTest::mouseClick(target, Qt::LeftButton);
+    }
+}
 void standardKey(QWidget* widget, QKeySequence::StandardKey key)
 {
     const auto combination = QKeySequence(key)[0];
@@ -475,7 +507,7 @@ void stickerClick(waibusnap::StickerWindow& sticker, const char* name)
 {
     auto* control = sticker.findChild<QPushButton*>(QString::fromLatin1(name));
     QVERIFY(control);
-    QTest::mouseClick(control, Qt::LeftButton);
+    clickAnnotationTool(sticker, name);
 }
 void stickerDrag(waibusnap::StickerWindow& sticker, QPoint first, QPoint last)
 {
@@ -1437,10 +1469,15 @@ class StartupSmokeTest final : public QObject
         QVERIFY(overlay.exportToPath(temp.filePath("ocr.png")));
         QVERIFY(overlay.isSelectionSaved());
         int tools = 0;
-        for (auto* control : overlay.findChildren<QPushButton*>())
+        for (auto* control : overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"))
+                                 ->findChildren<QPushButton*>())
             if (control->objectName().endsWith("ToolButton"))
                 ++tools;
-        QCOMPARE(tools, 9);
+        QCOMPARE(tools, 6);
+        QCOMPARE(overlay.findChild<QWidget*>(QStringLiteral("annotationToolBar"))
+                     ->findChildren<QPushButton*>()
+                     .size(),
+                 qsizetype(6));
         QVERIFY(!button(overlay, "ocrToolButton")->icon().isNull());
         QCOMPARE(button(overlay, "ocrToolButton")->toolTip(), QStringLiteral("取字（文字识别）"));
         auto* extract = button(overlay, "extractAllTextButton");
@@ -1472,13 +1509,13 @@ class StartupSmokeTest final : public QObject
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
         QTRY_VERIFY(!overlay.isRecognizingText());
         QCOMPARE(engine->calls.load(), 2);
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         QVERIFY(!overlay.isTextMode());
         QCOMPARE(overlay.activeTool(),
                  std::optional<waibusnap::AnnotationType>(waibusnap::AnnotationType::Line));
         drag(overlay, {200, 250}, {300, 300});
         QCOMPARE(overlay.annotations().size(), 1);
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         overlay.setFocus();
         QTest::keyClick(&overlay, Qt::Key_Right);
         QCOMPARE(overlay.selection(), selection.translated(1, 0));
@@ -1836,9 +1873,9 @@ class StartupSmokeTest final : public QObject
         waibusnap::SelectionOverlay overlay(annotationFrame(), actions);
         overlay.show();
         drag(overlay, {100, 100}, {650, 450});
-        QTest::mouseClick(button(overlay, "coverToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "coverToolButton");
         drag(overlay, {120, 120}, {260, 170});
-        QTest::mouseClick(button(overlay, "mosaicToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "mosaicToolButton");
         drag(overlay, {320, 140}, {430, 210});
         const QImage expected = waibusnap::renderAnnotatedSelection(
             annotationFrame().pixels, overlay.annotations(), overlay.selection());
@@ -1922,9 +1959,9 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(pin->toolTip(), QStringLiteral("钉到屏幕"));
         QVERIFY(button(overlay, "saveButton")->x() < pin->x());
         QVERIFY(pin->x() < button(overlay, "cancelButton")->x());
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         drag(overlay, {120, 150}, {280, 150});
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 120});
         auto* editor = overlay.findChild<AnnotationTextEdit*>();
         editor->setPlainText(QStringLiteral("钉图前确认\nABC 123"));
@@ -1952,7 +1989,7 @@ class StartupSmokeTest final : public QObject
         overlay.show();
         QSignalSpy finished(&overlay, &SelectionOverlay::finished);
         drag(overlay, {100, 100}, {300, 250});
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         drag(overlay, {120, 150}, {280, 150});
         QTest::mouseClick(button(overlay, "pinButton"), Qt::LeftButton);
         QCOMPARE(attempts, 1);
@@ -3378,7 +3415,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(sticker->isEditing());
         QCOMPARE(sticker->geometry(), before);
         QVERIFY(!sticker->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
-        QCOMPARE(sticker->contextMenuPolicy(), Qt::NoContextMenu);
+        QCOMPARE(sticker->contextMenuPolicy(), Qt::DefaultContextMenu);
         stickerDrag(*sticker, {80, 80}, {150, 150});
         QCOMPARE(sticker->geometry(), before);
         QVERIFY(sticker->annotations().isEmpty());
@@ -3449,31 +3486,36 @@ class StartupSmokeTest final : public QObject
         auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton"));
         QVERIFY(more && more->isVisible());
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
-        QCOMPARE(menu->actions().size(), qsizetype(16));
+        QCOMPARE(menu->actions().size(), qsizetype(13));
         QVERIFY(sticker->rect().contains(more->geometry()));
-        // 折叠入口仍能启用文本、选择三字号并完成。
-        menu->actions()[5]->trigger();
+        auto* privacy = menu->actions()[4];
+        auto* coverAction = privacy->menu()->actions()[0];
+        auto* mosaicAction = privacy->menu()->actions()[1];
+        // 折叠菜单保留三组及全部样式 / 输出，二级动作同步选中态。
+        menu->actions()[3]->trigger();
         QVERIFY(sizes->isEnabled());
-        menu->actions()[10]->menu()->actions()[2]->trigger();
+        menu->actions()[7]->menu()->actions()[2]->trigger();
         QCOMPARE(sizes->currentIndex(), 2);
-        menu->actions()[6]->trigger();
+        coverAction->trigger();
         QVERIFY(sticker->activeTool() == AnnotationType::Cover);
-        QVERIFY(menu->actions()[6]->isChecked());
-        QVERIFY(!menu->actions()[9]->isEnabled());
-        QVERIFY(!menu->actions()[10]->isEnabled());
-        menu->actions()[6]->trigger();
+        QVERIFY(privacy->isChecked() && coverAction->isChecked());
+        QVERIFY(!menu->actions()[6]->isEnabled());
+        QVERIFY(!menu->actions()[7]->isEnabled());
+        coverAction->trigger();
+        QVERIFY(sticker->activeTool() == AnnotationType::Cover);
+        stickerClick(*sticker, "stickerEditCoverToolButton");
         QVERIFY(!sticker->activeTool());
-        QVERIFY(menu->actions()[9]->isEnabled());
-        menu->actions()[7]->trigger();
+        QVERIFY(menu->actions()[6]->isEnabled());
+        mosaicAction->trigger();
         QVERIFY(sticker->activeTool() == AnnotationType::Mosaic);
-        QVERIFY(menu->actions()[7]->isChecked());
-        for (int index : {8, 9, 10})
+        QVERIFY(privacy->isChecked() && mosaicAction->isChecked());
+        for (int index : {5, 6, 7})
             QVERIFY(!menu->actions()[index]->isEnabled());
         auto* status = sticker->findChild<QLabel*>(QStringLiteral("stickerStatus"));
         QVERIFY(status->isVisible());
         QVERIFY(status->text().contains(QStringLiteral("高敏感内容请用实心遮盖")));
-        menu->actions()[7]->trigger();
-        for (int index : {8, 9})
+        stickerClick(*sticker, "stickerEditMosaicToolButton");
+        for (int index : {5, 6})
             QVERIFY(menu->actions()[index]->isEnabled());
         menu->actions().last()->trigger();
         QVERIFY(!sticker->isEditing());
@@ -4361,7 +4403,7 @@ class StartupSmokeTest final : public QObject
         QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
         QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
         if (options)
-            QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+            clickAnnotationTool(overlay, "rectangleToolButton");
         auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
         auto* ratio = overlay.findChild<QWidget*>(QStringLiteral("ratioBar"));
         auto* shape = overlay.findChild<QWidget*>(QStringLiteral("shapeBar"));
@@ -4383,7 +4425,7 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(painted.pixelColor(width / 2, 170), QColor(Qt::white));
         QCOMPARE(painted.pixelColor(50, 110), QColor(180, 180, 180));
         if (options)
-            QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+            clickAnnotationTool(overlay, "rectangleToolButton");
         overlay.activateWindow();
         overlay.setFocus();
         QTRY_VERIFY(overlay.hasFocus());
@@ -4425,7 +4467,7 @@ class StartupSmokeTest final : public QObject
         SelectionOverlay overlay(annotationFrame(), actions);
         overlay.show();
         dragLogical(overlay, {100, 100}, {250, 200});
-        QTest::mouseClick(button(overlay, "coverToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "coverToolButton");
         dragLogical(overlay, {110, 110}, {240, 190});
         QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
         QVERIFY(button(overlay, "shapeTemplate0Button"));
@@ -4505,7 +4547,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!ratio->isChecked() && !bar->isVisible());
         QVERIFY(overlay.selectionSizeText().startsWith(QStringLiteral("16:9 · ")));
         const QRect selection = overlay.selection();
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         QTest::mouseClick(ratio, Qt::LeftButton);
         QVERIFY(overlay.activeTool() == AnnotationType::Rectangle);
         QCOMPARE(overlay.selection(), selection);
@@ -4700,14 +4742,14 @@ class StartupSmokeTest final : public QObject
         overlay.show();
         dragLogical(overlay, {0, 0}, {width, 600});
         if (options)
-            QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+            clickAnnotationTool(overlay, "rectangleToolButton");
         QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
         auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
         auto* optionBar = overlay.findChild<QWidget*>(QStringLiteral("annotationOptionsBar"));
         auto* bar = overlay.findChild<QWidget*>(QStringLiteral("ratioBar"));
         QVERIFY(bar->isVisible());
         QVERIFY(bar->width() <= toolbar->width());
-        QCOMPARE(bar->y(), toolbar->y() + toolbar->height() + 6 + (options ? 42 : 0));
+        QCOMPARE(bar->y(), toolbar->y() + toolbar->height() + 6 + (options ? 84 : 0));
         QCOMPARE(bar->x(), toolbar->x());
         const QRect bounds(0, 25, width, 550);
         QVERIFY(bounds.contains(toolbar->geometry()));
@@ -4727,7 +4769,7 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(bar->cursor().shape(), Qt::ArrowCursor);
         if (options)
         {
-            QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+            clickAnnotationTool(overlay, "textToolButton");
             QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {40, 40});
             auto* edit =
                 overlay.findChild<AnnotationTextEdit*>(QStringLiteral("annotationTextEditor"));
@@ -4736,7 +4778,7 @@ class StartupSmokeTest final : public QObject
             QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, {2, 2});
             QVERIFY(!edit->isVisible());
             QCOMPARE(overlay.annotations().last().text, QStringLiteral("比例面板提交文本"));
-            QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+            clickAnnotationTool(overlay, "textToolButton");
         }
         overlay.activateWindow();
         overlay.setFocus();
@@ -4981,8 +5023,8 @@ class StartupSmokeTest final : public QObject
         for (bool withOptions : {false, true})
         {
             if (withOptions)
-                QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
-            const int clusterHeight = toolbar->height() + (withOptions ? 42 : 0);
+                clickAnnotationTool(overlay, "rectangleToolButton");
+            const int clusterHeight = toolbar->height() + (withOptions ? 84 : 0);
             const int expectedY = placement == 0   ? region.y() + region.height() + 10
                                   : placement == 1 ? region.y() - clusterHeight - 10
                                                    : available.bottom() + 1 - clusterHeight - 10;
@@ -4991,7 +5033,7 @@ class StartupSmokeTest final : public QObject
             if (withOptions)
             {
                 QVERIFY(options->isVisible());
-                QCOMPARE(options->pos(), toolbar->pos() + QPoint(0, toolbar->height() + 6));
+                QCOMPARE(options->pos(), toolbar->pos() + QPoint(0, toolbar->height() + 48));
                 QVERIFY(available.contains(options->geometry()));
             }
             QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
@@ -5002,7 +5044,7 @@ class StartupSmokeTest final : public QObject
             if (withOptions)
                 QVERIFY(!status->geometry().intersects(options->geometry()));
         }
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         overlay.activateWindow();
         overlay.setFocus();
         QTRY_VERIFY(overlay.hasFocus());
@@ -5014,6 +5056,181 @@ class StartupSmokeTest final : public QObject
               static_cast<QWidget*>(overlay.findChild<QLabel*>(QStringLiteral("outputStatus")))})
             if (panel->isVisible())
                 QVERIFY(!panel->geometry().intersects(overlay.magnifierRect()));
+    }
+    void annotationGroupDefaultsAndMemory()
+    {
+        using namespace waibusnap;
+        SelectionOverlay overlay(annotationFrame());
+        overlay.show();
+        dragLogical(overlay, {100, 100}, {300, 250});
+        auto* bar = overlay.findChild<QWidget*>(QStringLiteral("annotationToolBar"));
+        QVERIFY(bar && !bar->isVisible());
+        const char* groups[] = {"geometryToolButton", "directionToolButton", "concealToolButton"};
+        const char* children[] = {"ellipseToolButton", "lineToolButton", "coverToolButton"};
+        const AnnotationType defaults[] = {AnnotationType::Rectangle, AnnotationType::Arrow,
+                                           AnnotationType::Mosaic};
+        const AnnotationType variants[] = {AnnotationType::Ellipse, AnnotationType::Line,
+                                           AnnotationType::Cover};
+        const char* labels[] = {"椭圆", "直线", "遮盖"};
+        QTest::mouseClick(button(overlay, "geometryToolButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "annotationColor2Button"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "annotationWidth2Button"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "geometryToolButton"), Qt::LeftButton);
+        for (int index = 0; index < 3; ++index)
+        {
+            auto* primary = button(overlay, groups[index]);
+            const QImage oldIcon = primary->icon().pixmap(18, 18).toImage();
+            QTest::mouseClick(primary, Qt::LeftButton);
+            QVERIFY(overlay.activeTool() == defaults[index]);
+            QVERIFY(bar->isVisible());
+            auto* child = button(overlay, children[index]);
+            QVERIFY(child->isVisible());
+            QTest::mouseClick(child, Qt::LeftButton);
+            QVERIFY(overlay.activeTool() == variants[index]);
+            QVERIFY(primary->toolTip().contains(QString::fromUtf8(labels[index])));
+            QCOMPARE(primary->accessibleName(), primary->toolTip());
+            QVERIFY(primary->icon().pixmap(18, 18).toImage() != oldIcon);
+            dragLogical(overlay, {120, 120}, {200, 180});
+            QCOMPARE(overlay.annotations().size(), qsizetype(index + 1));
+            QCOMPARE(overlay.annotations().last().type, variants[index]);
+            QCOMPARE(overlay.annotations().last().style.color, annotationColors()[2]);
+            QCOMPARE(overlay.annotations().last().style.lineWidth, 8);
+            QTest::mouseClick(child, Qt::LeftButton);
+            QVERIFY(overlay.activeTool() == variants[index]);
+            QTest::mouseClick(primary, Qt::LeftButton);
+            QVERIFY(!overlay.activeTool());
+            QVERIFY(!bar->isVisible());
+        }
+        const auto history = overlay.annotations();
+        QTemporaryDir temporary;
+        QVERIFY(overlay.exportToPath(temporary.filePath(QStringLiteral("分组保存.png"))));
+        for (int index = 0; index < 3; ++index)
+        {
+            QTest::mouseClick(button(overlay, groups[index]), Qt::LeftButton);
+            QVERIFY(overlay.activeTool() == variants[index]);
+            compareAnnotations(overlay.annotations(), history);
+            QVERIFY(overlay.isSelectionSaved());
+        }
+        clickAnnotationTool(overlay, "freehandToolButton");
+        QVERIFY(!bar->isVisible());
+        clickAnnotationTool(overlay, "textToolButton");
+        QVERIFY(!bar->isVisible());
+    }
+    void annotationGroupPanelGesturesAndPlacement_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::addColumn<qreal>("dpr");
+        for (int width : {320, 480, 800})
+            for (qreal dpr : {qreal(1), qreal(1.5), qreal(2)})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(width).arg(dpr)))
+                    << width << dpr;
+    }
+    void annotationGroupPanelGesturesAndPlacement()
+    {
+        QFETCH(int, width);
+        QFETCH(qreal, dpr);
+        using namespace waibusnap;
+        auto frame = annotationFrame();
+        frame.display.logicalGeometry = {0, 0, width, 600};
+        frame.display.availableLogicalGeometry = {0, 25, width, 505};
+        frame.display.devicePixelRatio = dpr;
+        frame.pixels = QImage(QSize(width, 600) * dpr, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(dpr);
+        SelectionOverlay overlay(frame);
+        overlay.show();
+        dragLogical(overlay, {0, 0}, {width, 600});
+        QTest::mouseClick(button(overlay, "ratioButton"), Qt::LeftButton);
+        QTest::mouseClick(button(overlay, "shapeButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {50, 150});
+        overlay.findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("分组提交"));
+        QTest::mouseClick(button(overlay, "geometryToolButton"), Qt::LeftButton);
+        QCOMPARE(overlay.annotations().size(), qsizetype(1));
+        const QRect selection = overlay.selection();
+        auto* sub = overlay.findChild<QWidget*>(QStringLiteral("annotationToolBar"));
+        const QString panels[] = {QStringLiteral("selectionToolbar"),
+                                  QStringLiteral("annotationToolBar"),
+                                  QStringLiteral("annotationOptionsBar"),
+                                  QStringLiteral("ratioBar"), QStringLiteral("shapeBar")};
+        QRect previous;
+        for (const auto& name : panels)
+        {
+            auto* panel = overlay.findChild<QWidget*>(name);
+            QVERIFY(panel && panel->isVisible());
+            QVERIFY(frame.display.availableLogicalGeometry.contains(panel->geometry()));
+            QVERIFY(!previous.intersects(panel->geometry()));
+            previous = panel->geometry();
+        }
+        QTest::mouseClick(sub, Qt::LeftButton, Qt::NoModifier, {1, 1});
+        QCOMPARE(overlay.selection(), selection);
+        QCOMPARE(overlay.annotations().size(), qsizetype(1));
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, {60, 150});
+        QVERIFY(sub->isVisible() && !sub->isEnabled());
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, {100, 200});
+        QVERIFY(sub->isEnabled());
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+    }
+    void stickerAnnotationGroupsAndMenu()
+    {
+        using namespace waibusnap;
+        StickerManager manager;
+        QImage image(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {40, 50}, true).success);
+        auto sticker = manager.windows().first();
+        sticker->setEditing(true);
+        auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
+        auto* bar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolBar"));
+        QVERIFY(menu && bar && !bar->isVisible());
+        const int groupSlots[] = {0, 1, 4};
+        const AnnotationType defaults[] = {AnnotationType::Rectangle, AnnotationType::Arrow,
+                                           AnnotationType::Mosaic};
+        const AnnotationType variants[] = {AnnotationType::Ellipse, AnnotationType::Line,
+                                           AnnotationType::Cover};
+        for (int index = 0; index < 3; ++index)
+        {
+            auto* action = menu->actions()[groupSlots[index]];
+            auto* primary = sticker->findChild<QPushButton*>(action->data().toString());
+            QTest::mouseClick(primary, Qt::LeftButton);
+            QVERIFY(sticker->activeTool() == defaults[index]);
+            QVERIFY(bar->isVisible());
+            QVERIFY(sticker->rect().contains(bar->geometry()));
+            auto* variant = action->menu()->actions()[index == 2 ? 0 : index == 1 ? 0 : 1];
+            variant->trigger();
+            QVERIFY(sticker->activeTool() == variants[index]);
+            QVERIFY(action->isChecked() && variant->isChecked());
+            QCOMPARE(action->text(), annotationToolName(variants[index]));
+            QCOMPARE(primary->accessibleName(), primary->toolTip());
+            stickerDrag(*sticker, {50, 100}, {100, 150});
+            QCOMPARE(sticker->annotations().size(), qsizetype(index + 1));
+            QCOMPARE(sticker->annotations().last().type, variants[index]);
+            QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, {1, 1});
+            QCOMPARE(sticker->annotations().size(), qsizetype(index + 1));
+            QTest::mouseClick(primary, Qt::LeftButton);
+            QVERIFY(!sticker->activeTool());
+            QVERIFY(!bar->isVisible());
+        }
+        const auto history = sticker->annotations();
+        QSignalSpy shown(menu, &QMenu::aboutToShow);
+        QContextMenuEvent context(QContextMenuEvent::Mouse, {100, 100},
+                                  sticker->mapToGlobal(QPoint(100, 100)));
+        QApplication::sendEvent(sticker, &context);
+        QCOMPARE(shown.size(), 1);
+        menu->hide();
+        compareAnnotations(sticker->annotations(), history);
+        sticker->setEditing(false);
+        QVERIFY(!bar->isVisible());
+        sticker->setEditing(true);
+        for (int index = 0; index < 3; ++index)
+        {
+            auto* primary = sticker->findChild<QPushButton*>(
+                menu->actions()[groupSlots[index]]->data().toString());
+            QTest::mouseClick(primary, Qt::LeftButton);
+            QVERIFY(sticker->activeTool() == variants[index]);
+            compareAnnotations(sticker->annotations(), history);
+        }
+        sticker->setSaved(true);
     }
     void toolbarCompactIconsAndTooltips()
     {
@@ -5083,7 +5300,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!options->isVisible());
         for (int tool = 0; tool < 9; ++tool)
         {
-            QTest::mouseClick(button(overlay, names[tool]), Qt::LeftButton);
+            clickAnnotationTool(overlay, names[tool]);
             QCOMPARE(options->isVisible(), tool < 7);
             for (int index = 0; index < 3; ++index)
             {
@@ -5111,19 +5328,19 @@ class StartupSmokeTest final : public QObject
                 QVERIFY(!button(overlay, "annotationColor0Button")->isChecked());
                 QVERIFY(!button(overlay, "annotationColor1Button")->isChecked());
             }
-            QTest::mouseClick(button(overlay, names[tool]), Qt::LeftButton);
+            clickAnnotationTool(overlay, names[tool]);
             QVERIFY(!options->isVisible());
             QVERIFY(!overlay.activeTool());
             QVERIFY(!overlay.isTextMode());
         }
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         QTest::mouseClick(button(overlay, "annotationWidth2Button"), Qt::LeftButton);
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(button(overlay, "annotationTextSize0Button"), Qt::LeftButton);
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         QVERIFY(button(overlay, "annotationWidth2Button")->isChecked());
         QVERIFY(button(overlay, "annotationColor2Button")->isChecked());
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QVERIFY(button(overlay, "annotationTextSize0Button")->isChecked());
     }
     void toolbarStatusPillIndependent_data()
@@ -5150,7 +5367,7 @@ class StartupSmokeTest final : public QObject
         overlay.show();
         dragLogical(overlay, fullScreen ? QPoint(0, 0) : QPoint(100, 100),
                     fullScreen ? QPoint(800, 600) : QPoint(300, 200));
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
         auto* options = overlay.findChild<QWidget*>(QStringLiteral("annotationOptionsBar"));
         const QSize toolbarSize = toolbar->size();
@@ -5186,7 +5403,7 @@ class StartupSmokeTest final : public QObject
         overlay.show();
         dragLogical(overlay, {0, 0}, {800, 600});
         auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
-        QTest::mouseClick(button(overlay, "mosaicToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "mosaicToolButton");
         auto* pill = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
         QVERIFY(pill->isVisible());
         const QRect geometry = toolbar->geometry();
@@ -5226,44 +5443,34 @@ class StartupSmokeTest final : public QObject
         overlay.show();
         drag(overlay, {100, 100}, {250, 200});
         auto* toolbar = overlay.findChild<QWidget*>(QStringLiteral("selectionToolbar"));
-        auto* first = button(overlay, "rectangleToolButton");
-        auto* cover = button(overlay, "coverToolButton");
-        QVERIFY(toolbar && first && cover);
+        auto* first = button(overlay, "geometryToolButton");
+        auto* privacy = button(overlay, "concealToolButton");
+        QVERIFY(toolbar && first && privacy);
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
-        QVERIFY(toolbar->rect().contains(cover->geometry()));
-        QVERIFY(cover->isVisible());
-        QCOMPARE(cover->y() == first->y(), screenWidth > 320);
+        QVERIFY(toolbar->rect().contains(privacy->geometry()));
+        QVERIFY(privacy->isVisible());
+        QCOMPARE(privacy->y() == first->y(), screenWidth > 320);
         for (auto* control : toolbar->findChildren<QPushButton*>())
             if (!control->isHidden())
             {
                 QVERIFY(control->isVisible());
                 QVERIFY(toolbar->rect().contains(control->geometry()));
             }
-        if (screenWidth >= 630)
-        {
-            QCOMPARE(toolbar->height(), 44);
-            QCOMPARE(button(overlay, "copyButton")->y(), first->y());
-        }
-        if (screenWidth == 480)
-            QCOMPARE(toolbar->height(), 76);
-        if (screenWidth == 320)
-            QCOMPARE(toolbar->height(), 172);
-        QTest::mouseClick(cover, Qt::LeftButton);
+        QCOMPARE(toolbar->height(), screenWidth >= 534 ? 44 : screenWidth > 320 ? 76 : 140);
+        clickAnnotationTool(overlay, "coverToolButton");
         QVERIFY(overlay.activeTool() == AnnotationType::Cover);
-        auto* mosaic = button(overlay, "mosaicToolButton");
-        QVERIFY(mosaic && mosaic->isVisible());
-        QVERIFY(toolbar->rect().contains(mosaic->geometry()));
-        QCOMPARE(mosaic->y() == first->y(), screenWidth > 320);
-        QTest::mouseClick(mosaic, Qt::LeftButton);
+        clickAnnotationTool(overlay, "mosaicToolButton");
         QVERIFY(overlay.activeTool() == AnnotationType::Mosaic);
+        auto* sub = overlay.findChild<QWidget*>(QStringLiteral("annotationToolBar"));
+        QVERIFY(sub->isVisible());
+        QVERIFY(overlay.rect().contains(sub->geometry()));
         auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
         QVERIFY(status->isVisible());
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
-        QCOMPARE(toolbar->height(), screenWidth >= 630 ? 44 : screenWidth > 332 ? 76 : 172);
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
         QTRY_VERIFY(!overlay.isRecognizingText());
         QVERIFY(button(overlay, "extractAllTextButton")->isVisible());
-        QCOMPARE(toolbar->height(), screenWidth >= 683 ? 44 : screenWidth > 332 ? 76 : 172);
+        QCOMPARE(toolbar->height(), screenWidth >= 587 ? 44 : screenWidth > 320 ? 76 : 140);
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
         for (auto* control : toolbar->findChildren<QPushButton*>())
         {
@@ -5301,17 +5508,17 @@ class StartupSmokeTest final : public QObject
         SelectionOverlay overlay(frame, actions);
         overlay.show();
         drag(overlay, {100, 100}, {300, 250});
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         drag(overlay, {110, 110}, {240, 220});
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {125, 125});
         overlay.findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("敏感 ABC 123"));
         auto* cover = button(overlay, "coverToolButton");
-        QVERIFY(cover && cover->isVisible());
+        QVERIFY(cover);
         QVERIFY(!cover->icon().isNull());
         QVERIFY(!cover->toolTip().isEmpty());
         QVERIFY(!cover->accessibleName().isEmpty());
-        QTest::mouseClick(cover, Qt::LeftButton);
+        clickAnnotationTool(overlay, "coverToolButton");
         QCOMPARE(overlay.annotations().size(), qsizetype(2));
         QVERIFY(overlay.activeTool() == AnnotationType::Cover);
         auto* options = overlay.findChild<QWidget*>(QStringLiteral("annotationOptionsBar"));
@@ -5321,11 +5528,11 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!widths->isVisible());
         QVERIFY(!sizes->isVisible());
         QVERIFY(colors->isVisible());
-        QTest::mouseClick(cover, Qt::LeftButton);
+        clickAnnotationTool(overlay, "coverToolButton");
         QVERIFY(!overlay.activeTool());
         QVERIFY(!cover->isChecked());
         QVERIFY(!options->isVisible());
-        QTest::mouseClick(cover, Qt::LeftButton);
+        clickAnnotationTool(overlay, "coverToolButton");
         QVERIFY(overlay.exportToPath(path));
         QVERIFY(overlay.isSelectionSaved());
         const QImage before(path);
@@ -5413,8 +5620,9 @@ class StartupSmokeTest final : public QObject
         sticker->findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("敏感 ABC 123"));
         auto* cover =
             sticker->findChild<QPushButton*>(QStringLiteral("stickerEditCoverToolButton"));
-        QVERIFY(cover && cover->isVisible());
-        QCOMPARE(cover->text(), QStringLiteral("遮盖"));
+        QVERIFY(cover);
+        QVERIFY(cover->text().isEmpty());
+        QVERIFY(cover->accessibleName().contains(QStringLiteral("遮盖")));
         stickerClick(*sticker, "stickerEditCoverToolButton");
         QCOMPARE(sticker->annotations().size(), qsizetype(2));
         QVERIFY(sticker->activeTool() == AnnotationType::Cover);
@@ -5495,20 +5703,20 @@ class StartupSmokeTest final : public QObject
         SelectionOverlay overlay(frame, actions);
         overlay.show();
         drag(overlay, {100, 100}, {300, 250});
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         drag(overlay, {110, 110}, {240, 220});
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {125, 125});
         overlay.findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("敏感 ABC 123"));
         auto* mosaic = button(overlay, "mosaicToolButton");
-        QVERIFY(mosaic && mosaic->isVisible());
+        QVERIFY(mosaic);
         QVERIFY(!mosaic->icon().isNull());
         QVERIFY(!mosaic->toolTip().isEmpty());
         QVERIFY(!mosaic->accessibleName().isEmpty());
         const auto notice = QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖");
         QCOMPARE(mosaic->toolTip(), notice);
         QCOMPARE(mosaic->accessibleName(), notice);
-        QTest::mouseClick(mosaic, Qt::LeftButton);
+        clickAnnotationTool(overlay, "mosaicToolButton");
         QCOMPARE(overlay.annotations().size(), qsizetype(2));
         QVERIFY(overlay.activeTool() == AnnotationType::Mosaic);
         auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
@@ -5523,12 +5731,12 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!widths->isVisible());
         QVERIFY(!sizes->isVisible());
         QVERIFY(!colors->isVisible());
-        QTest::mouseClick(mosaic, Qt::LeftButton);
+        clickAnnotationTool(overlay, "mosaicToolButton");
         QVERIFY(!overlay.activeTool());
         QVERIFY(!mosaic->isChecked());
         QVERIFY(!options->isVisible());
         QVERIFY(!options->isVisible());
-        QTest::mouseClick(mosaic, Qt::LeftButton);
+        clickAnnotationTool(overlay, "mosaicToolButton");
         QCOMPARE(status->text(), QStringLiteral("保留反馈"));
         QVERIFY(!status->isVisible());
         QVERIFY(overlay.exportToPath(path));
@@ -5571,9 +5779,9 @@ class StartupSmokeTest final : public QObject
                      .convertToFormat(saved.format()),
                  saved);
         // 参数条在马赛克模式隐藏；经颜色工具设置后切回，验证参数保留且不影响像素化。
-        QTest::mouseClick(button(overlay, "coverToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "coverToolButton");
         QTest::mouseClick(button(overlay, "annotationColor2Button"), Qt::LeftButton);
-        QTest::mouseClick(button(overlay, "mosaicToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "mosaicToolButton");
         drag(overlay, {225, 180}, {115, 115});
         QCOMPARE(overlay.annotations().last().style.color, annotationColors()[2]);
         QSignalSpy finished(&overlay, &SelectionOverlay::finished);
@@ -5621,8 +5829,8 @@ class StartupSmokeTest final : public QObject
         sticker->findChild<AnnotationTextEdit*>()->setPlainText(QStringLiteral("敏感 ABC 123"));
         auto* mosaic =
             sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMosaicToolButton"));
-        QVERIFY(mosaic && mosaic->isVisible());
-        QCOMPARE(mosaic->text(), QStringLiteral("马赛克"));
+        QVERIFY(mosaic);
+        QVERIFY(mosaic->text().isEmpty());
         const auto notice = QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖");
         QCOMPARE(mosaic->toolTip(), notice);
         QCOMPARE(mosaic->accessibleName(), notice);
@@ -5704,13 +5912,13 @@ class StartupSmokeTest final : public QObject
                                   QStringLiteral("遮盖"), QStringLiteral("马赛克")};
         for (int index = 0; index < 8; ++index)
         {
+            clickAnnotationTool(overlay, names[index]);
             auto* tool = button(overlay, names[index]);
             QVERIFY(tool && tool->isVisible());
             QVERIFY(tool->text().isEmpty());
             QVERIFY(!tool->icon().isNull());
             QVERIFY(tool->accessibleName().contains(labels[index]));
             QVERIFY(tool->toolTip().contains(labels[index]));
-            QTest::mouseClick(tool, Qt::LeftButton);
             QVERIFY(overlay.activeTool() == static_cast<AnnotationType>(index));
             QVERIFY(tool->isChecked());
             if (index == 5)
@@ -5732,7 +5940,7 @@ class StartupSmokeTest final : public QObject
             QCOMPARE(overlay.annotations().last().type, static_cast<AnnotationType>(index));
             QCOMPARE(overlay.annotations().last().first,
                      QPointF(index == 5 ? 240 : 200, index == 5 ? 280 : 200));
-            QTest::mouseClick(tool, Qt::LeftButton);
+            clickAnnotationTool(overlay, names[index]);
             QVERIFY(!overlay.activeTool());
             QVERIFY(!tool->isChecked());
         }
@@ -5767,7 +5975,7 @@ class StartupSmokeTest final : public QObject
         }
         QVERIFY(!undo->isEnabled());
         QVERIFY(!redo->isEnabled());
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         for (int index = 0; index < 3; ++index)
         {
             QTest::mouseClick(
@@ -5805,7 +6013,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!redo->isEnabled());
         standardKey(&overlay, QKeySequence::Redo);
         QCOMPARE(overlay.annotations().size(), qsizetype(3));
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QVERIFY(!button(overlay, "annotationWidth0Button")->isVisible());
         QVERIFY(button(overlay, "annotationTextSize0Button")->isVisible());
         QTest::mouseClick(button(overlay, "annotationTextSize2Button"), Qt::LeftButton);
@@ -5823,7 +6031,7 @@ class StartupSmokeTest final : public QObject
         overlay.show();
         overlay.activateWindow();
         drag(overlay, {100, 100}, {300, 250});
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 140});
         auto* editor = overlay.findChild<AnnotationTextEdit*>();
         QVERIFY(editor && editor->isVisible());
@@ -5874,7 +6082,7 @@ class StartupSmokeTest final : public QObject
         QSignalSpy finished(&overlay, &SelectionOverlay::finished);
         overlay.show();
         drag(overlay, {100, 100}, {300, 250});
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 120});
         auto* editor = overlay.findChild<AnnotationTextEdit*>();
         editor->setPlainText(QStringLiteral("截图说明 ABC 123\n第二行"));
@@ -5897,10 +6105,10 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(overlay.annotations().size(), qsizetype(2));
         QVERIFY(!overlay.isSelectionSaved());
         // 空编辑切换工具时不产生额外步骤。
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         QCOMPARE(overlay.annotations().size(), qsizetype(2));
         drag(overlay, {120, 160}, {280, 160});
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {160, 200});
         editor->setPlainText(QStringLiteral("复制前确认"));
         auto expectedAnnotations = overlay.annotations();
@@ -5925,7 +6133,7 @@ class StartupSmokeTest final : public QObject
         QSignalSpy finished(&overlay, &SelectionOverlay::finished);
         overlay.show();
         drag(overlay, {100, 100}, {300, 250});
-        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 120});
         auto* editor = overlay.findChild<AnnotationTextEdit*>();
         QVERIFY(editor && editor->isVisible());
@@ -5964,7 +6172,7 @@ class StartupSmokeTest final : public QObject
         QSignalSpy finished(&overlay, &SelectionOverlay::finished);
         overlay.show();
         drag(overlay, {100, 100}, {300, 250});
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         drag(overlay, {90, 150}, {310, 150});
         QCOMPARE(overlay.selection(), QRect(200, 200, 400, 300));
         QTest::mouseClick(button(overlay, "saveButton"), Qt::LeftButton);
@@ -7053,7 +7261,7 @@ class StartupSmokeTest final : public QObject
         QSignalSpy finished(&overlay, &waibusnap::SelectionOverlay::finished);
         overlay.show();
         drag(overlay, {20, 10}, {80, 60});
-        QTest::mouseClick(button(overlay, "lineToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "lineToolButton");
         drag(overlay, {30, 35}, {70, 35});
         QCOMPARE(overlay.annotations().size(), qsizetype(1));
         if (action == 0)
@@ -7473,7 +7681,7 @@ class StartupSmokeTest final : public QObject
                 QTest::keyClick(&overlay, key, modifiers);
         QCOMPARE(overlay.selection(), before);
         QVERIFY(!overlay.magnifierVisible());
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         auto* color = button(overlay, "annotationColor0Button");
         color->setFocus();
         QTRY_VERIFY(color->hasFocus());
@@ -7511,7 +7719,7 @@ class StartupSmokeTest final : public QObject
                                "coverToolButton",     "mosaicToolButton"};
         for (const char* tool : tools)
         {
-            QTest::mouseClick(button(overlay, tool), Qt::LeftButton);
+            clickAnnotationTool(overlay, tool);
             QVERIFY(overlay.activeTool().has_value());
             for (auto modifier : {Qt::NoModifier, Qt::ShiftModifier, Qt::AltModifier})
                 for (auto key : {Qt::Key_Left, Qt::Key_Right, Qt::Key_Up, Qt::Key_Down})
@@ -7538,7 +7746,7 @@ class StartupSmokeTest final : public QObject
                 QInputMethodEvent clear;
                 QApplication::sendEvent(editor, &clear);
             }
-            QTest::mouseClick(button(overlay, tool), Qt::LeftButton);
+            clickAnnotationTool(overlay, tool);
             QVERIFY(!overlay.activeTool());
         }
     }
@@ -7560,9 +7768,9 @@ class StartupSmokeTest final : public QObject
         overlay.show();
         overlay.activateWindow();
         drag(overlay, {100, 100}, {400, 350});
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         drag(overlay, {150, 150}, {200, 200});
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         QTest::mouseClick(button(overlay, "undoAnnotationButton"), Qt::LeftButton);
         QVERIFY(overlay.annotations().isEmpty());
         QVERIFY(button(overlay, "redoAnnotationButton")->isEnabled());
@@ -7766,9 +7974,9 @@ class StartupSmokeTest final : public QObject
         QVERIFY(overlay.magnifierSample().isNull());
         QTest::keyClick(&overlay, Qt::Key_Right);
         QVERIFY(overlay.magnifierVisible());
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         QVERIFY(!overlay.magnifierVisible());
-        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        clickAnnotationTool(overlay, "rectangleToolButton");
         QTest::keyClick(&overlay, Qt::Key_Right);
         QVERIFY(overlay.magnifierVisible());
         overlay.close();

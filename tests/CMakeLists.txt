@@ -79,6 +79,7 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     fullScreenToolbarUsesInsideBottom toolbarStaysReachableWithSystemChrome
     toolbarCompactIconsAndTooltips toolbarOptionsFollowActiveTool toolbarStatusPillIndependent
     toolbarStatusPillTimesOut
+    annotationGroupDefaultsAndMemory annotationGroupPanelGesturesAndPlacement stickerAnnotationGroupsAndMenu
     coverOverlayToolbarFitsNarrowScreens annotationStylesUndoRedoAndDirtyState
     toolbarBackgroundCommitsAndClearsPreedit
     shapeToolbarButtonAndBar shapeRatioExclusion shapeShiftRatioLock shapeOutputPixels

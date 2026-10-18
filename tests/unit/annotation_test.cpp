@@ -2,6 +2,7 @@
 #include "core/selection_geometry.h"
 #include <QTest>
 #include <cmath>
+#include <limits>
 #include <utility>
 namespace
 {
@@ -143,6 +144,70 @@ class AnnotationTest final : public QObject
         arrow.last = {13, 24};
         const auto shortHead = arrowHead(arrow);
         QCOMPARE((shortHead[1] + shortHead[2]) / 2, arrow.first);
+        arrow.last = arrow.first;
+        QVERIFY(arrowHead(arrow).isEmpty());
+    }
+    void arrowGeometryMatrix_data()
+    {
+        QTest::addColumn<int>("angle");
+        QTest::addColumn<int>("width");
+        QTest::addColumn<qreal>("length");
+        for (int angle : {0, 45, 90, 135, 180, 225, 270, 315})
+            for (int width : {1, 2, 8, std::numeric_limits<int>::max()})
+                for (qreal length : {qreal(0.001), qreal(2), qreal(40), qreal(400)})
+                    QTest::newRow(
+                        qPrintable(QStringLiteral("%1-%2-%3").arg(angle).arg(width).arg(length)))
+                        << angle << width << length;
+    }
+    void arrowGeometryMatrix()
+    {
+        QFETCH(int, angle);
+        QFETCH(int, width);
+        QFETCH(qreal, length);
+        using namespace waibusnap;
+        const qreal radians = angle * std::acos(qreal(-1)) / 180;
+        const QPointF unit(std::cos(radians), std::sin(radians));
+        Annotation arrow = sample(AnnotationType::Arrow);
+        arrow.first = {-25, 37};
+        arrow.last = arrow.first + unit * length;
+        arrow.style.lineWidth = width;
+        const auto head = arrowHead(arrow);
+        QCOMPARE(head.size(), qsizetype(3));
+        QCOMPARE(head[0], arrow.last);
+        const QPointF base = (head[1] + head[2]) / 2;
+        const qreal expected = std::min(length, std::max(qreal(10), qreal(width) * 4));
+        QVERIFY(std::hypot((arrow.last - base).x(), (arrow.last - base).y()) <= length + 1e-8);
+        QVERIFY(std::abs(QPointF::dotProduct(arrow.last - base, unit) - expected) < 1e-8);
+        const QPointF wing = head[1] - base;
+        QVERIFY(std::abs(QPointF::dotProduct(wing, unit)) < 1e-8);
+        QVERIFY(std::abs(std::hypot(wing.x(), wing.y()) - expected * 0.45) < 1e-8);
+        QVERIFY(std::hypot((head[2] - base + wing).x(), (head[2] - base + wing).y()) < 1e-8);
+        // 两翼相对尖端的夹角由固定宽长比决定，且都位于尖端后方。
+        for (int index : {1, 2})
+        {
+            const QPointF backward = head[index] - arrow.last;
+            QVERIFY(QPointF::dotProduct(backward, unit) < 0);
+            const qreal cosine =
+                -QPointF::dotProduct(backward, unit) / std::hypot(backward.x(), backward.y());
+            QVERIFY(std::abs(cosine - 1 / std::hypot(qreal(1), qreal(0.45))) < 1e-8);
+        }
+    }
+    void arrowInvalidGeometry()
+    {
+        using namespace waibusnap;
+        auto arrow = sample(AnnotationType::Arrow);
+        for (int width : {0, -1, std::numeric_limits<int>::min()})
+        {
+            arrow.style.lineWidth = width;
+            QVERIFY(arrowHead(arrow).isEmpty());
+        }
+        arrow.style.lineWidth = 8;
+        for (qreal invalid :
+             {std::numeric_limits<qreal>::infinity(), std::numeric_limits<qreal>::quiet_NaN()})
+        {
+            arrow.last = {invalid, 20};
+            QVERIFY(arrowHead(arrow).isEmpty());
+        }
         arrow.last = arrow.first;
         QVERIFY(arrowHead(arrow).isEmpty());
     }

@@ -8,6 +8,7 @@
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include "output/image_save.h"
+#include "ui/toolbar_icons.h"
 #include <QLabel>
 #include <QPointer>
 #include <QTimer>
@@ -123,7 +124,7 @@ class SelectionOverlay final : public QWidget
     QRect availableRect() const;
     void positionStatus();
     void markDirty();
-    void activateTool(AnnotationType type);
+    void activateTool(AnnotationType type, bool toggle = true);
     void updateAnnotation(QPointF position);
     void undoAnnotation();
     void redoAnnotation();
@@ -183,6 +184,9 @@ class SelectionOverlay final : public QWidget
     AnnotationTextEdit* textEditor_ = nullptr;
     Annotation textDraft_;
     QVector<QPushButton*> toolButtons_;
+    std::array<AnnotationType, 5> toolTypes_ = defaultAnnotationTools;
+    QWidget* toolBar_ = nullptr;
+    QVector<QPushButton*> subtoolButtons_;
     QPushButton* undoButton_ = nullptr;
     QPushButton* redoButton_ = nullptr;
     QPushButton* ocrButton_ = nullptr;
