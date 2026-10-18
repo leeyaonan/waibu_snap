@@ -1,0 +1,16 @@
+********* Start testing of PlatformWorkaroundsTest *********
+Config: Using QtTest library 6.11.2, Qt 6.11.2 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 16.0.0 (clang-1600.0.26.3)), macos 27.0.1
+PASS   : PlatformWorkaroundsTest::initTestCase()
+PASS   : PlatformWorkaroundsTest::overlayWindowLevelNullWindow()
+PASS   : PlatformWorkaroundsTest::overlayWindowLevelGuards()
+PASS   : PlatformWorkaroundsTest::overlayWindowLevelRoundTrip()
+QINFO  : PlatformWorkaroundsTest::nativeVisibilityAndRecovery() 原生在屏故障注入： onScreen=0 windowNumber=68233 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=8 collectionBehavior=258 nativeVisible=0 hidesOnDeactivate=0
+QINFO  : PlatformWorkaroundsTest::nativeVisibilityAndRecovery() 原生在屏恢复： onScreen=1 windowNumber=68233 isOnActiveSpace=1 occlusionState=8192 visibilityAvailable=1 windowLevel=25 collectionBehavior=258 nativeVisible=1 hidesOnDeactivate=0
+QINFO  : PlatformWorkaroundsTest::nativeVisibilityAndRecovery() 候选 collectionBehavior（仅当前 Space）： onScreen=1 windowNumber=68233 isOnActiveSpace=1 occlusionState=8194 visibilityAvailable=1 windowLevel=25 collectionBehavior=257 nativeVisible=1 hidesOnDeactivate=0
+PASS   : PlatformWorkaroundsTest::nativeVisibilityAndRecovery()
+PASS   : PlatformWorkaroundsTest::overlayNotificationsAndLifetime()
+PASS   : PlatformWorkaroundsTest::regionWindowIdGuardsAndNativeNumber()
+PASS   : PlatformWorkaroundsTest::safeClickCount()
+PASS   : PlatformWorkaroundsTest::cleanupTestCase()
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 1810ms
+********* Finished testing of PlatformWorkaroundsTest *********

@@ -64,6 +64,9 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
         }
     }
     actions_.shapeTemplates = std::move(usable);
+    // Qt::Tool 的 Cocoa NSPanel 默认可能随应用失活隐去，但 Qt isVisible 仍为真。
+    // 截图冻结层由会话显式 hide/finish 管理，不随其他应用获得焦点而隐去。
+    setAttribute(Qt::WA_MacAlwaysShowToolWindow);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);

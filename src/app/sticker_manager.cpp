@@ -1,6 +1,8 @@
 #include "app/sticker_manager.h"
 #include "core/sticker_geometry.h"
 #include "interfaces/sticker_window_behavior.h"
+#include "interfaces/window_visibility.h"
+#include <QDebug>
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QPushButton>
@@ -84,6 +86,13 @@ ImageOutputResult StickerManager::create(const QImage& image, QPoint position, b
         delete window;
         return {false, QStringLiteral("无法显示贴图窗口，请重试。")};
     }
+    QTimer::singleShot(0, window,
+                       [window]
+                       {
+                           qInfo().noquote()
+                               << "贴图在屏诊断（创建）：QtVisible=" << window->isVisible()
+                               << queryWindowVisibility(window->windowHandle()).diagnostic();
+                       });
     return {true, {}};
 }
 void StickerManager::hideAll()
@@ -106,8 +115,13 @@ void StickerManager::restoreAll()
         return;
     const auto windows = windows_;
     for (const auto& window : windows)
-        if (window && !window->isVisible())
-            window->show();
+        if (window)
+        {
+            if (!window->isVisible())
+                window->show();
+            qInfo().noquote() << "贴图在屏诊断（恢复）：QtVisible=" << window->isVisible()
+                              << queryWindowVisibility(window->windowHandle()).diagnostic();
+        }
 }
 void StickerManager::closeAll()
 {
@@ -175,6 +189,8 @@ void StickerManager::recoverWindows()
     for (const auto& window : windows_)
         if (window)
         {
+            qInfo().noquote() << "贴图在屏诊断（屏幕变更）：QtVisible=" << window->isVisible()
+                              << queryWindowVisibility(window->windowHandle()).diagnostic();
             const QPoint recovered =
                 recoveredStickerPosition(window->geometry(), screens, primary->availableGeometry());
             if (recovered != window->pos())

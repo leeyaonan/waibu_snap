@@ -1,0 +1,33 @@
+Test project /Users/rot/dev/project/waibu_snap_workspace/waibu_snap/build/macos
+      Start  1: startup_smoke
+ 1/14 Test  #1: startup_smoke ....................   Passed   17.23 sec
+      Start  2: selection_geometry
+ 2/14 Test  #2: selection_geometry ...............   Passed    0.89 sec
+      Start  3: image_output
+ 3/14 Test  #3: image_output .....................   Passed    0.62 sec
+      Start  4: annotation
+ 4/14 Test  #4: annotation .......................   Passed    0.27 sec
+      Start  5: window_snapping
+ 5/14 Test  #5: window_snapping ..................   Passed    0.28 sec
+      Start  6: hotkey_settings
+ 6/14 Test  #6: hotkey_settings ..................   Passed    0.52 sec
+      Start  7: measurement_tool
+ 7/14 Test  #7: measurement_tool .................   Passed    0.15 sec
+      Start  8: probe_cpu_calibration
+ 8/14 Test  #8: probe_cpu_calibration ............   Passed    0.21 sec
+      Start  9: sticker_geometry
+ 9/14 Test  #9: sticker_geometry .................   Passed    0.39 sec
+      Start 10: startup_smoke_sticker_high_dpi
+10/14 Test #10: startup_smoke_sticker_high_dpi ...   Passed   16.53 sec
+      Start 11: text_layout
+11/14 Test #11: text_layout ......................   Passed    0.46 sec
+      Start 12: aspect_ratio
+12/14 Test #12: aspect_ratio .....................   Passed    0.29 sec
+      Start 13: shape_mask
+13/14 Test #13: shape_mask .......................   Passed    0.27 sec
+      Start 14: scroll_stitcher
+14/14 Test #14: scroll_stitcher ..................   Passed   27.82 sec
+
+100% tests passed out of 14
+
+Total Test time (real) =  65.94 sec

@@ -1,6 +1,7 @@
 #include "interfaces/overlay_window_behavior.h"
 #include "interfaces/platform_workarounds.h"
 #include "interfaces/region_capture.h"
+#include "interfaces/window_visibility.h"
 #import <AppKit/AppKit.h>
 #include <QGuiApplication>
 #include <QWindow>
@@ -15,6 +16,7 @@ class PlatformWorkaroundsTest final : public QObject
     {
         waibusnap::lowerOverlayBelowSystemPanels(nullptr);
         waibusnap::raiseOverlayAboveSystemChrome(nullptr);
+        QVERIFY(!waibusnap::reassertOverlayWindow(nullptr, true));
     }
     void overlayWindowLevelGuards()
     {
@@ -29,6 +31,8 @@ class PlatformWorkaroundsTest final : public QObject
         waibusnap::lowerOverlayBelowSystemPanels(&window);
         waibusnap::raiseOverlayAboveSystemChrome(&window);
         // 安全返回不得为尚未显示的窗口创建原生句柄。
+        QVERIFY(!window.handle());
+        QVERIFY(!waibusnap::reassertOverlayWindow(&window, true));
         QVERIFY(!window.handle());
     }
     void overlayWindowLevelRoundTrip()
@@ -65,6 +69,114 @@ class PlatformWorkaroundsTest final : public QObject
         QCOMPARE(native.level, NSInteger(0));
         waibusnap::raiseOverlayAboveSystemChrome(&window);
         QCOMPARE(native.level, NSInteger(25));
+    }
+    void nativeVisibilityAndRecovery()
+    {
+        using namespace waibusnap;
+        QVERIFY(!queryWindowVisibility(nullptr).available);
+        QWindow window;
+        QVERIFY(!queryWindowVisibility(&window).available);
+        QVERIFY(!window.handle());
+        if (QGuiApplication::platformName() != QStringLiteral("cocoa") ||
+            QGuiApplication::screens().isEmpty())
+            QSKIP("当前无 Cocoa 屏幕，原生在屏验证需真实 WindowServer。");
+        window.setFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        window.setGeometry(100, 100, 240, 160);
+        window.show();
+        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window.winId());
+        NSWindow* native = view.window;
+        QVERIFY(native);
+        native.hidesOnDeactivate = NO;
+        QTRY_VERIFY(queryWindowVisibility(&window).onScreen);
+        const auto before = queryWindowVisibility(&window);
+        QCOMPARE(before.windowNumber, quint64(native.windowNumber));
+        QVERIFY(before.available);
+        QVERIFY(before.isOnActiveSpace >= 0);
+        QVERIFY(before.occlusionState >= 0);
+        // 真实原生 orderOut 不改变 Qt 可见状态，复刻本次缺失的检测条件。
+        [native orderOut:nil];
+        QVERIFY(window.isVisible());
+        QTRY_VERIFY(!queryWindowVisibility(&window).onScreen);
+        qInfo().noquote() << "原生在屏故障注入：" << queryWindowVisibility(&window).diagnostic();
+        QVERIFY(reassertOverlayWindow(&window, false));
+        QTRY_VERIFY(queryWindowVisibility(&window).onScreen);
+        QCOMPARE(native.level, NSInteger(25));
+        qInfo().noquote() << "原生在屏恢复：" << queryWindowVisibility(&window).diagnostic();
+        lowerOverlayBelowSystemPanels(&window);
+        [native orderOut:nil];
+        QVERIFY(!reassertOverlayWindow(&window, true));
+        QCOMPARE(native.level, NSInteger(0));
+        QTRY_VERIFY(!queryWindowVisibility(&window).onScreen);
+        raiseOverlayAboveSystemChrome(&window);
+        QVERIFY(reassertOverlayWindow(&window, false));
+        QTRY_VERIFY(queryWindowVisibility(&window).onScreen);
+        // 只评估位掩码合法性，不把同一 Space 在屏当作多 Space / 全屏验证。
+        const auto original = native.collectionBehavior;
+        native.collectionBehavior = (original & ~(NSWindowCollectionBehaviorMoveToActiveSpace |
+                                                  NSWindowCollectionBehaviorFullScreenPrimary |
+                                                  NSWindowCollectionBehaviorFullScreenNone)) |
+                                    NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                    NSWindowCollectionBehaviorFullScreenAuxiliary;
+        qInfo().noquote() << "候选 collectionBehavior（仅当前 Space）："
+                          << queryWindowVisibility(&window).diagnostic();
+        QVERIFY(queryWindowVisibility(&window).onScreen);
+        native.collectionBehavior = original;
+    }
+    void overlayNotificationsAndLifetime()
+    {
+        using namespace waibusnap;
+        if (QGuiApplication::platformName() != QStringLiteral("cocoa") ||
+            QGuiApplication::screens().isEmpty())
+            QSKIP("当前无 Cocoa 屏幕，原生在屏验证需真实 WindowServer。");
+        QWindow window;
+        window.create();
+        QObject context;
+        int callbacks = 0;
+        auto observer =
+            observeOverlayWindow(&window, &context, [&](const QString&) { ++callbacks; });
+        QVERIFY(observer);
+        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window.winId());
+        const auto post = [&]
+        {
+            [NSWorkspace.sharedWorkspace.notificationCenter
+                postNotificationName:NSWorkspaceActiveSpaceDidChangeNotification
+                              object:nil];
+            [NSWorkspace.sharedWorkspace.notificationCenter
+                postNotificationName:NSWorkspaceDidWakeNotification
+                              object:nil];
+            [NSNotificationCenter.defaultCenter
+                postNotificationName:NSApplicationDidChangeScreenParametersNotification
+                              object:nil];
+            [NSNotificationCenter.defaultCenter
+                postNotificationName:NSWindowDidChangeOcclusionStateNotification
+                              object:view.window];
+        };
+        [NSWorkspace.sharedWorkspace.notificationCenter
+            postNotificationName:NSWorkspaceActiveSpaceDidChangeNotification
+                          object:nil];
+        QTRY_COMPARE(callbacks, 1);
+        [NSWorkspace.sharedWorkspace.notificationCenter
+            postNotificationName:NSWorkspaceDidWakeNotification
+                          object:nil];
+        QTRY_COMPARE(callbacks, 2);
+        [NSNotificationCenter.defaultCenter
+            postNotificationName:NSApplicationDidChangeScreenParametersNotification
+                          object:nil];
+        QTRY_COMPARE(callbacks, 3);
+        [NSNotificationCenter.defaultCenter
+            postNotificationName:NSWindowDidChangeOcclusionStateNotification
+                          object:view.window];
+        QTRY_COMPARE(callbacks, 4);
+        post();
+        QCOMPARE(callbacks, 4);
+        QTRY_COMPARE(callbacks, 5);
+        post();
+        observer.reset();
+        QTest::qWait(150);
+        QCOMPARE(callbacks, 5);
+        post();
+        QTest::qWait(150);
+        QCOMPARE(callbacks, 5);
     }
     void regionWindowIdGuardsAndNativeNumber()
     {

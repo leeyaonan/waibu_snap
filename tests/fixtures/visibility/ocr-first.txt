@@ -1,0 +1,17 @@
+********* Start testing of TextRecognizerTest *********
+Config: Using QtTest library 6.11.2, Qt 6.11.2 (arm64-little_endian-lp64 shared (dynamic) release build; by Apple LLVM 16.0.0 (clang-1600.0.26.3)), macos 27.0.1
+QINFO  : TextRecognizerTest::initTestCase() 正在查询系统 OCR 支持列表。
+QINFO  : TextRecognizerTest::initTestCase() 正在检查系统 OCR 引擎可用性。
+QINFO  : TextRecognizerTest::initTestCase() 系统 OCR 支持列表： en-US,fr-FR,it-IT,de-DE,es-ES,pt-BR,zh-Hans,zh-Hant,yue-Hans,yue-Hant,ko-KR,ja-JP,ru-RU,uk-UA,th-TH,vi-VT,ar-SA,ars-SA,tr-TR,id-ID,cs-CZ,da-DK,nl-NL,no-NO,nn-NO,nb-NO,ms-MY,pl-PL,ro-RO,sv-SE,fi-FI,hi-IN,mr-IN
+PASS   : TextRecognizerTest::initTestCase()
+QINFO  : TextRecognizerTest::fixedSample() Vision 实际识别语言： zh-Hans,en-US
+FAIL!  : TextRecognizerTest::fixedSample() 'result.ok' returned FALSE. (真实引擎测试超过 20 秒。)
+   Loc: [/Users/rot/dev/project/waibu_snap_workspace/waibu_snap/tests/integration/text_recognizer_test.cpp(56)]
+QINFO  : TextRecognizerTest::blankAndInvalid() Vision 实际识别语言： zh-Hans,en-US
+PASS   : TextRecognizerTest::blankAndInvalid()
+QINFO  : TextRecognizerTest::timing() Vision 实际识别语言： zh-Hans,en-US
+QINFO  : TextRecognizerTest::timing() 触发到结果可用，次数： 1 P95(ms)： 221.048 最小(ms)： 221.048 最大(ms)： 221.048
+PASS   : TextRecognizerTest::timing()
+PASS   : TextRecognizerTest::cleanupTestCase()
+Totals: 4 passed, 1 failed, 0 skipped, 0 blacklisted, 24199ms
+********* Finished testing of TextRecognizerTest *********

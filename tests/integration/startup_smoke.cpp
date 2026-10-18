@@ -59,6 +59,7 @@ namespace waibusnap
 {
 struct OverlayScrollTestAccess
 {
+    static void panel(SelectionOverlay& overlay, bool open) { overlay.saveDialogOpen_ = open; }
     static void enable(SelectionOverlay& overlay) { overlay.scrollSupported_ = true; }
     static void clearSelection(SelectionOverlay& overlay) { overlay.setSelection({}); }
 };
@@ -149,6 +150,36 @@ struct ApplicationControllerTestAccess
     {
         controller.scrollFactory_ = std::move(factory);
     }
+    static void visibilityState(ApplicationController& controller, bool available, bool onScreen)
+    {
+        controller.visibilityQuery_ = [available, onScreen](QWindow*)
+        { return WindowVisibility{available, onScreen, 67471, 0, 0, 25, 0}; };
+    }
+    static void visibility(ApplicationController& controller, bool onScreen)
+    {
+        controller.visibilityQuery_ = [onScreen](QWindow*)
+        { return WindowVisibility{true, onScreen, 67471, 0, 0, 25, 0}; };
+    }
+    static void ageInvisible(ApplicationController& controller, qint64 ms)
+    {
+        controller.invisibleSinceNs_ = monotonicNs() - ms * 1000000;
+    }
+    static void recovery(ApplicationController& controller, std::function<bool(QWindow*, bool)> fn)
+    {
+        controller.visibilityRecovery_ = std::move(fn);
+    }
+    static void presentation(ApplicationController& controller)
+    {
+        controller.presentationCompleted(controller.token_, {monotonicNs(), 16.67, true});
+    }
+    static bool captureTimeoutActive(ApplicationController& controller)
+    {
+        return controller.captureTimeout_.isActive();
+    }
+    static void eventRecovery(ApplicationController& controller)
+    {
+        controller.recoverOverlayWindow(controller.overlay_, true, QStringLiteral("测试系统事件"));
+    }
     static void watchdogCheck(ApplicationController& controller)
     {
         controller.checkSessionWatchdog();
@@ -165,6 +196,7 @@ struct ApplicationControllerTestAccess
     {
         return controller.scrollBar_;
     }
+    static void cancelNormal(ApplicationController& controller) { controller.finish({}, 2); }
     static void cancel(ApplicationController& controller)
     {
         controller.finish({}, scrollCancelledOutcome);
@@ -2981,6 +3013,185 @@ class StartupSmokeTest final : public QObject
         QVERIFY(ApplicationControllerTestAccess::watchdog(controller).isActive());
         QVERIFY(metrics.atEnd());
     }
+    void controllerNativeInvisibleRegression_data()
+    {
+        QTest::addColumn<bool>("available");
+        QTest::newRow("known-off-screen") << true;
+        QTest::newRow("query-unavailable") << false;
+    }
+    void controllerNativeInvisibleRegression()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, available);
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        ApplicationController controller(*qApp, options);
+        QPointer<SelectionOverlay> overlay = new SelectionOverlay(sampleFrame());
+        overlay->show();
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+        ApplicationControllerTestAccess::visibilityState(controller, available, false);
+        int attempts = 0;
+        bool activated = false;
+        ApplicationControllerTestAccess::recovery(controller,
+                                                  [&](QWindow*, bool activate)
+                                                  {
+                                                      activated = activate;
+                                                      ++attempts;
+                                                      return true;
+                                                  });
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral(
+                                               "截图触发被忽略：.*onScreen=0 windowNumber=67471 "
+                                               "isOnActiveSpace=0 occlusionState=0.*")));
+        controller.trigger(QStringLiteral("hotkey"));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(
+                                 "截图会话看门狗发现真实在屏异常：.*onScreen=0 windowNumber=67471 "
+                                 "isOnActiveSpace=0 occlusionState=0.*")));
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QCOMPARE(attempts, 1);
+        QVERIFY(activated);
+        QVERIFY(controller.active());
+        // 老会话首次消失仍有独立宽限；19 秒不能提前复位。
+        ApplicationControllerTestAccess::ageInvisible(controller, 19000);
+        QTest::ignoreMessage(
+            QtWarningMsg, QRegularExpression(QStringLiteral("截图会话看门狗发现真实在屏异常：.*")));
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QVERIFY(controller.active());
+        ApplicationControllerTestAccess::ageInvisible(controller, 20001);
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(
+                                 "截图会话异常残留，已自动复位：.*overlayVisible=true.*onScreen=0 "
+                                 "windowNumber=67471 isOnActiveSpace=0 occlusionState=0.*")));
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QVERIFY(!controller.active());
+        QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
+        QVERIFY(controller.menu()->actions()[3]->isEnabled());
+        QVERIFY(clipboardAction(controller)->isEnabled());
+        QTRY_VERIFY(!overlay);
+        QFile metrics(options.metricsFile);
+        QVERIFY(metrics.open(QIODevice::ReadOnly));
+        QCOMPARE(QJsonDocument::fromJson(metrics.readLine())
+                     .object()
+                     .value(QStringLiteral("outcome"))
+                     .toInt(),
+                 12);
+        QVERIFY(metrics.atEnd());
+    }
+    void controllerNativeVisibilityRecoversAndReadies()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        ApplicationController controller(*qApp, options);
+        auto* overlay = new SelectionOverlay(sampleFrame());
+        overlay->show();
+        overlay->activateWindow();
+        QCoreApplication::processEvents();
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+        ApplicationControllerTestAccess::visibility(controller, false);
+        int attempts = 0;
+        ApplicationControllerTestAccess::recovery(controller,
+                                                  [&](QWindow*, bool)
+                                                  {
+                                                      ++attempts;
+                                                      return true;
+                                                  });
+        ApplicationControllerTestAccess::presentation(controller);
+        QVERIFY(ApplicationControllerTestAccess::captureTimeoutActive(controller));
+        QCOMPARE(attempts, 1);
+        // 模拟自愈后下一 tick 查到窗口，清除连续异常起点。
+        ApplicationControllerTestAccess::visibility(controller, true);
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QVERIFY(controller.active());
+        QVERIFY(ApplicationControllerTestAccess::captureTimeoutActive(controller));
+        QTest::ignoreMessage(QtInfoMsg,
+                             QRegularExpression(QStringLiteral(
+                                 "覆盖层可交互就绪（停止超时保护）.*onScreen=1 windowNumber=67471 "
+                                 "isOnActiveSpace=0 occlusionState=0.*")));
+        ApplicationControllerTestAccess::presentation(controller);
+        QVERIFY(!ApplicationControllerTestAccess::captureTimeoutActive(controller));
+        QVERIFY(!QFile::exists(options.metricsFile));
+    }
+    void controllerVisibilityModalAndPanelGuard_data()
+    {
+        QTest::addColumn<bool>("panel");
+        QTest::newRow("modal") << false;
+        QTest::newRow("native-panel-without-qt-modal") << true;
+    }
+    void controllerVisibilityModalAndPanelGuard()
+    {
+        using namespace waibusnap;
+        QFETCH(bool, panel);
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        ApplicationController controller(*qApp, options);
+        auto* overlay = new SelectionOverlay(sampleFrame());
+        overlay->show();
+        ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+        ApplicationControllerTestAccess::visibility(controller, false);
+        ApplicationControllerTestAccess::ageInvisible(controller, 30000);
+        int attempts = 0;
+        ApplicationControllerTestAccess::recovery(controller,
+                                                  [&](QWindow*, bool)
+                                                  {
+                                                      ++attempts;
+                                                      return true;
+                                                  });
+        QDialog dialog;
+        if (panel)
+            OverlayScrollTestAccess::panel(*overlay, true);
+        else
+        {
+            dialog.setWindowModality(Qt::ApplicationModal);
+            dialog.show();
+        }
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        ApplicationControllerTestAccess::eventRecovery(controller);
+        QCOMPARE(attempts, 0);
+        QVERIFY(controller.active());
+        dialog.hide();
+        OverlayScrollTestAccess::panel(*overlay, false);
+        QTest::ignoreMessage(
+            QtWarningMsg, QRegularExpression(QStringLiteral("截图会话看门狗发现真实在屏异常：.*")));
+        ApplicationControllerTestAccess::watchdogCheck(controller);
+        QCOMPARE(attempts, 1);
+        QVERIFY(controller.active());
+    }
+    void controllerVisibleSessionPressure()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        RunOptions options;
+        options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
+        ApplicationController controller(*qApp, options);
+        ApplicationControllerTestAccess::visibility(controller, true);
+        for (int iteration = 0; iteration < 100; ++iteration)
+        {
+            QPointer<SelectionOverlay> overlay = new SelectionOverlay(sampleFrame());
+            overlay->show();
+            ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
+            ApplicationControllerTestAccess::watchdogCheck(controller);
+            QVERIFY(controller.active());
+            ApplicationControllerTestAccess::cancelNormal(controller);
+            QVERIFY(!controller.active());
+            QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            QVERIFY(!overlay);
+        }
+        QFile metrics(options.metricsFile);
+        QVERIFY(metrics.open(QIODevice::ReadOnly));
+        int records = 0;
+        while (!metrics.atEnd())
+        {
+            const auto record = QJsonDocument::fromJson(metrics.readLine()).object();
+            QCOMPARE(record.value(QStringLiteral("outcome")).toInt(), 2);
+            ++records;
+        }
+        QCOMPARE(records, 100);
+    }
     void controllerSessionWatchdogGuards_data()
     {
         QTest::addColumn<int>("state");
@@ -3006,6 +3217,8 @@ class StartupSmokeTest final : public QObject
         if (state)
             ApplicationControllerTestAccess::seedSession(controller, overlay,
                                                          state == 1 ? 19000 : 30000);
+        if (state == 2)
+            ApplicationControllerTestAccess::visibility(controller, true);
         QDialog dialog;
         if (state == 3)
         {

@@ -57,7 +57,7 @@ if(APPLE)
         waibusnap_options "${AppKit_FRAMEWORK}")
     target_compile_options(platform_workarounds_test PRIVATE -fobjc-arc)
     add_test(NAME platform_workarounds COMMAND platform_workarounds_test)
-    set_tests_properties(platform_workarounds PROPERTIES TIMEOUT 10)
+    set_tests_properties(platform_workarounds PROPERTIES TIMEOUT 30)
 
     add_test(NAME probe_cpu_calibration COMMAND waibusnap_measure_probe --self-test)
     set_tests_properties(probe_cpu_calibration PROPERTIES TIMEOUT 10)
@@ -110,6 +110,8 @@ add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
     savePanelFormatsNormalizeSuffixAndDispatch
     clipboardStickerImageLifecycle clipboardStickerEmptyToastReuseTimeoutAndCleanup
     clipboardStickerFailureDoesNotAdvanceCascade clipboardStickerMenuSessionAndQuitGuards
+    controllerNativeInvisibleRegression controllerNativeVisibilityRecoversAndReadies
+    controllerVisibilityModalAndPanelGuard controllerVisibleSessionPressure
     controllerSessionWatchdogRecovery controllerSessionWatchdogGuards
     controllerFailureHidesOverlayBeforeDialog controllerQuitDialogHidesAndRestoresOverlay
     clipboardStickerReadOnly
@@ -182,4 +184,18 @@ if(APPLE)
         MACOSX_BUNDLE_GUI_IDENTIFIER "local.waibusnap.scroll-probe")
 elseif(WIN32)
     target_sources(scroll_capture_probe PRIVATE integration/scroll_probe_display_windows.cpp)
+endif()
+
+# 真实采集验收使用已有屏幕选择桥接，不修改生产的光标选屏路径，不加入无人值守 CTest。
+qt_add_executable(overlay_visibility_probe integration/overlay_visibility_probe.cpp)
+target_link_libraries(overlay_visibility_probe PRIVATE waibusnap_ui waibusnap_options)
+set_target_properties(overlay_visibility_probe PROPERTIES WIN32_EXECUTABLE FALSE)
+if(APPLE)
+    target_sources(overlay_visibility_probe PRIVATE integration/scroll_probe_display_macos.mm)
+    target_compile_options(overlay_visibility_probe PRIVATE -fobjc-arc)
+    target_link_libraries(overlay_visibility_probe PRIVATE "${AppKit_FRAMEWORK}")
+    set_target_properties(overlay_visibility_probe PROPERTIES MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "local.waibusnap.visibility-probe")
+elseif(WIN32)
+    target_sources(overlay_visibility_probe PRIVATE integration/scroll_probe_display_windows.cpp)
 endif()
