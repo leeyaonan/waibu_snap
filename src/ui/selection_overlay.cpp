@@ -161,25 +161,36 @@ void SelectionOverlay::ensureToolbar()
     for (int index = 0; index < 3; ++index)
         separators_.append(makeSeparator(toolbar_));
     optionsSeparator_ = makeSeparator(optionsBar_);
-    const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
-                             QStringLiteral("直线"), QStringLiteral("箭头"),
-                             QStringLiteral("画笔"), QStringLiteral("文本"),
-                             QStringLiteral("遮盖"), QStringLiteral("马赛克")};
-    const QString objects[] = {
-        QStringLiteral("rectangleToolButton"), QStringLiteral("ellipseToolButton"),
-        QStringLiteral("lineToolButton"),      QStringLiteral("arrowToolButton"),
-        QStringLiteral("freehandToolButton"),  QStringLiteral("textToolButton"),
-        QStringLiteral("coverToolButton"),     QStringLiteral("mosaicToolButton")};
-    for (int index = 0; index < 8; ++index)
+    toolBar_ = new QWidget(this);
+    toolBar_->setObjectName(QStringLiteral("annotationToolBar"));
+    toolBar_->setStyleSheet(
+        QStringLiteral("QWidget#annotationToolBar { background: #202020; border: 1px solid "
+                       "#3a3a3a; border-radius: 8px; }") +
+        buttonsStyle);
+    toolBar_->setFixedSize(68, 36);
+    toolBar_->hide();
+    for (int slot = 0; slot < int(toolTypes_.size()); ++slot)
     {
-        QString tip = names[index] + QStringLiteral("：点击启用，再次点击恢复选区调整");
-        if (index == static_cast<int>(AnnotationType::Mosaic))
-            tip = QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖");
-        auto* button = makeButton(toolbar_, objects[index], tip, static_cast<ToolbarIcon>(index));
+        const auto type = toolTypes_[slot];
+        auto* button = makeButton(toolbar_, annotationGroupObject(slot), annotationToolTip(type),
+                                  static_cast<ToolbarIcon>(type));
         button->setCheckable(true);
         toolButtons_.append(button);
         connect(button, &QPushButton::clicked, this,
-                [this, index] { activateTool(static_cast<AnnotationType>(index)); });
+                [this, slot] { activateTool(toolTypes_[slot]); });
+    }
+    for (auto type : {AnnotationType::Rectangle, AnnotationType::Ellipse, AnnotationType::Line,
+                      AnnotationType::Arrow, AnnotationType::Cover, AnnotationType::Mosaic})
+    {
+        const QString tip = type == AnnotationType::Mosaic
+                                ? annotationToolTip(type)
+                                : QStringLiteral("使用%1").arg(annotationToolName(type));
+        auto* button =
+            makeButton(toolBar_, annotationToolObject(type), tip, static_cast<ToolbarIcon>(type));
+        button->setProperty("annotationType", static_cast<int>(type));
+        button->setCheckable(true);
+        subtoolButtons_.append(button);
+        connect(button, &QPushButton::clicked, this, [this, type] { activateTool(type, false); });
     }
     ocrButton_ = makeButton(toolbar_, QStringLiteral("ocrToolButton"),
                             QStringLiteral("取字（文字识别）"), ToolbarIcon::Ocr);
@@ -364,7 +375,7 @@ void SelectionOverlay::ensureToolbar()
         "background: #202020; color: #e8e8e8; border-radius: 8px; padding: 0 10px;"));
     status_->hide();
     for (auto* panel :
-         {toolbar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
+         {toolbar_, toolBar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
     {
         panel->setCursor(Qt::ArrowCursor);
         panel->setMouseTracking(true);
@@ -448,6 +459,35 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
 }
 void SelectionOverlay::updateOptionsBar()
 {
+    const int activeSlot = activeTool_ ? annotationToolSlot(*activeTool_) : -1;
+    const bool grouped = activeSlot == 0 || activeSlot == 1 || activeSlot == 4;
+    int x = 4;
+    for (auto* button : subtoolButtons_)
+    {
+        const auto type = static_cast<AnnotationType>(button->property("annotationType").toInt());
+        const bool visible = grouped && annotationToolSlot(type) == activeSlot;
+        button->setVisible(visible);
+        button->setChecked(activeTool_ == type);
+        if (visible)
+        {
+            button->move(x, 4);
+            x += 32;
+        }
+    }
+    toolBar_->setVisible(grouped && !textMode_);
+    for (int slot = 0; slot < toolButtons_.size(); ++slot)
+    {
+        auto* button = toolButtons_[slot];
+        const auto type = toolTypes_[slot];
+        button->setChecked(activeTool_ == type);
+        const QString tip = annotationToolTip(type);
+        if (button->toolTip() != tip)
+        {
+            button->setToolTip(tip);
+            button->setAccessibleName(tip);
+            button->setIcon(toolbarIcon(static_cast<ToolbarIcon>(type)));
+        }
+    }
     const bool colors = !textMode_ && activeTool_ && activeTool_ != AnnotationType::Mosaic;
     const bool widths =
         colors && activeTool_ != AnnotationType::Text && activeTool_ != AnnotationType::Cover;
@@ -622,7 +662,7 @@ QImage SelectionOverlay::outputImage() const
 QRect SelectionOverlay::toolbarClusterRect() const
 {
     QRect cluster;
-    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, shapeBar_, scrollReadyBar_})
+    for (auto* panel : {toolbar_, toolBar_, optionsBar_, ratioBar_, shapeBar_, scrollReadyBar_})
         if (panel && !panel->isHidden())
             cluster = cluster.united(panel->geometry());
     return cluster;
@@ -653,6 +693,7 @@ void SelectionOverlay::updateToolbar()
     if (scrollReady_)
     {
         toolbar_->hide();
+        toolBar_->hide();
         optionsBar_->hide();
         ratioBar_->hide();
         shapeBar_->hide();
@@ -670,6 +711,7 @@ void SelectionOverlay::updateToolbar()
         if (toolbar_)
         {
             toolbar_->hide();
+            toolBar_->hide();
             optionsBar_->hide();
             ratioBar_->hide();
             shapeBar_->hide();
@@ -698,7 +740,8 @@ void SelectionOverlay::updateToolbar()
     updateOptionsBar();
     updateRatioBar();
     updateShapeBar();
-    const int clusterHeight = toolbar_->height() + (optionsBar_->isHidden() ? 0 : 42) +
+    const int toolHeight = toolBar_->isHidden() ? 0 : 42;
+    const int clusterHeight = toolbar_->height() + toolHeight + (optionsBar_->isHidden() ? 0 : 42) +
                               (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6) +
                               (shapeBar_->isHidden() ? 0 : shapeBar_->height() + 6);
     const QRectF region = logicalSelection();
@@ -713,12 +756,16 @@ void SelectionOverlay::updateToolbar()
     }
     y = std::clamp(y, bounds.top(), std::max(bounds.top(), bounds.bottom() + 1 - clusterHeight));
     toolbar_->move(x, y);
-    optionsBar_->move(x, y + toolbar_->height() + 6);
-    ratioBar_->move(x, y + toolbar_->height() + 6 + (optionsBar_->isHidden() ? 0 : 42));
-    shapeBar_->move(x, y + toolbar_->height() + 6 + (optionsBar_->isHidden() ? 0 : 42) +
+    toolBar_->move(x, y + toolbar_->height() + 6);
+    optionsBar_->move(x, y + toolbar_->height() + 6 + toolHeight);
+    ratioBar_->move(x,
+                    y + toolbar_->height() + 6 + toolHeight + (optionsBar_->isHidden() ? 0 : 42));
+    shapeBar_->move(x, y + toolbar_->height() + 6 + toolHeight +
+                           (optionsBar_->isHidden() ? 0 : 42) +
                            (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6));
     const bool enabled = dragMode_ == DragMode::None && !saveDialogOpen_;
     toolbar_->setEnabled(enabled);
+    toolBar_->setEnabled(enabled);
     optionsBar_->setEnabled(enabled);
     ratioBar_->setEnabled(enabled);
     shapeBar_->setEnabled(enabled);
@@ -887,6 +934,7 @@ void SelectionOverlay::saveSelection()
     hideMagnifier();
     saveDialogOpen_ = true;
     toolbar_->setEnabled(false);
+    toolBar_->setEnabled(false);
     optionsBar_->setEnabled(false);
     ratioBar_->setEnabled(false);
     shapeBar_->setEnabled(false);
@@ -1490,7 +1538,7 @@ QRect SelectionOverlay::magnifierRect() const
     const QPointF anchor = QPointF(magnifierAnchor_) / frame_.display.devicePixelRatio;
     QRect obstacle;
     for (auto* widget :
-         {toolbar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
+         {toolbar_, toolBar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
         if (widget && widget->isVisible())
             obstacle = obstacle.united(widget->geometry());
     return placedMagnifier(anchor, panel, availableRect(), obstacle);
@@ -1562,16 +1610,16 @@ QPointF SelectionOverlay::physicalPoint(QPointF position) const
     return {std::clamp(position.x() * scale, qreal(0), qreal(frame_.pixels.width())),
             std::clamp(position.y() * scale, qreal(0), qreal(frame_.pixels.height()))};
 }
-void SelectionOverlay::activateTool(AnnotationType type)
+void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
 {
     if (ocrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
         return;
     exitTextMode();
     finishText(true);
-    activeTool_ = activeTool_ == type ? std::nullopt : std::optional<AnnotationType>(type);
+    toolTypes_[annotationToolSlot(type)] = type;
+    activeTool_ =
+        toggle && activeTool_ == type ? std::nullopt : std::optional<AnnotationType>(type);
     hideMagnifier();
-    for (int index = 0; index < toolButtons_.size(); ++index)
-        toolButtons_[index]->setChecked(activeTool_ == static_cast<AnnotationType>(index));
     if (activeTool_ == AnnotationType::Mosaic && !mosaicNoticeShown_)
     {
         mosaicNoticeShown_ = true;
@@ -1669,8 +1717,8 @@ bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
          (shapeBar_ && shapeBar_->isAncestorOf(qobject_cast<QWidget*>(watched))) ||
          (ratioBar_ && ratioBar_->isAncestorOf(qobject_cast<QWidget*>(watched)))))
         finishText(true, false);
-    if ((watched == toolbar_ || watched == optionsBar_ || watched == ratioBar_ ||
-         watched == shapeBar_ || qobject_cast<QLabel*>(watched)) &&
+    if ((watched == toolbar_ || watched == toolBar_ || watched == optionsBar_ ||
+         watched == ratioBar_ || watched == shapeBar_ || qobject_cast<QLabel*>(watched)) &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease))
     {
         // 空白 / 提示标签提交并消化手势；比例按钮已在按下时提交，其他按钮沿用 clicked。

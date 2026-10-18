@@ -7,6 +7,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <algorithm>
+#include <cmath>
 #include <utility>
 class ImageOutputTest final : public QObject
 {
@@ -551,6 +552,88 @@ class ImageOutputTest final : public QObject
         QCOMPARE(renderAnnotatedSelection(background, annotations, background.rect()), preview);
         QCOMPARE(renderAnnotatedSelection(background, annotations, {10, 10, 120, 180}),
                  preview.copy(10, 10, 120, 180));
+    }
+    void arrowTipHasNoShaftCap()
+    {
+        using namespace waibusnap;
+        QImage base(160, 100, QImage::Format_ARGB32_Premultiplied);
+        base.fill(Qt::white);
+        for (int width : {1, 2, 4, 8})
+            for (qreal length : {qreal(0), qreal(0.25), qreal(2), qreal(12), qreal(80)})
+            {
+                Annotation arrow{AnnotationType::Arrow, {}, {30, 50}, {30 + length, 50}, {}, {}};
+                arrow.style.lineWidth = width;
+                const QImage output = renderAnnotatedSelection(base, {arrow}, base.rect());
+                // 旧实现的 RoundCap 越过 last，极短粗线会遮住整个三角头。
+                for (int x = int(std::ceil(arrow.last.x())); x < base.width(); ++x)
+                    QCOMPARE(output.pixelColor(x, 50), QColor(Qt::white));
+                QImage draft = base;
+                QImage preview = base;
+                {
+                    QPainter painter(&draft);
+                    paintAnnotation(painter, arrow, base);
+                }
+                {
+                    QPainter painter(&preview);
+                    paintAnnotations(painter, {arrow}, base);
+                }
+                QCOMPARE(draft, output);
+                QCOMPARE(preview, output);
+                QCOMPARE(renderAnnotatedSelection(base, {arrow}, {20, 10, 120, 80}),
+                         output.copy(20, 10, 120, 80));
+            }
+    }
+    void arrowRenderingRotates_data()
+    {
+        QTest::addColumn<int>("angle");
+        QTest::addColumn<int>("width");
+        for (int angle : {0, 45, 90, 135, 180, 225, 270, 315})
+            for (int width : {1, 2, 4, 8})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(angle).arg(width)))
+                    << angle << width;
+    }
+    void arrowRenderingRotates()
+    {
+        QFETCH(int, angle);
+        QFETCH(int, width);
+        using namespace waibusnap;
+        const qreal radians = angle * std::acos(qreal(-1)) / 180;
+        // 正交方向精确取整，避免 cos(270°) 的浮点余量导致参考图边缘舍入差异。
+        const QPointF direction(angle % 90 == 0 ? std::round(std::cos(radians)) : std::cos(radians),
+                                angle % 90 == 0 ? std::round(std::sin(radians))
+                                                : std::sin(radians));
+        const QPointF normal(-direction.y(), direction.x());
+        const QPointF center(100, 100);
+        Annotation arrow{AnnotationType::Arrow,   {}, center - direction * 60,
+                         center + direction * 60, {}, {}};
+        arrow.style.lineWidth = width;
+        QImage base(200, 200, QImage::Format_ARGB32_Premultiplied);
+        base.fill(Qt::white);
+        // 独立参考头部，防止只比较共用实现掩盖「杆穿头」回归。
+        const qreal headLength = std::max(qreal(10), qreal(width) * 4);
+        const QPointF bottom = arrow.last - direction * headLength;
+        QImage expected = base;
+        {
+            QPainter painter(&expected);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(QPen(arrow.style.color, width, Qt::SolidLine, Qt::FlatCap));
+            painter.drawLine(arrow.first, bottom);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(arrow.style.color);
+            painter.drawPolygon(QPolygonF({arrow.last, bottom + normal * headLength * 0.45,
+                                           bottom - normal * headLength * 0.45}));
+        }
+        const QImage output = renderAnnotatedSelection(base, {arrow}, base.rect());
+        QCOMPARE(output, expected);
+        QImage preview = base;
+        preview.setDevicePixelRatio(2);
+        {
+            QPainter painter(&preview);
+            painter.scale(0.5, 0.5);
+            paintAnnotation(painter, arrow, base);
+        }
+        preview.setDevicePixelRatio(1);
+        QCOMPARE(preview, output);
     }
     void stylesChangePhysicalResults()
     {

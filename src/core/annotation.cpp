@@ -50,7 +50,8 @@ QVector<QPointF> arrowHead(const Annotation& annotation)
     if (length <= 0 || !std::isfinite(length) || annotation.style.lineWidth <= 0)
         return {};
     const QPointF unit = delta / length;
-    const qreal headLength = std::min(length, qreal(std::max(10, annotation.style.lineWidth * 4)));
+    const qreal headLength =
+        std::min(length, std::max(qreal(10), qreal(annotation.style.lineWidth) * 4));
     const QPointF base = annotation.last - unit * headLength;
     const QPointF perpendicular(-unit.y(), unit.x());
     const qreal halfWidth = headLength * 0.45;

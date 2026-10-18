@@ -4,6 +4,7 @@
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include "output/image_save.h"
+#include "ui/toolbar_icons.h"
 #include <QTimer>
 #include <QWidget>
 #include <functional>
@@ -70,6 +71,7 @@ class StickerWindow final : public QWidget
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
+    void contextMenuEvent(QContextMenuEvent*) override;
     void mouseDoubleClickEvent(QMouseEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
     bool eventFilter(QObject*, QEvent*) override;
@@ -83,7 +85,7 @@ class StickerWindow final : public QWidget
     void copyImage();
     void ensureEditToolbar();
     void updateEditToolbar();
-    void activateTool(AnnotationType type);
+    void activateTool(AnnotationType type, bool toggle = true);
     void undoAnnotation();
     void redoAnnotation();
     void markDirty();
@@ -108,6 +110,9 @@ class StickerWindow final : public QWidget
     QShortcut* undoShortcut_ = nullptr;
     QShortcut* redoShortcut_ = nullptr;
     QVector<QPushButton*> toolButtons_;
+    std::array<AnnotationType, 5> toolTypes_ = defaultAnnotationTools;
+    QWidget* toolBar_ = nullptr;
+    QVector<QPushButton*> subtoolButtons_;
     QComboBox* colors_ = nullptr;
     QComboBox* widths_ = nullptr;
     QComboBox* sizes_ = nullptr;

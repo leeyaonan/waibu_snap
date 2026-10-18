@@ -95,11 +95,24 @@ void paintAnnotationWithPatch(QPainter& painter, const Annotation& annotation, c
         painter.drawLine(annotation.first, annotation.last);
         break;
     case AnnotationType::Arrow:
-        painter.drawLine(annotation.first, annotation.last);
+    {
+        const auto head = arrowHead(annotation);
+        if (head.size() != 3)
+            break;
+        const QPointF base = (head[1] + head[2]) / 2;
+        // 杆止于头部底边，平帽不越过底边；极短箭头只填充三角形。
+        if (std::hypot(base.x() - annotation.first.x(), base.y() - annotation.first.y()) > 1e-8)
+        {
+            QPen shaft = painter.pen();
+            shaft.setCapStyle(Qt::FlatCap);
+            painter.setPen(shaft);
+            painter.drawLine(annotation.first, base);
+        }
         painter.setPen(Qt::NoPen);
         painter.setBrush(annotation.style.color);
-        painter.drawPolygon(QPolygonF(arrowHead(annotation)));
+        painter.drawPolygon(QPolygonF(head));
         break;
+    }
     case AnnotationType::Freehand:
         if (annotation.points.size() == 1)
             painter.drawPoint(annotation.points.first());

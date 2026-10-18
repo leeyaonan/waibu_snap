@@ -207,6 +207,57 @@ void drawOption(QPainter& painter, ToolbarIcon icon, QColor color, qreal value, 
     painter.restore();
 }
 }
+int annotationToolSlot(AnnotationType type)
+{
+    switch (type)
+    {
+    case AnnotationType::Rectangle:
+    case AnnotationType::Ellipse:
+        return 0;
+    case AnnotationType::Line:
+    case AnnotationType::Arrow:
+        return 1;
+    case AnnotationType::Freehand:
+        return 2;
+    case AnnotationType::Text:
+        return 3;
+    case AnnotationType::Cover:
+    case AnnotationType::Mosaic:
+        return 4;
+    }
+    return 0;
+}
+QString annotationToolName(AnnotationType type)
+{
+    const QString names[] = {QStringLiteral("矩形"), QStringLiteral("椭圆"),
+                             QStringLiteral("直线"), QStringLiteral("箭头"),
+                             QStringLiteral("画笔"), QStringLiteral("文本"),
+                             QStringLiteral("遮盖"), QStringLiteral("马赛克")};
+    return names[static_cast<int>(type)];
+}
+QString annotationToolObject(AnnotationType type)
+{
+    const QString names[] = {
+        QStringLiteral("rectangleToolButton"), QStringLiteral("ellipseToolButton"),
+        QStringLiteral("lineToolButton"),      QStringLiteral("arrowToolButton"),
+        QStringLiteral("freehandToolButton"),  QStringLiteral("textToolButton"),
+        QStringLiteral("coverToolButton"),     QStringLiteral("mosaicToolButton")};
+    return names[static_cast<int>(type)];
+}
+QString annotationToolTip(AnnotationType type)
+{
+    return type == AnnotationType::Mosaic
+               ? QStringLiteral("马赛克可能被还原，高敏感内容请用实心遮盖")
+               : annotationToolName(type) + QStringLiteral("：点击启用，再次点击取消工具");
+}
+QString annotationGroupObject(int slot)
+{
+    const QString names[] = {QStringLiteral("geometryToolButton"),
+                             QStringLiteral("directionToolButton"),
+                             QStringLiteral("freehandToolButton"), QStringLiteral("textToolButton"),
+                             QStringLiteral("concealToolButton")};
+    return names[slot];
+}
 QIcon toolbarIcon(ToolbarIcon icon, QColor color, qreal value)
 {
     QIcon result;

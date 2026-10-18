@@ -40,7 +40,7 @@ struct Annotation
     bool isVisible() const;
 };
 QFont annotationFont(const AnnotationStyle& style);
-// 三角箭头头部与线宽联动，预览和导出只使用这一份几何。
+// 返回终点尖端、底边两端；头长不超过段长。预览和导出共用，杆止于底边中点。
 QVector<QPointF> arrowHead(const Annotation& annotation);
 void appendFreehandPoint(Annotation& annotation, QPointF point, qreal minimumDistance = 1);
 class AnnotationHistory
