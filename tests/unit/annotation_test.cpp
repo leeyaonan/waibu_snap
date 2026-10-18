@@ -6,6 +6,8 @@
 #include <utility>
 namespace
 {
+inline constexpr std::array<int, 3> sampleLineWidths = {2, 4, 8};
+
 waibusnap::Annotation sample(waibusnap::AnnotationType type, int index = 0)
 {
     waibusnap::Annotation annotation;
@@ -33,6 +35,76 @@ class AnnotationTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void paletteAndWidthDefaults()
+    {
+        using namespace waibusnap;
+        QCOMPARE(annotationColors().size(), size_t(9));
+        QCOMPARE(annotationColorNames().size(), annotationColors().size());
+        QCOMPARE(AnnotationStyle{}.color, QColor(255, 70, 70));
+        QCOMPARE(AnnotationStyle{}.lineWidth, 4);
+        QCOMPARE(AnnotationStyle{}.textSize, 28);
+        const QStringList names = {"红", "橙", "黄", "绿", "青", "蓝", "紫", "黑", "白"};
+        for (int index = 0; index < int(annotationColors().size()); ++index)
+        {
+            QCOMPARE(annotationColorNames()[index], names[index]);
+            QCOMPARE(annotationColors()[index].alpha(), 255);
+            for (int other = 0; other < index; ++other)
+                QVERIFY(annotationColors()[index] != annotationColors()[other]);
+        }
+        for (int type = 0; type < 8; ++type)
+            QCOMPARE(annotationUsesLineWidth(static_cast<AnnotationType>(type)), type < 5);
+    }
+    void wheelStepsAndBounds_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::addColumn<QPoint>("angle");
+        QTest::addColumn<QPoint>("pixel");
+        QTest::addColumn<int>("expected");
+        QTest::newRow("up") << 4 << QPoint(0, 120) << QPoint() << 5;
+        QTest::newRow("down") << 4 << QPoint(0, -120) << QPoint() << 3;
+        QTest::newRow("multiple") << 4 << QPoint(0, 720) << QPoint() << 10;
+        QTest::newRow("max") << 23 << QPoint(0, 9600) << QPoint() << 24;
+        QTest::newRow("min") << 2 << QPoint(0, -9600) << QPoint() << 1;
+        QTest::newRow("int-max") << 4 << QPoint(0, std::numeric_limits<int>::max()) << QPoint()
+                                 << 24;
+        QTest::newRow("int-min") << 4 << QPoint(0, std::numeric_limits<int>::min()) << QPoint()
+                                 << 1;
+        QTest::newRow("horizontal") << 4 << QPoint(120, 0) << QPoint() << 4;
+        QTest::newRow("partial") << 4 << QPoint(0, 60) << QPoint() << 4;
+        QTest::newRow("pixel-up") << 4 << QPoint() << QPoint(0, 15) << 5;
+        QTest::newRow("pixel-down") << 4 << QPoint() << QPoint(0, -30) << 2;
+        QTest::newRow("angle-priority") << 4 << QPoint(0, 120) << QPoint(0, 300) << 5;
+        QTest::newRow("empty") << 4 << QPoint() << QPoint() << 4;
+    }
+    void wheelStepsAndBounds()
+    {
+        QFETCH(int, width);
+        QFETCH(QPoint, angle);
+        QFETCH(QPoint, pixel);
+        QFETCH(int, expected);
+        waibusnap::AnnotationWidthWheel wheel;
+        QCOMPARE(wheel.adjust(width, angle, pixel), expected);
+    }
+    void wheelAccumulationAndReset()
+    {
+        using namespace waibusnap;
+        AnnotationWidthWheel wheel;
+        QCOMPARE(wheel.adjust(4, {0, 60}), 4);
+        QCOMPARE(wheel.adjust(4, {0, 60}), 5);
+        QCOMPARE(wheel.adjust(5, {0, -40}), 5);
+        QCOMPARE(wheel.adjust(5, {0, -80}), 4);
+        QCOMPARE(wheel.adjust(24, {0, 9601}), 24);
+        QCOMPARE(wheel.adjust(24, {0, -120}), 23);
+        QCOMPARE(wheel.adjust(1, {0, -9601}), 1);
+        QCOMPARE(wheel.adjust(1, {0, 120}), 2);
+        QCOMPARE(wheel.adjust(4, {0, 60}), 4);
+        wheel.reset();
+        QCOMPARE(wheel.adjust(4, {0, 60}), 4);
+        // 切换输入单位不串入上一种事件的半格。
+        QCOMPARE(wheel.adjust(4, {}, {0, 7}), 4);
+        QCOMPARE(wheel.adjust(4, {}, {0, 8}), 5);
+        QCOMPARE(wheel.adjust(5, {0, 60}), 5);
+    }
     void eightTypesAndStyles()
     {
         using namespace waibusnap;
@@ -45,8 +117,9 @@ class AnnotationTest final : public QObject
         {
             QCOMPARE(static_cast<int>(types[type]), type);
             Annotation annotation = sample(static_cast<AnnotationType>(type));
-            annotation.style = {annotationColors()[type % 3], annotationLineWidths[type % 3],
-                                annotationTextSizes[type % 3], QStringLiteral("测试字体")};
+            annotation.style = {annotationColors()[type % annotationColors().size()],
+                                sampleLineWidths[type % 3], annotationTextSizes[type % 3],
+                                QStringLiteral("测试字体")};
             QVERIFY(annotation.isVisible());
             QVERIFY(history.add(annotation));
             compare(history.annotations().last(), annotation);
@@ -56,7 +129,7 @@ class AnnotationTest final : public QObject
         for (int index = 1; index < 3; ++index)
         {
             QVERIFY(annotationColors()[index] != annotationColors()[index - 1]);
-            QVERIFY(annotationLineWidths[index] > annotationLineWidths[index - 1]);
+            QVERIFY(sampleLineWidths[index] > sampleLineWidths[index - 1]);
             QVERIFY(annotationTextSizes[index] > annotationTextSizes[index - 1]);
         }
     }

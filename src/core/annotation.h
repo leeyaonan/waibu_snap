@@ -18,13 +18,33 @@ enum class AnnotationType
     Cover,
     Mosaic
 };
-const std::array<QColor, 3>& annotationColors();
-inline constexpr std::array<int, 3> annotationLineWidths = {2, 4, 8};
+inline constexpr int annotationColorCount = 9;
+const std::array<QColor, annotationColorCount>& annotationColors();
+const std::array<QString, annotationColorCount>& annotationColorNames();
+inline constexpr int annotationDefaultWidth = 4;
+inline constexpr int annotationMinimumWidth = 1;
+inline constexpr int annotationMaximumWidth = 24;
+bool annotationUsesLineWidth(AnnotationType type);
+// 两编辑面共用高分辨率滚轮累积；角度优先，只有像素输入时每 15px 一格。
+class AnnotationWidthWheel
+{
+  public:
+    int adjust(int width, QPoint angleDelta, QPoint pixelDelta = {});
+    void reset()
+    {
+        remainder_ = 0;
+        unit_ = 0;
+    }
+
+  private:
+    int remainder_ = 0;
+    int unit_ = 0;
+};
 inline constexpr std::array<int, 3> annotationTextSizes = {18, 28, 40};
 struct AnnotationStyle
 {
     QColor color = annotationColors()[0];
-    int lineWidth = annotationLineWidths[1];
+    int lineWidth = annotationDefaultWidth;
     int textSize = annotationTextSizes[1];
     QString fontFamily;
 };

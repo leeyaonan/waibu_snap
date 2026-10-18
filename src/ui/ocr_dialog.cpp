@@ -85,11 +85,9 @@ OcrDialog::OcrDialog(QWidget* parent, std::function<void(const QMimeData&)> setC
     colors->setObjectName(QStringLiteral("ocrColorCombo"));
     colors->setAccessibleName(QStringLiteral("文字颜色"));
     colors->addItem(QStringLiteral("黑"), QColor(Qt::black));
-    const QString names[] = {QStringLiteral("红"), QStringLiteral("蓝"), QStringLiteral("黄")};
-    const auto palette = annotationColors();
-    colors->addItem(names[0], palette[0]);
-    colors->addItem(names[1], palette[2]);
-    colors->addItem(names[2], palette[1]);
+    for (int index = 0; index < int(annotationColors().size()); ++index)
+        if (annotationColors()[index] != QColor(Qt::black))
+            colors->addItem(annotationColorNames()[index], annotationColors()[index]);
     formatLayout->addWidget(colors);
     auto* bullets = button(QStringLiteral("• 列表"), QStringLiteral("ocrBulletsButton"));
     auto* numbers = button(QStringLiteral("1. 列表"), QStringLiteral("ocrNumbersButton"));

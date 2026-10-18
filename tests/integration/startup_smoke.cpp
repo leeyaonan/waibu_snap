@@ -237,7 +237,33 @@ struct ApplicationControllerTestAccess
 
 namespace
 {
+inline constexpr std::array<int, 3> sampleLineWidths = {2, 4, 8};
 
+void annotationWheel(QWidget& canvas, int angle, QPoint position = {130, 130}, int pixels = 0,
+                     Qt::ScrollPhase phase = Qt::NoScrollPhase)
+{
+    QWheelEvent event(position, canvas.mapToGlobal(position), {0, pixels}, {0, angle}, Qt::NoButton,
+                      Qt::NoModifier, phase, false);
+    QApplication::sendEvent(&canvas, &event);
+}
+void chooseAnnotationColor(QWidget& canvas, int index, bool sticker = false)
+{
+    const QString name =
+        (sticker ? QStringLiteral("stickerEditColor") : QStringLiteral("annotationColor")) +
+        QString::number(index) + QStringLiteral("Button");
+    auto* button = canvas.findChild<QPushButton*>(name);
+    QVERIFY(button);
+    QTest::mouseClick(button, Qt::LeftButton);
+}
+void chooseAnnotationWidth(QWidget& canvas, int width, bool sticker = false)
+{
+    auto* label = canvas.findChild<QLabel*>(sticker ? QStringLiteral("stickerEditWidthLabel")
+                                                    : QStringLiteral("annotationWidthLabel"));
+    QVERIFY(label);
+    const int previous = label->text().section(' ', 1).chopped(2).toInt();
+    annotationWheel(canvas, (width - previous) * 120);
+    QCOMPARE(label->text(), QStringLiteral("线宽 %1px").arg(width));
+}
 waibusnap::TextRecognitionResult sampleOcrResult()
 {
     return {true,
@@ -2313,10 +2339,9 @@ class StartupSmokeTest final : public QObject
             auto window = manager.windows().last();
             window->setScale(0.75 + index * 0.5, window->pos());
             window->setEditing(true);
-            window->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"))
-                ->setCurrentIndex(index);
-            window->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"))
-                ->setCurrentIndex(index);
+            stickerClick(*window, "stickerEditFreehandToolButton");
+            chooseAnnotationColor(*window, index, true);
+            chooseAnnotationWidth(*window, sampleLineWidths[index], true);
             window->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"))
                 ->setCurrentIndex(index);
             for (const char* tool : tools)
@@ -3438,15 +3463,18 @@ class StartupSmokeTest final : public QObject
             QCOMPARE(sticker->pos(), before.topLeft());
             QVERIFY(!sticker->isSaved());
         }
-        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
-        auto* widths = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"));
+        auto* colors = sticker->findChild<QWidget*>(QStringLiteral("stickerEditColorPalette"));
+        auto* widths = sticker->findChild<QLabel*>(QStringLiteral("stickerEditWidthLabel"));
         auto* sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
-        QCOMPARE(colors->count(), 3);
-        QCOMPARE(widths->count(), 3);
+        QCOMPARE(colors->findChildren<QPushButton*>().size(), qsizetype(annotationColorCount));
+        QCOMPARE(widths->text(), QStringLiteral("线宽 4px"));
         QCOMPARE(sizes->count(), 3);
         QVERIFY(!sizes->isEnabled());
-        for (auto* combo : {colors, widths, sizes})
-            QCOMPARE(combo->focusPolicy(), Qt::NoFocus);
+        QCOMPARE(sizes->focusPolicy(), Qt::NoFocus);
+        for (auto* color : colors->findChildren<QPushButton*>())
+            QCOMPARE(color->focusPolicy(), Qt::NoFocus);
+        // 取消画笔后仍以原锚点缩放，绘图工具激活时的滚轮另有覆盖。
+        stickerClick(*sticker, "stickerEditFreehandToolButton");
         const QPointF anchor = sticker->mapToGlobal(QPoint(100, 100));
         const QRect old = sticker->geometry();
         QWheelEvent wheel({100, 100}, anchor, {}, {0, 120}, Qt::NoButton, Qt::NoModifier,
@@ -3486,7 +3514,7 @@ class StartupSmokeTest final : public QObject
         auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton"));
         QVERIFY(more && more->isVisible());
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
-        QCOMPARE(menu->actions().size(), qsizetype(13));
+        QCOMPARE(menu->actions().size(), qsizetype(12));
         QVERIFY(sticker->rect().contains(more->geometry()));
         auto* privacy = menu->actions()[4];
         auto* coverAction = privacy->menu()->actions()[0];
@@ -3494,29 +3522,27 @@ class StartupSmokeTest final : public QObject
         // 折叠菜单保留三组及全部样式 / 输出，二级动作同步选中态。
         menu->actions()[3]->trigger();
         QVERIFY(sizes->isEnabled());
-        menu->actions()[7]->menu()->actions()[2]->trigger();
+        menu->actions()[6]->menu()->actions()[2]->trigger();
         QCOMPARE(sizes->currentIndex(), 2);
         coverAction->trigger();
         QVERIFY(sticker->activeTool() == AnnotationType::Cover);
         QVERIFY(privacy->isChecked() && coverAction->isChecked());
         QVERIFY(!menu->actions()[6]->isEnabled());
-        QVERIFY(!menu->actions()[7]->isEnabled());
         coverAction->trigger();
         QVERIFY(sticker->activeTool() == AnnotationType::Cover);
         stickerClick(*sticker, "stickerEditCoverToolButton");
         QVERIFY(!sticker->activeTool());
-        QVERIFY(menu->actions()[6]->isEnabled());
+        QVERIFY(menu->actions()[5]->isEnabled());
         mosaicAction->trigger();
         QVERIFY(sticker->activeTool() == AnnotationType::Mosaic);
         QVERIFY(privacy->isChecked() && mosaicAction->isChecked());
-        for (int index : {5, 6, 7})
+        for (int index : {5, 6})
             QVERIFY(!menu->actions()[index]->isEnabled());
         auto* status = sticker->findChild<QLabel*>(QStringLiteral("stickerStatus"));
         QVERIFY(status->isVisible());
         QVERIFY(status->text().contains(QStringLiteral("高敏感内容请用实心遮盖")));
         stickerClick(*sticker, "stickerEditMosaicToolButton");
-        for (int index : {5, 6})
-            QVERIFY(menu->actions()[index]->isEnabled());
+        QVERIFY(menu->actions()[5]->isEnabled());
         menu->actions().last()->trigger();
         QVERIFY(!sticker->isEditing());
     }
@@ -3580,11 +3606,10 @@ class StartupSmokeTest final : public QObject
         sticker->setEditing(true);
         QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
         editor->setPlainText(QStringLiteral("同值选项点击也提交"));
-        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
-        const int color = colors->currentIndex();
-        QTest::mouseClick(colors, Qt::LeftButton);
-        colors->hidePopup();
-        QCOMPARE(colors->currentIndex(), color);
+        auto* colors = sticker->findChild<QWidget*>(QStringLiteral("stickerEditColorPalette"));
+        QVERIFY(colors);
+        chooseAnnotationColor(*sticker, 0, true);
+        QVERIFY(sticker->findChild<QPushButton*>("stickerEditColor0Button")->isChecked());
         QCOMPARE(sticker->annotations().size(), qsizetype(5));
         QVERIFY(!editor->isVisible());
     }
@@ -3609,15 +3634,13 @@ class StartupSmokeTest final : public QObject
         sticker->setEditing(true);
         QTRY_VERIFY(sticker->isActiveWindow());
         stickerClick(*sticker, "stickerEditLineToolButton");
-        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
-        auto* widths = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"));
         for (int index = 0; index < 3; ++index)
         {
-            colors->setCurrentIndex(index);
-            widths->setCurrentIndex(index);
+            chooseAnnotationColor(*sticker, index, true);
+            chooseAnnotationWidth(*sticker, sampleLineWidths[index], true);
             stickerDrag(*sticker, {100, 100 + index * 30}, {220, 100 + index * 30});
             QCOMPARE(sticker->annotations().last().style.color, annotationColors()[index]);
-            QCOMPARE(sticker->annotations().last().style.lineWidth, annotationLineWidths[index]);
+            QCOMPARE(sticker->annotations().last().style.lineWidth, sampleLineWidths[index]);
         }
         const auto expected = renderAnnotatedSelection(image, sticker->annotations(), image.rect());
         stickerClick(*sticker, "stickerEditCopyButton");
@@ -4749,7 +4772,8 @@ class StartupSmokeTest final : public QObject
         auto* bar = overlay.findChild<QWidget*>(QStringLiteral("ratioBar"));
         QVERIFY(bar->isVisible());
         QVERIFY(bar->width() <= toolbar->width());
-        QCOMPARE(bar->y(), toolbar->y() + toolbar->height() + 6 + (options ? 84 : 0));
+        QCOMPARE(bar->y(), toolbar->y() + toolbar->height() + 6 +
+                               (options ? 42 + optionBar->height() + 6 : 0));
         QCOMPARE(bar->x(), toolbar->x());
         const QRect bounds(0, 25, width, 550);
         QVERIFY(bounds.contains(toolbar->geometry()));
@@ -5024,7 +5048,7 @@ class StartupSmokeTest final : public QObject
         {
             if (withOptions)
                 clickAnnotationTool(overlay, "rectangleToolButton");
-            const int clusterHeight = toolbar->height() + (withOptions ? 84 : 0);
+            const int clusterHeight = toolbar->height() + (withOptions ? 116 : 0);
             const int expectedY = placement == 0   ? region.y() + region.height() + 10
                                   : placement == 1 ? region.y() - clusterHeight - 10
                                                    : available.bottom() + 1 - clusterHeight - 10;
@@ -5057,6 +5081,268 @@ class StartupSmokeTest final : public QObject
             if (panel->isVisible())
                 QVERIFY(!panel->geometry().intersects(overlay.magnifierRect()));
     }
+    void annotationPaletteReachableAndOutput_data()
+    {
+        QTest::addColumn<bool>("sticker");
+        QTest::newRow("overlay-320") << false;
+        QTest::newRow("sticker-320") << true;
+    }
+    void annotationPaletteReachableAndOutput()
+    {
+        QFETCH(bool, sticker);
+        using namespace waibusnap;
+        auto frame = annotationFrame();
+        frame.display.logicalGeometry = {0, 0, 320, 600};
+        frame.display.availableLogicalGeometry = frame.display.logicalGeometry;
+        frame.display.devicePixelRatio = 1;
+        frame.pixels = QImage(320, 600, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(QColor(110, 110, 110));
+        QImage copied, pinned;
+        OverlayActions overlayActions;
+        overlayActions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{false, QStringLiteral("保留会话")};
+        };
+        overlayActions.pinImage = [&](const QImage& image)
+        {
+            pinned = image;
+            return ImageOutputResult{true, {}};
+        };
+        SelectionOverlay overlay(frame, overlayActions);
+        StickerManager manager;
+        // 用当前屏幕 DPR 生成 320 逻辑像素贴图，兼容独立 2x 子进程。
+        const qreal dpr = QGuiApplication::primaryScreen()->devicePixelRatio();
+        QImage source(QSize(320, 600) * dpr, QImage::Format_ARGB32_Premultiplied);
+        source.fill(QColor(110, 110, 110));
+        QWidget* canvas = &overlay;
+        StickerWindow* window = nullptr;
+        if (sticker)
+        {
+            QVERIFY(manager.create(source, {20, 30}, true).success);
+            window = manager.windows().first();
+            window->setEditing(true);
+            canvas = window;
+            stickerClick(*window, "stickerEditLineToolButton");
+        }
+        else
+        {
+            overlay.show();
+            dragLogical(overlay, {0, 0}, {320, 600});
+            clickAnnotationTool(overlay, "lineToolButton");
+        }
+        const QString prefix =
+            sticker ? QStringLiteral("stickerEditColor") : QStringLiteral("annotationColor");
+        auto* palette = canvas->findChild<QWidget*>(prefix + QStringLiteral("Palette"));
+        QVERIFY(palette && palette->isVisible());
+        QCOMPARE(palette->size(), QSize(164, 68));
+        QVERIFY(canvas->rect().contains(QRect(palette->mapTo(canvas, QPoint()), palette->size())));
+        const auto buttons = palette->findChildren<QPushButton*>();
+        QCOMPARE(buttons.size(), qsizetype(annotationColors().size()));
+        QVERIFY(buttons[0]->isChecked());
+        for (int index = 0; index < buttons.size(); ++index)
+        {
+            auto* color = buttons[index];
+            QVERIFY(color->isVisible() && color->isEnabled());
+            QVERIFY(palette->rect().contains(color->geometry()));
+            QCOMPARE(color->accessibleName(), color->toolTip());
+            QVERIFY(color->toolTip().contains(annotationColorNames()[index]));
+            QTest::mouseClick(color, Qt::LeftButton);
+            for (int other = 0; other < buttons.size(); ++other)
+                QCOMPARE(buttons[other]->isChecked(), other == index);
+            QVERIFY(color->accessibleName().contains(QStringLiteral("已选")));
+            const QPoint first(20, 100 + index * 20), last(250, first.y());
+            if (sticker)
+                stickerDrag(*window, first, last);
+            else
+                dragLogical(overlay, first, last);
+            const auto& annotations = sticker ? window->annotations() : overlay.annotations();
+            QCOMPARE(annotations.last().style.color, annotationColors()[index]);
+            QCOMPARE(annotations.last().style.lineWidth, 4);
+        }
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("九色.png"));
+        QVERIFY(sticker ? window->exportToPath(path) : overlay.exportToPath(path));
+        const QImage saved(path);
+        const qreal factor = sticker ? dpr : 1;
+        for (int index = 0; index < buttons.size(); ++index)
+            QCOMPARE(saved.pixelColor(qRound(100 * factor), qRound((100 + index * 20) * factor)),
+                     annotationColors()[index]);
+        if (sticker)
+        {
+            compareImagePixels(saved, window->renderedImage());
+            auto* menu = window->findChild<QMenu*>("stickerEditMenu");
+            auto* colors = menu->actions()[5]->menu();
+            QCOMPARE(colors->actions().size(), qsizetype(annotationColors().size()));
+            colors->actions()[6]->trigger();
+            QVERIFY(buttons[6]->isChecked());
+            QVERIFY(colors->actions()[6]->isChecked());
+            window->setSaved(true);
+        }
+        else
+        {
+            QTest::mouseClick(button(overlay, "copyButton"), Qt::LeftButton);
+            compareImagePixels(copied, saved);
+            QTest::mouseClick(button(overlay, "pinButton"), Qt::LeftButton);
+            compareImagePixels(pinned, saved);
+        }
+        OcrDialog dialog;
+        const auto* colors = dialog.findChild<QComboBox*>("ocrColorCombo");
+        QCOMPARE(colors->count(), int(annotationColors().size()));
+        QCOMPARE(colors->itemData(0).value<QColor>(), QColor(Qt::black));
+        for (const QColor& color : annotationColors())
+            QVERIFY(colors->findData(color) >= 0);
+    }
+    void annotationWheelBothEditors_data()
+    {
+        QTest::addColumn<bool>("sticker");
+        QTest::addColumn<qreal>("factor");
+        for (bool sticker : {false, true})
+            for (qreal factor : {qreal(1), qreal(1.5), qreal(2)})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(sticker).arg(factor)))
+                    << sticker << factor;
+    }
+    void annotationWheelBothEditors()
+    {
+        QFETCH(bool, sticker);
+        QFETCH(qreal, factor);
+        using namespace waibusnap;
+        auto frame = annotationFrame();
+        frame.display.devicePixelRatio = factor;
+        frame.pixels = QImage(QSize(800, 600) * factor, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(factor);
+        OverlayActions actions;
+        actions.recognizer = std::make_shared<OcrStub>();
+        SelectionOverlay overlay(frame, actions);
+        StickerManager manager;
+        QWidget* canvas = &overlay;
+        StickerWindow* window = nullptr;
+        if (sticker)
+        {
+            QImage source(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+            source.fill(Qt::white);
+            QVERIFY(manager.create(source, {40, 50}, true).success);
+            window = manager.windows().first();
+            window->setScale(factor, window->pos());
+            window->setEditing(true);
+            canvas = window;
+            stickerClick(*window, "stickerEditFreehandToolButton");
+        }
+        else
+        {
+            overlay.show();
+            dragLogical(overlay, {50, 50}, {700, 500});
+            clickAnnotationTool(overlay, "freehandToolButton");
+        }
+        auto* label =
+            canvas->findChild<QLabel*>(sticker ? "stickerEditWidthLabel" : "annotationWidthLabel");
+        QVERIFY(label && label->isVisible());
+        QCOMPARE(label->text(), QStringLiteral("线宽 4px"));
+        const QRect geometry = canvas->geometry();
+        const QRect selection = overlay.selection();
+        annotationWheel(*canvas, 60);
+        QCOMPARE(label->text(), QStringLiteral("线宽 4px"));
+        annotationWheel(*canvas, 60);
+        QCOMPARE(label->text(), QStringLiteral("线宽 5px"));
+        annotationWheel(*canvas, -240);
+        QCOMPARE(label->text(), QStringLiteral("线宽 3px"));
+        annotationWheel(*canvas, 0, {130, 130}, 30);
+        QCOMPARE(label->text(), QStringLiteral("线宽 5px"));
+        annotationWheel(*canvas, 9600);
+        QCOMPARE(label->text(), QStringLiteral("线宽 24px"));
+        annotationWheel(*canvas, -120);
+        QCOMPARE(label->text(), QStringLiteral("线宽 23px"));
+        annotationWheel(*canvas, -9600);
+        QCOMPARE(label->text(), QStringLiteral("线宽 1px"));
+        annotationWheel(*canvas, 120);
+        QCOMPARE(label->text(), QStringLiteral("线宽 2px"));
+        QCOMPARE(canvas->geometry(), geometry);
+        QCOMPARE(overlay.selection(), selection);
+        QVERIFY(sticker ? window->annotations().isEmpty() : overlay.annotations().isEmpty());
+        QVERIFY(sticker ? window->isSaved() : !overlay.isSelectionSaved());
+        // 绘制未松开时调粗，草稿及松开后的输出立即采用新值。
+        QTest::mousePress(canvas, Qt::LeftButton, Qt::NoModifier, {130, 130});
+        if (sticker)
+        {
+            QMouseEvent move(QEvent::MouseMove, QPointF(210, 130),
+                             canvas->mapToGlobal(QPoint(210, 130)), Qt::NoButton, Qt::LeftButton,
+                             Qt::NoModifier);
+            QApplication::sendEvent(canvas, &move);
+        }
+        else
+            ratioMouse(overlay, QEvent::MouseMove, {210, 130});
+        const QImage beforePreview = canvas->grab(QRect(120, 120, 110, 30)).toImage();
+        annotationWheel(*canvas, 720);
+        QCOMPARE(label->text(), QStringLiteral("线宽 8px"));
+        QVERIFY(canvas->grab(QRect(120, 120, 110, 30)).toImage() != beforePreview);
+        QVERIFY(sticker ? window->annotations().isEmpty() : overlay.annotations().isEmpty());
+        QTest::mouseRelease(canvas, Qt::LeftButton, Qt::NoModifier, {210, 130});
+        auto annotations = sticker ? window->annotations() : overlay.annotations();
+        QCOMPARE(annotations.size(), qsizetype(1));
+        QCOMPARE(annotations.last().style.lineWidth, 8);
+        const QString tools[] = {"rectangleToolButton", "ellipseToolButton", "lineToolButton",
+                                 "arrowToolButton"};
+        int expectedWidth = 8;
+        for (const auto& tool : tools)
+        {
+            const QString name =
+                sticker ? QStringLiteral("stickerEdit") + tool[0].toUpper() + tool.mid(1) : tool;
+            clickAnnotationTool(*canvas, qPrintable(name));
+            annotationWheel(*canvas, 120);
+            if (sticker)
+                stickerDrag(*window, {130, 180}, {210, 200});
+            else
+                dragLogical(overlay, {130, 180}, {210, 200});
+            annotations = sticker ? window->annotations() : overlay.annotations();
+            QCOMPARE(annotations.last().style.lineWidth, ++expectedWidth);
+        }
+        // 控件及画布外事件不修改线宽，不触发贴图缩放。
+        const QString previous = label->text();
+        auto* color = canvas->findChild<QPushButton*>(sticker ? "stickerEditColor0Button"
+                                                              : "annotationColor0Button");
+        annotationWheel(*color, 120, color->rect().center());
+        annotationWheel(*canvas, 120, {-10, -10});
+        QCOMPARE(label->text(), previous);
+        QCOMPARE(canvas->geometry(), geometry);
+        const QString excluded[] = {"textToolButton", "coverToolButton", "mosaicToolButton"};
+        for (const auto& tool : excluded)
+        {
+            const QString name =
+                sticker ? QStringLiteral("stickerEdit") + tool[0].toUpper() + tool.mid(1) : tool;
+            clickAnnotationTool(*canvas, qPrintable(name));
+            QVERIFY(!label->isVisible());
+            const qreal scale = sticker ? window->scale() : 1;
+            annotationWheel(*canvas, 120);
+            QCOMPARE(label->text(), previous);
+            if (sticker)
+                QVERIFY(window->scale() > scale);
+            if (tool == QStringLiteral("textToolButton"))
+            {
+                QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, {130, 180});
+                auto* editor = canvas->findChild<AnnotationTextEdit*>();
+                QVERIFY(editor && editor->isVisible());
+                editor->setPlainText(QStringLiteral("字号不受滚轮影响"));
+                QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+            }
+            else if (sticker)
+                stickerDrag(*window, {130, 180}, {210, 200});
+            else
+                dragLogical(overlay, {130, 180}, {210, 200});
+            annotations = sticker ? window->annotations() : overlay.annotations();
+            QCOMPARE(annotations.last().style.lineWidth, expectedWidth);
+            QCOMPARE(annotations.last().style.textSize, 28);
+            QCOMPARE(annotations.last().style.color, annotationColors().front());
+        }
+        if (!sticker)
+        {
+            clickAnnotationTool(overlay, "ocrToolButton");
+            annotationWheel(overlay, 120);
+            QCOMPARE(label->text(), previous);
+        }
+        else
+            window->setSaved(true);
+    }
     void annotationGroupDefaultsAndMemory()
     {
         using namespace waibusnap;
@@ -5074,7 +5360,7 @@ class StartupSmokeTest final : public QObject
         const char* labels[] = {"椭圆", "直线", "遮盖"};
         QTest::mouseClick(button(overlay, "geometryToolButton"), Qt::LeftButton);
         QTest::mouseClick(button(overlay, "annotationColor2Button"), Qt::LeftButton);
-        QTest::mouseClick(button(overlay, "annotationWidth2Button"), Qt::LeftButton);
+        chooseAnnotationWidth(overlay, 8);
         QTest::mouseClick(button(overlay, "geometryToolButton"), Qt::LeftButton);
         for (int index = 0; index < 3; ++index)
         {
@@ -5306,8 +5592,7 @@ class StartupSmokeTest final : public QObject
             {
                 auto* color = button(
                     overlay, qPrintable(QStringLiteral("annotationColor%1Button").arg(index)));
-                auto* width = button(
-                    overlay, qPrintable(QStringLiteral("annotationWidth%1Button").arg(index)));
+                auto* width = overlay.findChild<QLabel*>("annotationWidthLabel");
                 auto* size = button(
                     overlay, qPrintable(QStringLiteral("annotationTextSize%1Button").arg(index)));
                 QCOMPARE(color->isVisible(), tool < 7);
@@ -5323,7 +5608,7 @@ class StartupSmokeTest final : public QObject
             QCOMPARE(toolbar->height(), 44);
             if (tool < 7)
             {
-                QCOMPARE(options->height(), 36);
+                QCOMPARE(options->height(), 68);
                 QVERIFY(button(overlay, "annotationColor2Button")->isChecked());
                 QVERIFY(!button(overlay, "annotationColor0Button")->isChecked());
                 QVERIFY(!button(overlay, "annotationColor1Button")->isChecked());
@@ -5334,11 +5619,12 @@ class StartupSmokeTest final : public QObject
             QVERIFY(!overlay.isTextMode());
         }
         clickAnnotationTool(overlay, "lineToolButton");
-        QTest::mouseClick(button(overlay, "annotationWidth2Button"), Qt::LeftButton);
+        chooseAnnotationWidth(overlay, 8);
         clickAnnotationTool(overlay, "textToolButton");
         QTest::mouseClick(button(overlay, "annotationTextSize0Button"), Qt::LeftButton);
         clickAnnotationTool(overlay, "lineToolButton");
-        QVERIFY(button(overlay, "annotationWidth2Button")->isChecked());
+        QCOMPARE(overlay.findChild<QLabel*>("annotationWidthLabel")->text(),
+                 QStringLiteral("线宽 8px"));
         QVERIFY(button(overlay, "annotationColor2Button")->isChecked());
         clickAnnotationTool(overlay, "textToolButton");
         QVERIFY(button(overlay, "annotationTextSize0Button")->isChecked());
@@ -5522,7 +5808,7 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(overlay.annotations().size(), qsizetype(2));
         QVERIFY(overlay.activeTool() == AnnotationType::Cover);
         auto* options = overlay.findChild<QWidget*>(QStringLiteral("annotationOptionsBar"));
-        auto* widths = button(overlay, "annotationWidth0Button");
+        auto* widths = overlay.findChild<QLabel*>("annotationWidthLabel");
         auto* sizes = button(overlay, "annotationTextSize0Button");
         auto* colors = button(overlay, "annotationColor0Button");
         QVERIFY(!widths->isVisible());
@@ -5626,16 +5912,16 @@ class StartupSmokeTest final : public QObject
         stickerClick(*sticker, "stickerEditCoverToolButton");
         QCOMPARE(sticker->annotations().size(), qsizetype(2));
         QVERIFY(sticker->activeTool() == AnnotationType::Cover);
-        auto* widths = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"));
+        auto* widths = sticker->findChild<QLabel*>(QStringLiteral("stickerEditWidthLabel"));
         auto* sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
-        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
-        QVERIFY(!widths->isEnabled());
+        auto* colors = sticker->findChild<QWidget*>(QStringLiteral("stickerEditColorPalette"));
+        QVERIFY(!widths->isVisible());
         QVERIFY(!sizes->isEnabled());
         QVERIFY(colors->isEnabled());
         stickerClick(*sticker, "stickerEditCoverToolButton");
         QVERIFY(!sticker->activeTool());
         QVERIFY(!cover->isChecked());
-        QVERIFY(widths->isEnabled());
+        QVERIFY(!widths->isVisible());
         stickerClick(*sticker, "stickerEditCoverToolButton");
         QVERIFY(sticker->exportToPath(path));
         const QImage before(path);
@@ -5666,7 +5952,7 @@ class StartupSmokeTest final : public QObject
         stickerClick(*sticker, "stickerEditRedoAnnotationButton");
         QCOMPARE(sticker->annotations().size(), qsizetype(3));
         QCOMPARE(sticker->renderedImage().convertToFormat(saved.format()), saved);
-        colors->setCurrentIndex(2);
+        chooseAnnotationColor(*sticker, 2, true);
         stickerDrag(*sticker, {220, 170}, {85, 85});
         QCOMPARE(sticker->annotations().last().style.color, annotationColors()[2]);
         stickerClick(*sticker, "stickerEditCopyButton");
@@ -5725,7 +6011,7 @@ class StartupSmokeTest final : public QObject
         status->hide();
         status->setText(QStringLiteral("保留反馈"));
         auto* options = overlay.findChild<QWidget*>(QStringLiteral("annotationOptionsBar"));
-        auto* widths = button(overlay, "annotationWidth0Button");
+        auto* widths = overlay.findChild<QLabel*>("annotationWidthLabel");
         auto* sizes = button(overlay, "annotationTextSize0Button");
         auto* colors = button(overlay, "annotationColor0Button");
         QVERIFY(!widths->isVisible());
@@ -5842,16 +6128,16 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(status->text(), notice);
         status->hide();
         status->setText(QStringLiteral("保留反馈"));
-        auto* widths = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditWidthCombo"));
+        auto* widths = sticker->findChild<QLabel*>(QStringLiteral("stickerEditWidthLabel"));
         auto* sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
-        auto* colors = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditColorCombo"));
-        QVERIFY(!widths->isEnabled());
+        auto* colors = sticker->findChild<QWidget*>(QStringLiteral("stickerEditColorPalette"));
+        QVERIFY(!widths->isVisible());
         QVERIFY(!sizes->isEnabled());
         QVERIFY(!colors->isEnabled());
         stickerClick(*sticker, "stickerEditMosaicToolButton");
         QVERIFY(!sticker->activeTool());
         QVERIFY(!mosaic->isChecked());
-        QVERIFY(widths->isEnabled());
+        QVERIFY(!widths->isVisible());
         QVERIFY(colors->isEnabled());
         stickerClick(*sticker, "stickerEditMosaicToolButton");
         QCOMPARE(status->text(), QStringLiteral("保留反馈"));
@@ -5885,7 +6171,9 @@ class StartupSmokeTest final : public QObject
         stickerClick(*sticker, "stickerEditRedoAnnotationButton");
         QCOMPARE(sticker->annotations().size(), qsizetype(3));
         QCOMPARE(sticker->renderedImage().convertToFormat(saved.format()), saved);
-        colors->setCurrentIndex(2);
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        chooseAnnotationColor(*sticker, 2, true);
+        stickerClick(*sticker, "stickerEditMosaicToolButton");
         stickerDrag(*sticker, {220, 170}, {85, 85});
         QCOMPARE(sticker->annotations().last().style.color, annotationColors()[2]);
         stickerClick(*sticker, "stickerEditCopyButton");
@@ -5968,8 +6256,7 @@ class StartupSmokeTest final : public QObject
         {
             QVERIFY(
                 button(overlay, qPrintable(QStringLiteral("annotationColor%1Button").arg(index))));
-            QVERIFY(
-                button(overlay, qPrintable(QStringLiteral("annotationWidth%1Button").arg(index))));
+            QVERIFY(overlay.findChild<QLabel*>("annotationWidthLabel"));
             QVERIFY(button(overlay,
                            qPrintable(QStringLiteral("annotationTextSize%1Button").arg(index))));
         }
@@ -5981,12 +6268,10 @@ class StartupSmokeTest final : public QObject
             QTest::mouseClick(
                 button(overlay, qPrintable(QStringLiteral("annotationColor%1Button").arg(index))),
                 Qt::LeftButton);
-            QTest::mouseClick(
-                button(overlay, qPrintable(QStringLiteral("annotationWidth%1Button").arg(index))),
-                Qt::LeftButton);
+            chooseAnnotationWidth(overlay, sampleLineWidths[index]);
             drag(overlay, {120, 150 + index * 20}, {280, 150 + index * 20});
             QCOMPARE(overlay.annotations().last().style.color, annotationColors()[index]);
-            QCOMPARE(overlay.annotations().last().style.lineWidth, annotationLineWidths[index]);
+            QCOMPARE(overlay.annotations().last().style.lineWidth, sampleLineWidths[index]);
         }
         QTemporaryDir temporary;
         QVERIFY(temporary.isValid());
@@ -6014,7 +6299,7 @@ class StartupSmokeTest final : public QObject
         standardKey(&overlay, QKeySequence::Redo);
         QCOMPARE(overlay.annotations().size(), qsizetype(3));
         clickAnnotationTool(overlay, "textToolButton");
-        QVERIFY(!button(overlay, "annotationWidth0Button")->isVisible());
+        QVERIFY(!overlay.findChild<QLabel*>("annotationWidthLabel")->isVisible());
         QVERIFY(button(overlay, "annotationTextSize0Button")->isVisible());
         QTest::mouseClick(button(overlay, "annotationTextSize2Button"), Qt::LeftButton);
         QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {120, 120});

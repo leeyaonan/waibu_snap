@@ -3,11 +3,44 @@
 #include <cmath>
 namespace waibusnap
 {
-const std::array<QColor, 3>& annotationColors()
+const std::array<QColor, annotationColorCount>& annotationColors()
 {
-    static const std::array<QColor, 3> colors = {QColor(255, 70, 70), QColor(255, 210, 40),
-                                                 QColor(40, 160, 255)};
+    static const std::array<QColor, annotationColorCount> colors = {
+        QColor(255, 70, 70),   QColor(255, 146, 43), QColor(255, 210, 40),
+        QColor(54, 201, 107),  QColor(34, 198, 207), QColor(40, 160, 255),
+        QColor(180, 119, 255), QColor(Qt::black),    QColor(Qt::white)};
     return colors;
+}
+const std::array<QString, annotationColorCount>& annotationColorNames()
+{
+    static const std::array<QString, annotationColorCount> names = {
+        QStringLiteral("红"), QStringLiteral("橙"), QStringLiteral("黄"),
+        QStringLiteral("绿"), QStringLiteral("青"), QStringLiteral("蓝"),
+        QStringLiteral("紫"), QStringLiteral("黑"), QStringLiteral("白")};
+    return names;
+}
+bool annotationUsesLineWidth(AnnotationType type)
+{
+    return type == AnnotationType::Rectangle || type == AnnotationType::Ellipse ||
+           type == AnnotationType::Line || type == AnnotationType::Arrow ||
+           type == AnnotationType::Freehand;
+}
+int AnnotationWidthWheel::adjust(int width, QPoint angleDelta, QPoint pixelDelta)
+{
+    const bool angle = !angleDelta.isNull();
+    const int unit = angle ? 120 : 15;
+    if (unit_ != unit)
+        reset();
+    unit_ = unit;
+    const qint64 total = qint64(remainder_) + (angle ? angleDelta.y() : pixelDelta.y());
+    const qint64 steps = total / unit;
+    remainder_ = int(total % unit);
+    const int next = int(std::clamp(qint64(width) + steps, qint64(annotationMinimumWidth),
+                                    qint64(annotationMaximumWidth)));
+    if ((next == annotationMaximumWidth && total > 0) ||
+        (next == annotationMinimumWidth && total < 0))
+        remainder_ = 0;
+    return next;
 }
 bool Annotation::isVisible() const
 {

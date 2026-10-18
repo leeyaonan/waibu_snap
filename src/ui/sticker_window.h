@@ -18,6 +18,7 @@ class QShortcut;
 namespace waibusnap
 {
 class AnnotationTextEdit;
+class AnnotationColorPalette;
 enum class StickerCloseDecision
 {
     Cancel,
@@ -46,7 +47,7 @@ class StickerWindow final : public QWidget
     qreal scale() const { return scale_; }
     bool isSaved() const { return saved_; }
     void setSaved(bool saved) { saved_ = saved; }
-    // 编辑只禁用窗口移动；滚轮仍以光标为锚点缩放。
+    // 绘图工具在画布上滚轮调线宽；其他状态沿用光标锚点缩放。
     void setEditing(bool editing);
     bool isEditing() const { return editing_; }
     void setScale(qreal scale, QPointF globalAnchor);
@@ -113,8 +114,9 @@ class StickerWindow final : public QWidget
     std::array<AnnotationType, 5> toolTypes_ = defaultAnnotationTools;
     QWidget* toolBar_ = nullptr;
     QVector<QPushButton*> subtoolButtons_;
-    QComboBox* colors_ = nullptr;
-    QComboBox* widths_ = nullptr;
+    AnnotationColorPalette* colors_ = nullptr;
+    QLabel* widthLabel_ = nullptr;
+    AnnotationWidthWheel widthWheel_;
     QComboBox* sizes_ = nullptr;
     AnnotationHistory history_;
     AnnotationRenderCache renderCache_;

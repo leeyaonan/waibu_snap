@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+
+inline constexpr std::array<int, 3> sampleLineWidths = {2, 4, 8};
 class ImageOutputTest final : public QObject
 {
     Q_OBJECT
@@ -506,7 +508,7 @@ class ImageOutputTest final : public QObject
             annotation.points = {
                 annotation.first, {annotation.first.x() + 15, 45}, annotation.last};
             annotation.text = QStringLiteral("截图说明 ABC 123\n第二行");
-            annotation.style.color = annotationColors()[type % 3];
+            annotation.style.color = annotationColors()[type % annotationColors().size()];
             QVERIFY(history.add(annotation));
             const auto output =
                 renderAnnotatedSelection(background, history.annotations(), background.rect());
@@ -635,6 +637,33 @@ class ImageOutputTest final : public QObject
         preview.setDevicePixelRatio(1);
         QCOMPARE(preview, output);
     }
+    void completePaletteAndWheelWidthsRender()
+    {
+        using namespace waibusnap;
+        QImage base(100, 60, QImage::Format_ARGB32_Premultiplied);
+        base.fill(QColor(110, 110, 110));
+        for (const auto& color : annotationColors())
+            for (int width : {1, 4, 24})
+            {
+                Annotation line{AnnotationType::Line, {}, {10, 30}, {90, 30}, {}, {}};
+                if (width % 2)
+                {
+                    line.first.ry() += 0.5;
+                    line.last.ry() += 0.5;
+                }
+                line.style.color = color;
+                line.style.lineWidth = width;
+                const auto image = renderAnnotatedSelection(base, {line}, base.rect());
+                QCOMPARE(image.pixelColor(50, 30), color);
+                QCOMPARE(image.pixelColor(50, 10), base.pixelColor(50, 10));
+                int rows = 0;
+                for (int y = 0; y < image.height(); ++y)
+                    if (image.pixelColor(50, y) != base.pixelColor(50, y))
+                        ++rows;
+                // 奇数线宽抗锯齿可能覆盖相邻半像素。
+                QVERIFY(rows >= width && rows <= width + 1);
+            }
+    }
     void stylesChangePhysicalResults()
     {
         using namespace waibusnap;
@@ -646,14 +675,14 @@ class ImageOutputTest final : public QObject
         {
             Annotation line{AnnotationType::Line, {}, {10, 30}, {210, 30}, {}, {}};
             line.style.color = annotationColors()[index];
-            line.style.lineWidth = annotationLineWidths[index];
+            line.style.lineWidth = sampleLineWidths[index];
             const auto drawn = renderAnnotatedSelection(background, {line}, background.rect());
             QCOMPARE(drawn.pixelColor(100, 30), annotationColors()[index]);
             int rows = 0;
             for (int y = 0; y < drawn.height(); ++y)
                 if (drawn.pixelColor(100, y) != QColor(Qt::white))
                     ++rows;
-            QCOMPARE(rows, annotationLineWidths[index]);
+            QCOMPARE(rows, sampleLineWidths[index]);
             QVERIFY(drawn != previousLine);
             previousLine = drawn;
             Annotation text{
