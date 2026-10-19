@@ -126,11 +126,12 @@ void SelectionOverlay::ensureToolbar()
         "padding: 0 8px; font-size: 12px; }"
         "QPushButton:hover { background: #3a3a3a; }"
         "QPushButton:checked { background: #a65316; color: white; }"));
-    const QString buttonsStyle = QStringLiteral(
-        "QPushButton { background: transparent; padding: 0; border: none; border-radius: 6px; }"
-        "QPushButton:hover { background: #3a3a3a; }"
-        "QPushButton:checked { background: #a65316; }"
-        "QPushButton:disabled { background: transparent; }");
+    const QString buttonsStyle =
+        QStringLiteral("QPushButton { background: transparent; color: #f2f2f2; padding: 0; border: "
+                       "none; border-radius: 6px; }"
+                       "QPushButton:hover { background: #3a3a3a; }"
+                       "QPushButton:checked { background: #a65316; }"
+                       "QPushButton:disabled { background: transparent; }");
     toolbar_->setStyleSheet(
         QStringLiteral("QWidget#selectionToolbar { background: #202020; border: 1px solid "
                        "#3a3a3a; border-radius: 10px; }") +

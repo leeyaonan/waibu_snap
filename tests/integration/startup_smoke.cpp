@@ -456,6 +456,20 @@ QPushButton* button(waibusnap::SelectionOverlay& overlay, const char* name)
 {
     return overlay.findChild<QPushButton*>(QString::fromLatin1(name));
 }
+bool hasLightText(QPushButton* button)
+{
+    if (!button)
+        return false;
+    const QImage image = button->grab().toImage();
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+        {
+            const QColor color = image.pixelColor(x, y);
+            if (color.alpha() > 0 && qGray(color.rgb()) > 200)
+                return true;
+        }
+    return false;
+}
 // 沿真实一级入口进入组，再选择具体子工具；再次选择当前工具通过一级按钮取消。
 void clickAnnotationTool(QWidget& editor, const char* name)
 {
@@ -5747,6 +5761,9 @@ class StartupSmokeTest final : public QObject
         auto* italic = canvas->findChild<QPushButton*>(prefix + "TextItalicButton");
         auto* underline = canvas->findChild<QPushButton*>(prefix + "TextUnderlineButton");
         QVERIFY(bold && italic && underline);
+        QVERIFY(hasLightText(bold));
+        QVERIFY(hasLightText(italic));
+        QVERIFY(hasLightText(underline));
         QVERIFY(bold->isChecked());
         QVERIFY(editor->font().bold());
         QTest::mouseClick(underline, Qt::LeftButton);
@@ -5845,6 +5862,9 @@ class StartupSmokeTest final : public QObject
         QVERIFY(options->width() <= width);
         QVERIFY(frame.display.availableLogicalGeometry.contains(options->geometry()));
         QVERIFY(bold->isVisible() && italic->isVisible() && underline->isVisible());
+        QVERIFY(hasLightText(bold));
+        QVERIFY(hasLightText(italic));
+        QVERIFY(hasLightText(underline));
         QCOMPARE(sizeLabel->isVisible(), width >= 340);
         QCOMPARE(size->isVisible(), width >= 440);
         QVERIFY(button(overlay, "annotationColor0Button")->isVisible());
