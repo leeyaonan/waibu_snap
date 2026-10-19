@@ -58,6 +58,8 @@ void AnnotationTextEdit::setAnnotationFont(const QFont& font)
     setFont(font);
     QTextCharFormat format;
     format.setFont(font);
+    format.setFontWeight(font.weight());
+    format.setFontItalic(font.italic());
     format.setFontUnderline(font.underline());
     QTextCursor cursor = textCursor();
     const int anchor = cursor.anchor();

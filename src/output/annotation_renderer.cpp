@@ -139,6 +139,9 @@ void paintAnnotationWithPatch(QPainter& painter, const Annotation& annotation, c
         document.setPlainText(annotation.text);
         QTextCharFormat format;
         format.setFont(baseFont);
+        // 部分 Windows Qt 字体后端不会仅从 QFont 继承粗体 / 斜体，显式写入字符格式。
+        format.setFontWeight(annotation.style.bold ? QFont::Bold : QFont::Normal);
+        format.setFontItalic(annotation.style.italic);
         format.setFontUnderline(annotation.style.underline);
         QTextCursor cursor(&document);
         cursor.select(QTextCursor::Document);
