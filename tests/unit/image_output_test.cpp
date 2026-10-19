@@ -694,6 +694,32 @@ class ImageOutputTest final : public QObject
             previousText = textImage;
         }
     }
+    void textStyleFlagsChangeRendering()
+    {
+        using namespace waibusnap;
+        QImage background(360, 120, QImage::Format_ARGB32_Premultiplied);
+        background.fill(Qt::white);
+        Annotation text{
+            AnnotationType::Text, {}, {10, 10}, {}, {}, QStringLiteral("Bold Italic Underline")};
+        text.style.textSize = 28;
+        text.style.color = Qt::black;
+        const QImage normal = renderAnnotatedSelection(background, {text}, background.rect());
+        QVERIFY(normal != background);
+        auto variant = [&](bool bold, bool italic, bool underline)
+        {
+            Annotation copy = text;
+            copy.style.bold = bold;
+            copy.style.italic = italic;
+            copy.style.underline = underline;
+            return renderAnnotatedSelection(background, {copy}, background.rect());
+        };
+        const QImage bold = variant(true, false, false);
+        const QImage italic = variant(false, true, false);
+        const QImage underline = variant(false, false, true);
+        QVERIFY(bold != normal);
+        QVERIFY(italic != normal);
+        QVERIFY(underline != normal);
+    }
     void cropKeepsPhysicalPixels()
     {
         QImage source(12, 10, QImage::Format_ARGB32);

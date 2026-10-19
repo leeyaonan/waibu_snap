@@ -107,6 +107,16 @@ class StickerWindow final : public QWidget
     void startText(QPointF point);
     void finishText(bool commit, bool restoreFocus = true);
     void positionTextEditor();
+    enum class TextStyleToggle
+    {
+        Bold,
+        Italic,
+        Underline
+    };
+    void toggleTextStyle(TextStyleToggle toggle);
+    void setTextSize(int size);
+    void applyTextEditorFont();
+    void adjustTextSize(QPoint angleDelta, QPoint pixelDelta, Qt::ScrollPhase phase);
     void showStatus(const QString& text, bool temporary);
     bool finishSave(const ImageFileResult& output);
     void positionControls();
@@ -117,6 +127,7 @@ class StickerWindow final : public QWidget
     QWidget* controls_ = nullptr;
     QWidget* editToolbar_ = nullptr;
     QMenu* editMenu_ = nullptr;
+    QMenu* formatMenu_ = nullptr;
     QPushButton* editMoreButton_ = nullptr;
     QPushButton* undoButton_ = nullptr;
     QPushButton* redoButton_ = nullptr;
@@ -128,6 +139,10 @@ class StickerWindow final : public QWidget
     QVector<QPushButton*> subtoolButtons_;
     AnnotationColorPalette* colors_ = nullptr;
     QLabel* widthLabel_ = nullptr;
+    QLabel* textSizeLabel_ = nullptr;
+    QPushButton* boldButton_ = nullptr;
+    QPushButton* italicButton_ = nullptr;
+    QPushButton* underlineButton_ = nullptr;
     AnnotationWidthWheel widthWheel_;
     QComboBox* sizes_ = nullptr;
     AnnotationHistory history_;
@@ -137,6 +152,8 @@ class StickerWindow final : public QWidget
     std::optional<Annotation> draft_;
     // 刚提交的线宽类标注仍可作为滚轮目标；切换工具 / 新起笔画 / 撤销后清除。
     bool lastAnnotationSelected_ = false;
+    // Mouse FocusOut 延迟一拍提交，让文本格式 / 字号按钮有机会取消提交。
+    bool textFocusCommitPending_ = false;
     AnnotationTextEdit* textEditor_ = nullptr;
     Annotation textDraft_;
     std::unique_ptr<StickerFocusSession> focusSession_;

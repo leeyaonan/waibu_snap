@@ -26,6 +26,7 @@
 #include <QScopedValueRollback>
 #include <QScreen>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWindow>
@@ -452,6 +453,19 @@ void StickerWindow::wheelEvent(QWheelEvent* event)
         event->accept();
         return;
     }
+    if (editing_ && activeTool_ && *activeTool_ == AnnotationType::Text)
+    {
+        if (!rect().contains(event->position().toPoint()))
+            return;
+        wheelRemainder_ = 0;
+        adjustTextSize(event->angleDelta(), event->pixelDelta(), event->phase());
+        if (event->angleDelta().y() || event->pixelDelta().y())
+            showStatus(QStringLiteral("字号 %1px").arg(style_.textSize), true);
+        updateEditToolbar();
+        update();
+        event->accept();
+        return;
+    }
     widthWheel_.reset();
     if (draft_)
         return;
@@ -725,6 +739,41 @@ void StickerWindow::ensureEditToolbar()
     widthLabel_->setObjectName(QStringLiteral("stickerEditWidthLabel"));
     widthLabel_->setStyleSheet(QStringLiteral("color: white;"));
     options->addWidget(widthLabel_);
+    const auto makeFormatButton =
+        [this](const QString& text, const QString& object, const QString& tip, int style)
+    {
+        auto* button = new QPushButton(text, editToolbar_);
+        button->setObjectName(object);
+        button->setToolTip(tip);
+        button->setAccessibleName(tip);
+        button->setFixedSize(28, 28);
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        QFont font = button->font();
+        font.setBold(style == 0);
+        font.setItalic(style == 1);
+        font.setUnderline(style == 2);
+        button->setFont(font);
+        return button;
+    };
+    const auto shortcutText = [](Qt::Key key)
+    { return QKeySequence(Qt::CTRL | key).toString(QKeySequence::NativeText); };
+    boldButton_ = makeFormatButton(QStringLiteral("B"), QStringLiteral("stickerEditTextBoldButton"),
+                                   QStringLiteral("加粗（%1）").arg(shortcutText(Qt::Key_B)), 0);
+    italicButton_ =
+        makeFormatButton(QStringLiteral("I"), QStringLiteral("stickerEditTextItalicButton"),
+                         QStringLiteral("斜体（%1）").arg(shortcutText(Qt::Key_I)), 1);
+    underlineButton_ =
+        makeFormatButton(QStringLiteral("U"), QStringLiteral("stickerEditTextUnderlineButton"),
+                         QStringLiteral("下划线（%1）").arg(shortcutText(Qt::Key_U)), 2);
+    options->addWidget(boldButton_);
+    options->addWidget(italicButton_);
+    options->addWidget(underlineButton_);
+    textSizeLabel_ = new QLabel(editToolbar_);
+    textSizeLabel_->setObjectName(QStringLiteral("stickerEditTextSizeLabel"));
+    textSizeLabel_->setStyleSheet(QStringLiteral("color: white;"));
+    textSizeLabel_->setAlignment(Qt::AlignCenter);
+    options->addWidget(textSizeLabel_);
     sizes_ = new QComboBox(editToolbar_);
     sizes_->setObjectName(QStringLiteral("stickerEditTextSizeCombo"));
     for (const int size : annotationTextSizes)
@@ -741,15 +790,24 @@ void StickerWindow::ensureEditToolbar()
         auto* action = sizeMenu->addAction(sizes_->itemText(index));
         action->setCheckable(true);
         connect(action, &QAction::triggered, this,
-                [this, index] { sizes_->setCurrentIndex(index); });
+                [this, index] { setTextSize(annotationTextSizes[index]); });
+    }
+    formatMenu_ = editMenu_->addMenu(QStringLiteral("文字格式"));
+    for (auto* button : {boldButton_, italicButton_, underlineButton_})
+    {
+        auto* action = formatMenu_->addAction(button->text());
+        action->setData(button->objectName());
+        action->setCheckable(true);
+        connect(action, &QAction::triggered, button, &QPushButton::click);
     }
     connect(sizes_, &QComboBox::currentIndexChanged, this,
-            [this](int index)
-            {
-                finishText(true);
-                style_.textSize = annotationTextSizes[index];
-                updateEditToolbar();
-            });
+            [this](int index) { setTextSize(annotationTextSizes[index]); });
+    connect(boldButton_, &QPushButton::clicked, this,
+            [this] { toggleTextStyle(TextStyleToggle::Bold); });
+    connect(italicButton_, &QPushButton::clicked, this,
+            [this] { toggleTextStyle(TextStyleToggle::Italic); });
+    connect(underlineButton_, &QPushButton::clicked, this,
+            [this] { toggleTextStyle(TextStyleToggle::Underline); });
     auto* outputs = new QHBoxLayout;
     layout->addLayout(outputs);
     const auto makeButton = [&](const QString& label, const QString& name)
@@ -782,8 +840,8 @@ void StickerWindow::ensureEditToolbar()
     editMoreButton_ = new QPushButton(QStringLiteral("⋯"), this);
     editMoreButton_->setObjectName(QStringLiteral("stickerEditMoreButton"));
     editMoreButton_->setFocusPolicy(Qt::NoFocus);
-    editMoreButton_->setToolTip(
-        QStringLiteral("编辑工具：图形、文本、遮盖、马赛克、样式、撤销、重做、保存、复制、完成"));
+    editMoreButton_->setToolTip(QStringLiteral(
+        "编辑工具：图形、文本、遮盖、马赛克、文字格式、样式、撤销、重做、保存、复制、完成"));
     connect(editMoreButton_, &QPushButton::clicked, this,
             [this]
             {
@@ -818,8 +876,19 @@ void StickerWindow::updateEditToolbar()
                                    widthLabel_->toolTip());
     colors_->setColor(style_.color);
     colors_->setEnabled(activeTool_ != AnnotationType::Mosaic);
-    sizes_->setEnabled(activeTool_ == AnnotationType::Text);
-    sizes_->setVisible(activeTool_ == AnnotationType::Text);
+    const bool textTool = activeTool_ && *activeTool_ == AnnotationType::Text;
+    sizes_->setEnabled(textTool);
+    sizes_->setVisible(textTool);
+    textSizeLabel_->setVisible(textTool);
+    textSizeLabel_->setText(QStringLiteral("字号 %1px").arg(style_.textSize));
+    textSizeLabel_->setToolTip(QStringLiteral("画布上滚轮调整字号（9–96px，每格 1px）"));
+    textSizeLabel_->setAccessibleName(textSizeLabel_->text() + QStringLiteral("；") +
+                                      textSizeLabel_->toolTip());
+    for (auto* button : {boldButton_, italicButton_, underlineButton_})
+        button->setVisible(textTool);
+    boldButton_->setChecked(style_.bold);
+    italicButton_->setChecked(style_.italic);
+    underlineButton_->setChecked(style_.underline);
     auto* grid = static_cast<QGridLayout*>(
         static_cast<QVBoxLayout*>(editToolbar_->layout())->itemAt(0)->layout());
     const int columns = std::clamp(width() / 44, 1, 5);
@@ -891,6 +960,8 @@ void StickerWindow::updateEditToolbar()
         }
     };
     syncMenu(syncMenu, editMenu_);
+    if (formatMenu_)
+        formatMenu_->menuAction()->setEnabled(available && textTool);
     positionControls();
 }
 void StickerWindow::activateTool(AnnotationType type, bool toggle)
@@ -976,8 +1047,11 @@ void StickerWindow::startText(QPointF point)
                 [this] { finishText(true); });
         connect(textEditor_, &AnnotationTextEdit::cancelRequested, this,
                 [this] { finishText(false); });
+        connect(textEditor_, &AnnotationTextEdit::formatToggleRequested, this,
+                [this](int format) { toggleTextStyle(static_cast<TextStyleToggle>(format)); });
     }
     lastAnnotationSelected_ = false;
+    textFocusCommitPending_ = false;
     textDraft_ = Annotation{AnnotationType::Text, style_, physicalPoint(point), {}, {}, {}};
     QPalette palette = textEditor_->palette();
     palette.setColor(QPalette::Text, style_.color);
@@ -998,34 +1072,166 @@ void StickerWindow::positionTextEditor()
     const qreal factor = scale_ / screenDpr();
     QFont editorFont = annotationFont(textDraft_.style);
     editorFont.setPointSizeF(textDraft_.style.textSize * factor * 72.0 / logicalDpiY());
-    textEditor_->setFont(editorFont);
+    textEditor_->setAnnotationFont(editorFont);
     const QPoint point = (textDraft_.first * factor).toPoint();
     textEditor_->setEditingArea(point, rect());
     textDraft_.first = physicalPoint(textEditor_->pos());
 }
 void StickerWindow::finishText(bool commit, bool restoreFocus)
 {
+    textFocusCommitPending_ = false;
     if (!textEditor_ || !textEditor_->isVisible())
         return;
     if (commit)
         QGuiApplication::inputMethod()->commit();
     else
         QGuiApplication::inputMethod()->reset();
-    lastAnnotationSelected_ = false;
     textEditor_->clearPreedit();
     textDraft_.text = textEditor_->toPlainText();
+    textDraft_.style = style_;
     textEditor_->hide();
     textEditor_->clear();
-    if (commit && history_.add(std::move(textDraft_)))
-        markDirty();
+    bool added = false;
+    if (commit)
+    {
+        added = history_.add(std::move(textDraft_));
+        if (added)
+            markDirty();
+    }
+    lastAnnotationSelected_ = added;
     textDraft_ = {};
     if (restoreFocus && editing_)
         setFocus(Qt::OtherFocusReason);
     updateEditToolbar();
     update();
 }
+void StickerWindow::applyTextEditorFont()
+{
+    if (!textEditor_ || !textEditor_->isVisible())
+        return;
+    const qreal factor = scale_ / screenDpr();
+    QFont editorFont = annotationFont(style_);
+    editorFont.setPointSizeF(style_.textSize * factor * 72.0 / logicalDpiY());
+    textEditor_->setAnnotationFont(editorFont);
+}
+void StickerWindow::setTextSize(int size)
+{
+    textFocusCommitPending_ = false;
+    style_.textSize = std::clamp(size, annotationMinimumTextSize, annotationMaximumTextSize);
+    if (sizes_)
+    {
+        int preset = -1;
+        for (int index = 0; index < sizes_->count(); ++index)
+            if (annotationTextSizes[index] == style_.textSize)
+                preset = index;
+        const QSignalBlocker blocker(sizes_);
+        sizes_->setCurrentIndex(preset);
+    }
+    if (textEditor_ && textEditor_->isVisible())
+    {
+        textDraft_.style = style_;
+        applyTextEditorFont();
+        if (!textEditor_->hasFocus())
+            textEditor_->setFocus(Qt::OtherFocusReason);
+        if (!textEditor_->hasFocus())
+            QTimer::singleShot(0, this,
+                               [this]
+                               {
+                                   if (textEditor_ && textEditor_->isVisible() &&
+                                       !textEditor_->hasFocus())
+                                       textEditor_->setFocus(Qt::OtherFocusReason);
+                               });
+    }
+    else if (lastAnnotationSelected_ && history_.setLastTextStyle(style_.textSize, style_.bold,
+                                                                  style_.italic, style_.underline))
+        markDirty();
+    updateEditToolbar();
+    update();
+}
+void StickerWindow::toggleTextStyle(TextStyleToggle toggle)
+{
+    if (!editing_ || !activeTool_ || *activeTool_ != AnnotationType::Text)
+        return;
+    textFocusCommitPending_ = false;
+    bool* value = toggle == TextStyleToggle::Bold     ? &style_.bold
+                  : toggle == TextStyleToggle::Italic ? &style_.italic
+                                                      : &style_.underline;
+    *value = !*value;
+    if (textEditor_ && textEditor_->isVisible())
+    {
+        textDraft_.style = style_;
+        applyTextEditorFont();
+        if (!textEditor_->hasFocus())
+            textEditor_->setFocus(Qt::OtherFocusReason);
+        if (!textEditor_->hasFocus())
+            QTimer::singleShot(0, this,
+                               [this]
+                               {
+                                   if (textEditor_ && textEditor_->isVisible() &&
+                                       !textEditor_->hasFocus())
+                                       textEditor_->setFocus(Qt::OtherFocusReason);
+                               });
+    }
+    else if (lastAnnotationSelected_ && history_.setLastTextStyle(style_.textSize, style_.bold,
+                                                                  style_.italic, style_.underline))
+        markDirty();
+    updateEditToolbar();
+    update();
+}
+void StickerWindow::adjustTextSize(QPoint angleDelta, QPoint pixelDelta, Qt::ScrollPhase phase)
+{
+    if (!editing_ || !activeTool_ || *activeTool_ != AnnotationType::Text)
+        return;
+    if (phase == Qt::ScrollBegin)
+        widthWheel_.reset();
+    setTextSize(widthWheel_.adjust(style_.textSize, angleDelta, pixelDelta,
+                                   annotationMinimumTextSize, annotationMaximumTextSize));
+    if (phase == Qt::ScrollEnd)
+        widthWheel_.reset();
+}
 bool StickerWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // 格式按钮按下即应用；不抢编辑框焦点，避免 FocusOut 提前提交文本。
+    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
+    {
+        if (watched == boldButton_)
+        {
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                textFocusCommitPending_ = false;
+                toggleTextStyle(TextStyleToggle::Bold);
+            }
+            event->accept();
+            return true;
+        }
+        if (watched == italicButton_)
+        {
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                textFocusCommitPending_ = false;
+                toggleTextStyle(TextStyleToggle::Italic);
+            }
+            event->accept();
+            return true;
+        }
+        if (watched == underlineButton_)
+        {
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                textFocusCommitPending_ = false;
+                toggleTextStyle(TextStyleToggle::Underline);
+            }
+            event->accept();
+            return true;
+        }
+    }
+    if (watched == textEditor_ && event->type() == QEvent::Wheel)
+    {
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        adjustTextSize(wheel->angleDelta(), wheel->pixelDelta(), wheel->phase());
+        event->accept();
+        return true;
+    }
     if (watched != textEditor_ && event->type() == QEvent::Wheel)
     {
         event->accept();
@@ -1047,7 +1253,28 @@ bool StickerWindow::eventFilter(QObject* watched, QEvent* event)
     {
         const auto reason = static_cast<QFocusEvent*>(event)->reason();
         if (reason == Qt::MouseFocusReason || reason == Qt::TabFocusReason)
-            finishText(true, false);
+        {
+            const auto over = [](QWidget* control)
+            {
+                return control && control->isVisible() &&
+                       control->rect().contains(control->mapFromGlobal(QCursor::pos()));
+            };
+            bool textControl = over(boldButton_) || over(italicButton_) || over(underlineButton_);
+            textControl |= over(sizes_);
+            if (!textControl)
+            {
+                textFocusCommitPending_ = true;
+                QTimer::singleShot(0, this,
+                                   [this]
+                                   {
+                                       if (textFocusCommitPending_)
+                                       {
+                                           textFocusCommitPending_ = false;
+                                           finishText(true, false);
+                                       }
+                                   });
+            }
+        }
     }
     return QWidget::eventFilter(watched, event);
 }

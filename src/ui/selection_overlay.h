@@ -132,6 +132,16 @@ class SelectionOverlay final : public QWidget
     void redoAnnotation();
     void startText(QPointF position);
     void finishText(bool commit, bool restoreFocus = true);
+    enum class TextStyleToggle
+    {
+        Bold,
+        Italic,
+        Underline
+    };
+    void toggleTextStyle(TextStyleToggle toggle);
+    void setTextSize(int size);
+    void applyTextEditorFont();
+    void adjustTextSize(QPoint angleDelta, QPoint pixelDelta, Qt::ScrollPhase phase);
     void discardAnnotations();
     bool nudgeSelection(QKeyEvent* event);
     void showMagnifier(QPoint anchor, bool keyboard);
@@ -166,6 +176,10 @@ class SelectionOverlay final : public QWidget
     QPointF lastDragPosition_;
     AnnotationColorPalette* colors_ = nullptr;
     QLabel* widthLabel_ = nullptr;
+    QLabel* textSizeLabel_ = nullptr;
+    QPushButton* boldButton_ = nullptr;
+    QPushButton* italicButton_ = nullptr;
+    QPushButton* underlineButton_ = nullptr;
     AnnotationWidthWheel widthWheel_;
     QVector<QPushButton*> textSizeButtons_;
     QVector<QPushButton*> actionButtons_;
@@ -185,6 +199,8 @@ class SelectionOverlay final : public QWidget
     std::optional<Annotation> draft_;
     // 刚提交的线宽类标注仍可作为滚轮目标；切换工具 / 新起笔画 / 撤销后清除。
     bool lastAnnotationSelected_ = false;
+    // Mouse FocusOut 延迟一拍提交，让文本格式 / 字号按钮有机会取消提交。
+    bool textFocusCommitPending_ = false;
     AnnotationTextEdit* textEditor_ = nullptr;
     Annotation textDraft_;
     QVector<QPushButton*> toolButtons_;

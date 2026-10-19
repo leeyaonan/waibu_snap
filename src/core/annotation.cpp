@@ -25,7 +25,8 @@ bool annotationUsesLineWidth(AnnotationType type)
            type == AnnotationType::Line || type == AnnotationType::Arrow ||
            type == AnnotationType::Freehand;
 }
-int AnnotationWidthWheel::adjust(int width, QPoint angleDelta, QPoint pixelDelta)
+int AnnotationWidthWheel::adjust(int value, QPoint angleDelta, QPoint pixelDelta, int minimum,
+                                 int maximum)
 {
     const bool angle = !angleDelta.isNull();
     const int unit = angle ? 120 : 15;
@@ -35,10 +36,8 @@ int AnnotationWidthWheel::adjust(int width, QPoint angleDelta, QPoint pixelDelta
     const qint64 total = qint64(remainder_) + (angle ? angleDelta.y() : pixelDelta.y());
     const qint64 steps = total / unit;
     remainder_ = int(total % unit);
-    const int next = int(std::clamp(qint64(width) + steps, qint64(annotationMinimumWidth),
-                                    qint64(annotationMaximumWidth)));
-    if ((next == annotationMaximumWidth && total > 0) ||
-        (next == annotationMinimumWidth && total < 0))
+    const int next = int(std::clamp(qint64(value) + steps, qint64(minimum), qint64(maximum)));
+    if ((next == maximum && total > 0) || (next == minimum && total < 0))
         remainder_ = 0;
     return next;
 }
@@ -74,6 +73,9 @@ QFont annotationFont(const AnnotationStyle& style)
     if (!style.fontFamily.isEmpty())
         font.setFamily(style.fontFamily);
     font.setPixelSize(style.textSize);
+    font.setBold(style.bold);
+    font.setItalic(style.italic);
+    font.setUnderline(style.underline);
     return font;
 }
 QVector<QPointF> arrowHead(const Annotation& annotation)
@@ -118,6 +120,22 @@ bool AnnotationHistory::setLastLineWidth(int width)
     if (last.style.lineWidth == width)
         return false;
     last.style.lineWidth = width;
+    redo_.clear();
+    return true;
+}
+bool AnnotationHistory::setLastTextStyle(int textSize, bool bold, bool italic, bool underline)
+{
+    if (annotations_.isEmpty() || annotations_.last().type != AnnotationType::Text)
+        return false;
+    Annotation& last = annotations_.last();
+    textSize = std::clamp(textSize, annotationMinimumTextSize, annotationMaximumTextSize);
+    if (last.style.textSize == textSize && last.style.bold == bold && last.style.italic == italic &&
+        last.style.underline == underline)
+        return false;
+    last.style.textSize = textSize;
+    last.style.bold = bold;
+    last.style.italic = italic;
+    last.style.underline = underline;
     redo_.clear();
     return true;
 }

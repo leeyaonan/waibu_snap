@@ -339,16 +339,49 @@ void SelectionOverlay::ensureToolbar()
         const qreal scales[] = {0.72, 0.86, 1.0};
         size->setIcon(toolbarIcon(ToolbarIcon::TextSize, {}, scales[index]));
         size->setCheckable(true);
-        size->setFocusPolicy(Qt::StrongFocus);
+        size->setFocusPolicy(Qt::NoFocus);
         textSizeButtons_.append(size);
         connect(size, &QPushButton::clicked, this,
-                [this, index]
-                {
-                    finishText(true, false);
-                    style_.textSize = annotationTextSizes[index];
-                    updateToolbar();
-                });
+                [this, index] { setTextSize(annotationTextSizes[index]); });
     }
+    textSizeLabel_ = new QLabel(optionsBar_);
+    textSizeLabel_->setObjectName(QStringLiteral("annotationTextSizeLabel"));
+    textSizeLabel_->setStyleSheet(
+        QStringLiteral("color: #e8e8e8; background: transparent; font-size: 12px;"));
+    textSizeLabel_->setAlignment(Qt::AlignCenter);
+    const auto makeFormatButton =
+        [this](const QString& text, const QString& object, const QString& tip, int style)
+    {
+        auto* button = new QPushButton(text, optionsBar_);
+        button->setObjectName(object);
+        button->setToolTip(tip);
+        button->setAccessibleName(tip);
+        button->setFixedSize(28, 28);
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        QFont font = button->font();
+        font.setBold(style == 0);
+        font.setItalic(style == 1);
+        font.setUnderline(style == 2);
+        button->setFont(font);
+        return button;
+    };
+    const auto shortcutText = [](Qt::Key key)
+    { return QKeySequence(Qt::CTRL | key).toString(QKeySequence::NativeText); };
+    boldButton_ = makeFormatButton(QStringLiteral("B"), QStringLiteral("annotationTextBoldButton"),
+                                   QStringLiteral("加粗（%1）").arg(shortcutText(Qt::Key_B)), 0);
+    italicButton_ =
+        makeFormatButton(QStringLiteral("I"), QStringLiteral("annotationTextItalicButton"),
+                         QStringLiteral("斜体（%1）").arg(shortcutText(Qt::Key_I)), 1);
+    underlineButton_ =
+        makeFormatButton(QStringLiteral("U"), QStringLiteral("annotationTextUnderlineButton"),
+                         QStringLiteral("下划线（%1）").arg(shortcutText(Qt::Key_U)), 2);
+    connect(boldButton_, &QPushButton::clicked, this,
+            [this] { toggleTextStyle(TextStyleToggle::Bold); });
+    connect(italicButton_, &QPushButton::clicked, this,
+            [this] { toggleTextStyle(TextStyleToggle::Italic); });
+    connect(underlineButton_, &QPushButton::clicked, this,
+            [this] { toggleTextStyle(TextStyleToggle::Underline); });
     optionsBar_->hide();
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("outputStatus"));
@@ -503,14 +536,39 @@ void SelectionOverlay::updateOptionsBar()
         widthLabel_->setGeometry(x, (barHeight - 28) / 2, 64, 28);
         x += 64 + 4;
     }
+    const int availableWidth = availableRect().width();
+    const bool showTextSizeLabel = sizes && availableWidth >= 340;
+    const bool showTextPresets = sizes && availableWidth >= 440;
+    for (auto* button : {boldButton_, italicButton_, underlineButton_})
+        button->setVisible(sizes);
+    if (sizes)
+    {
+        boldButton_->move(x, (barHeight - 28) / 2);
+        italicButton_->move(x + 32, (barHeight - 28) / 2);
+        underlineButton_->move(x + 64, (barHeight - 28) / 2);
+        x += 96 + 4;
+    }
+    boldButton_->setChecked(style_.bold);
+    italicButton_->setChecked(style_.italic);
+    underlineButton_->setChecked(style_.underline);
+    textSizeLabel_->setVisible(showTextSizeLabel);
+    textSizeLabel_->setText(QStringLiteral("字号 %1px").arg(style_.textSize));
+    textSizeLabel_->setToolTip(QStringLiteral("画布上滚轮调整字号（9–96px，每格 1px）"));
+    textSizeLabel_->setAccessibleName(textSizeLabel_->text() + QStringLiteral("；") +
+                                      textSizeLabel_->toolTip());
+    if (showTextSizeLabel)
+    {
+        textSizeLabel_->setGeometry(x, (barHeight - 28) / 2, 64, 28);
+        x += 64 + 4;
+    }
     for (int index = 0; index < textSizeButtons_.size(); ++index)
     {
-        textSizeButtons_[index]->setVisible(sizes);
+        textSizeButtons_[index]->setVisible(showTextPresets);
         textSizeButtons_[index]->setChecked(style_.textSize == annotationTextSizes[index]);
-        if (sizes)
+        if (showTextPresets)
             textSizeButtons_[index]->move(x + index * 32, (barHeight - 28) / 2);
     }
-    if (sizes)
+    if (showTextPresets)
         x += int(textSizeButtons_.size()) * 32 + 4;
     if (!showTools && !colors && !sizes)
     {
@@ -1654,8 +1712,10 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
 }
 void SelectionOverlay::wheelEvent(QWheelEvent* event)
 {
-    if (finished_ || saveDialogOpen_ || ocrDialog_ || textMode_ || scrollReady_ || !activeTool_ ||
-        !annotationUsesLineWidth(*activeTool_) || !logicalSelection().contains(event->position()))
+    const bool widthTool = activeTool_ && annotationUsesLineWidth(*activeTool_);
+    const bool textTool = activeTool_ && *activeTool_ == AnnotationType::Text;
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || textMode_ || scrollReady_ ||
+        (!widthTool && !textTool) || !logicalSelection().contains(event->position()))
     {
         widthWheel_.reset();
         event->ignore();
@@ -1668,6 +1728,12 @@ void SelectionOverlay::wheelEvent(QWheelEvent* event)
             event->accept();
             return;
         }
+    if (textTool)
+    {
+        adjustTextSize(event->angleDelta(), event->pixelDelta(), event->phase());
+        event->accept();
+        return;
+    }
     if (event->phase() == Qt::ScrollBegin)
         widthWheel_.reset();
     const int width =
@@ -1725,14 +1791,12 @@ void SelectionOverlay::startText(QPointF position)
                 [this] { finishText(true); });
         connect(textEditor_, &AnnotationTextEdit::cancelRequested, this,
                 [this] { finishText(false); });
+        connect(textEditor_, &AnnotationTextEdit::formatToggleRequested, this,
+                [this](int format) { toggleTextStyle(static_cast<TextStyleToggle>(format)); });
     }
     lastAnnotationSelected_ = false;
+    textFocusCommitPending_ = false;
     textDraft_ = Annotation{AnnotationType::Text, style_, physicalPoint(position), {}, {}, {}};
-    QFont editorFont = annotationFont(style_);
-    // 编辑器在逻辑坐标中排版，支持非整数 DPR；提交后的文本按物理像素统一绘制。
-    editorFont.setPointSizeF(style_.textSize * 72.0 /
-                             (logicalDpiY() * frame_.display.devicePixelRatio));
-    textEditor_->setFont(editorFont);
     QPalette palette = textEditor_->palette();
     palette.setColor(QPalette::Text, style_.color);
     QColor placeholder = style_.color;
@@ -1741,6 +1805,7 @@ void SelectionOverlay::startText(QPointF position)
     textEditor_->setPalette(palette);
     textEditor_->clear();
     textEditor_->setEditingArea(position.toPoint(), rect());
+    applyTextEditorFont();
     textDraft_.first = physicalPoint(textEditor_->pos());
     textEditor_->show();
     textEditor_->raise();
@@ -1749,27 +1814,163 @@ void SelectionOverlay::startText(QPointF position)
 }
 void SelectionOverlay::finishText(bool commit, bool restoreFocus)
 {
+    textFocusCommitPending_ = false;
     if (!textEditor_ || !textEditor_->isVisible())
         return;
     if (commit)
         QGuiApplication::inputMethod()->commit();
     else
         QGuiApplication::inputMethod()->reset();
-    lastAnnotationSelected_ = false;
     textEditor_->clearPreedit();
     textDraft_.text = textEditor_->toPlainText();
+    textDraft_.style = style_;
     textEditor_->hide();
     textEditor_->clear();
-    if (commit && history_.add(std::move(textDraft_)))
-        markDirty();
+    bool added = false;
+    if (commit)
+    {
+        added = history_.add(std::move(textDraft_));
+        if (added)
+            markDirty();
+    }
+    lastAnnotationSelected_ = added;
     textDraft_ = {};
     if (restoreFocus)
         setFocus(Qt::OtherFocusReason);
     updateToolbar();
     update();
 }
+void SelectionOverlay::applyTextEditorFont()
+{
+    if (!textEditor_ || !textEditor_->isVisible())
+        return;
+    QFont editorFont = annotationFont(style_);
+    // 编辑器在逻辑坐标中排版，支持非整数 DPR；提交后的文本按物理像素统一绘制。
+    editorFont.setPointSizeF(style_.textSize * 72.0 /
+                             (logicalDpiY() * frame_.display.devicePixelRatio));
+    textEditor_->setAnnotationFont(editorFont);
+}
+void SelectionOverlay::setTextSize(int size)
+{
+    textFocusCommitPending_ = false;
+    style_.textSize = std::clamp(size, annotationMinimumTextSize, annotationMaximumTextSize);
+    if (textEditor_ && textEditor_->isVisible())
+    {
+        textDraft_.style = style_;
+        applyTextEditorFont();
+        if (!textEditor_->hasFocus())
+            textEditor_->setFocus(Qt::OtherFocusReason);
+        if (!textEditor_->hasFocus())
+            QTimer::singleShot(0, this,
+                               [this]
+                               {
+                                   if (textEditor_ && textEditor_->isVisible() &&
+                                       !textEditor_->hasFocus())
+                                       textEditor_->setFocus(Qt::OtherFocusReason);
+                               });
+    }
+    else if (lastAnnotationSelected_ && history_.setLastTextStyle(style_.textSize, style_.bold,
+                                                                  style_.italic, style_.underline))
+        markDirty();
+    updateOptionsBar();
+    update();
+}
+void SelectionOverlay::toggleTextStyle(TextStyleToggle toggle)
+{
+    if (!activeTool_ || *activeTool_ != AnnotationType::Text)
+        return;
+    textFocusCommitPending_ = false;
+    bool* value = toggle == TextStyleToggle::Bold     ? &style_.bold
+                  : toggle == TextStyleToggle::Italic ? &style_.italic
+                                                      : &style_.underline;
+    *value = !*value;
+    if (textEditor_ && textEditor_->isVisible())
+    {
+        textDraft_.style = style_;
+        applyTextEditorFont();
+        if (!textEditor_->hasFocus())
+            textEditor_->setFocus(Qt::OtherFocusReason);
+        if (!textEditor_->hasFocus())
+            QTimer::singleShot(0, this,
+                               [this]
+                               {
+                                   if (textEditor_ && textEditor_->isVisible() &&
+                                       !textEditor_->hasFocus())
+                                       textEditor_->setFocus(Qt::OtherFocusReason);
+                               });
+    }
+    else if (lastAnnotationSelected_ && history_.setLastTextStyle(style_.textSize, style_.bold,
+                                                                  style_.italic, style_.underline))
+        markDirty();
+    updateOptionsBar();
+    update();
+}
+void SelectionOverlay::adjustTextSize(QPoint angleDelta, QPoint pixelDelta, Qt::ScrollPhase phase)
+{
+    if (!activeTool_ || *activeTool_ != AnnotationType::Text)
+        return;
+    if (phase == Qt::ScrollBegin)
+        widthWheel_.reset();
+    setTextSize(widthWheel_.adjust(style_.textSize, angleDelta, pixelDelta,
+                                   annotationMinimumTextSize, annotationMaximumTextSize));
+    if (phase == Qt::ScrollEnd)
+        widthWheel_.reset();
+}
 bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
 {
+    // 文本格式与字号按钮在按下时直接应用；不把焦点从编辑框抢走，
+    // 否则 FocusOut 会先提交当前文本，按一次加粗就结束输入。
+    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
+    {
+        if (watched == boldButton_)
+        {
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                textFocusCommitPending_ = false;
+                toggleTextStyle(TextStyleToggle::Bold);
+            }
+            event->accept();
+            return true;
+        }
+        if (watched == italicButton_)
+        {
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                textFocusCommitPending_ = false;
+                toggleTextStyle(TextStyleToggle::Italic);
+            }
+            event->accept();
+            return true;
+        }
+        if (watched == underlineButton_)
+        {
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                textFocusCommitPending_ = false;
+                toggleTextStyle(TextStyleToggle::Underline);
+            }
+            event->accept();
+            return true;
+        }
+        const int sizeIndex = textSizeButtons_.indexOf(qobject_cast<QPushButton*>(watched));
+        if (sizeIndex >= 0)
+        {
+            if (event->type() == QEvent::MouseButtonPress)
+            {
+                textFocusCommitPending_ = false;
+                setTextSize(annotationTextSizes[sizeIndex]);
+            }
+            event->accept();
+            return true;
+        }
+    }
+    if (watched == textEditor_ && event->type() == QEvent::Wheel)
+    {
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        adjustTextSize(wheel->angleDelta(), wheel->pixelDelta(), wheel->phase());
+        event->accept();
+        return true;
+    }
     if (watched != textEditor_ && event->type() == QEvent::Wheel)
     {
         event->accept();
@@ -1801,7 +2002,30 @@ bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
         const auto reason = static_cast<QFocusEvent*>(event)->reason();
         // 候选窗口 / 系统面板的临时焦点变化不提交；点击其他控件才提交。
         if (reason == Qt::MouseFocusReason || reason == Qt::TabFocusReason)
-            finishText(true, false);
+        {
+            const auto over = [](QWidget* control)
+            {
+                return control && control->isVisible() &&
+                       control->rect().contains(control->mapFromGlobal(QCursor::pos()));
+            };
+            // 文本格式 / 字号按钮在按下时自行应用样式，不能先被 FocusOut 提交文本。
+            bool textControl = over(boldButton_) || over(italicButton_) || over(underlineButton_);
+            for (auto* control : textSizeButtons_)
+                textControl |= over(control);
+            if (!textControl)
+            {
+                textFocusCommitPending_ = true;
+                QTimer::singleShot(0, this,
+                                   [this]
+                                   {
+                                       if (textFocusCommitPending_)
+                                       {
+                                           textFocusCommitPending_ = false;
+                                           finishText(true, false);
+                                       }
+                                   });
+            }
+        }
     }
     return QWidget::eventFilter(watched, event);
 }

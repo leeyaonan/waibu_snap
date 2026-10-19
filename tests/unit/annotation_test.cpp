@@ -29,6 +29,9 @@ void compare(const waibusnap::Annotation& actual, const waibusnap::Annotation& e
     QCOMPARE(actual.style.lineWidth, expected.style.lineWidth);
     QCOMPARE(actual.style.textSize, expected.style.textSize);
     QCOMPARE(actual.style.fontFamily, expected.style.fontFamily);
+    QCOMPARE(actual.style.bold, expected.style.bold);
+    QCOMPARE(actual.style.italic, expected.style.italic);
+    QCOMPARE(actual.style.underline, expected.style.underline);
 }
 }
 class AnnotationTest final : public QObject
@@ -222,6 +225,49 @@ class AnnotationTest final : public QObject
         QVERIFY(history.canRedo());
         QVERIFY(history.setLastLineWidth(7));
         QVERIFY(!history.canRedo());
+    }
+    void textStyleAndWheelBounds()
+    {
+        using namespace waibusnap;
+        AnnotationStyle style;
+        QFont font = annotationFont(style);
+        QVERIFY(!font.bold());
+        QVERIFY(!font.italic());
+        QVERIFY(!font.underline());
+        style.bold = true;
+        style.italic = true;
+        style.underline = true;
+        font = annotationFont(style);
+        QVERIFY(font.bold());
+        QVERIFY(font.italic());
+        QVERIFY(font.underline());
+        AnnotationWidthWheel wheel;
+        QCOMPARE(
+            wheel.adjust(28, {0, 120}, {}, annotationMinimumTextSize, annotationMaximumTextSize),
+            29);
+        QCOMPARE(
+            wheel.adjust(29, {0, -240}, {}, annotationMinimumTextSize, annotationMaximumTextSize),
+            27);
+        QCOMPARE(
+            wheel.adjust(9, {0, -120}, {}, annotationMinimumTextSize, annotationMaximumTextSize),
+            annotationMinimumTextSize);
+        QCOMPARE(
+            wheel.adjust(96, {0, 120}, {}, annotationMinimumTextSize, annotationMaximumTextSize),
+            annotationMaximumTextSize);
+        AnnotationHistory history;
+        QVERIFY(history.add(sample(AnnotationType::Text)));
+        QVERIFY(history.setLastTextStyle(29, true, false, true));
+        QCOMPARE(history.annotations().last().style.textSize, 29);
+        QVERIFY(history.annotations().last().style.bold);
+        QVERIFY(!history.annotations().last().style.italic);
+        QVERIFY(history.annotations().last().style.underline);
+        QVERIFY(!history.setLastTextStyle(29, true, false, true));
+        QVERIFY(history.setLastTextStyle(1, false, false, false));
+        QCOMPARE(history.annotations().last().style.textSize, annotationMinimumTextSize);
+        QVERIFY(history.setLastTextStyle(100, false, false, false));
+        QCOMPARE(history.annotations().last().style.textSize, annotationMaximumTextSize);
+        QVERIFY(history.add(sample(AnnotationType::Line)));
+        QVERIFY(!history.setLastTextStyle(30, true, true, true));
     }
     void arrowGeometryScalesAndRotates()
     {
