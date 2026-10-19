@@ -3,6 +3,8 @@
 #include <QAbstractTextDocumentLayout>
 #include <QColorSpace>
 #include <QPainterPath>
+#include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <algorithm>
 #include <cmath>
@@ -129,8 +131,18 @@ void paintAnnotationWithPatch(QPainter& painter, const Annotation& annotation, c
         QTextDocument document;
         document.setUndoRedoEnabled(false);
         document.setDocumentMargin(0);
-        document.setDefaultFont(annotationFont(annotation.style));
+        // 下划线通过显式字符格式应用；部分 Windows Qt 字体后端在
+        // QTextDocument 默认字体携带 underline 时定位异常，故默认字体不带下划线。
+        QFont baseFont = annotationFont(annotation.style);
+        baseFont.setUnderline(false);
+        document.setDefaultFont(baseFont);
         document.setPlainText(annotation.text);
+        QTextCharFormat format;
+        format.setFont(baseFont);
+        format.setFontUnderline(annotation.style.underline);
+        QTextCursor cursor(&document);
+        cursor.select(QTextCursor::Document);
+        cursor.mergeCharFormat(format);
         QTextOption option;
         option.setWrapMode(QTextOption::NoWrap);
         document.setDefaultTextOption(option);
