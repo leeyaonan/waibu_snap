@@ -863,3 +863,9 @@ Qt::Tool 默认失活隐藏是独立风险，覆盖层现补 WA_MacAlwaysShowToo
 独立目录 `WAIBUSNAP_BUILD_DIR=build/verify-text-format`，未改动 `build/macos`。macOS 27.0.1 / arm64、Qt 6.11.2 Release：`build-project.sh`、全部 **17 项 CTest** 通过；主冒烟 **491 → 497**，高 DPI 冒烟 **430**，`annotation` **156 → 157**、`annotation_text_edit` **20 → 21**、`image_output` **72 → 73**、`hotkey_settings` **53**，均 0 失败 / 0 跳过；clang-format **18.1.8** 与 `git diff --check` 通过。覆盖层 320 / 800 文本参数栏、贴图文本参数栏与编辑框均已用构造图目视检查。
 
 人工待验收：真实触控板在文字编辑框上的连续字号手感（会优先调字号而非滚动文本）、B/I/U 与中文候选窗口 / 输入法焦点、整段格式在深浅截图和贴图缩放下的观感；Windows 11 的 Ctrl 快捷键提示 / 高 DPI。当前不支持一段文本内混合不同格式，若需要应另立需求。
+
+## 首段文字初始字号修正（2026-10-19）
+
+真机反馈：覆盖层拉起截图后添加文本框，工具栏显示默认 28px，但首次输入的文字明显偏小；第一次滚轮 +1px 后突然变正常大小。复现确认首段文字的 `QTextCharFormat` 字号为 0、编辑框字体为系统默认 13pt，而滚轮后统一应用 29px。
+
+根因是 `SelectionOverlay::startText` 在 `textEditor_->show()` 之前调用 `applyTextEditorFont()`，而该函数对不可见编辑框直接返回，首段文字未获得 `AnnotationStyle` 字号 / 粗斜下划线；第一次滚轮时编辑框已可见，才补上正确字符格式。修正为 `show / raise / setFocus` 之后再应用字体，并重新计算物理起点；贴图编辑面原顺序正确，未改动。`annotationTextWheelAndFormat` 增加断言：键入首字符的字符格式字号必须大于 0 且与编辑框字体一致，防止再次回归。17 项 CTest、主冒烟 497、高 DPI 430 与 lint 通过。
