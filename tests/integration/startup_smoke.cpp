@@ -5751,6 +5751,13 @@ class StartupSmokeTest final : public QObject
         auto* editor = canvas->findChild<AnnotationTextEdit*>();
         QVERIFY(editor && editor->isVisible());
         QTest::keyClicks(editor, QStringLiteral("ABC"));
+        {
+            QTextCursor probe = editor->document()->find(QStringLiteral("A"));
+            QVERIFY(!probe.isNull());
+            probe.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            QVERIFY(probe.charFormat().fontPointSize() > 0);
+            QCOMPARE(probe.charFormat().fontPointSize(), editor->font().pointSizeF());
+        }
         const QFont beforeFont = editor->font();
         annotationWheel(*editor, 120, editor->rect().center());
         QVERIFY(editor->font().pointSizeF() > beforeFont.pointSizeF());

@@ -1806,11 +1806,13 @@ void SelectionOverlay::startText(QPointF position)
     textEditor_->setPalette(palette);
     textEditor_->clear();
     textEditor_->setEditingArea(position.toPoint(), rect());
-    applyTextEditorFont();
-    textDraft_.first = physicalPoint(textEditor_->pos());
     textEditor_->show();
     textEditor_->raise();
     textEditor_->setFocus(Qt::MouseFocusReason);
+    // 必须在 show 之后应用：applyTextEditorFont 对隐藏编辑框直接返回，
+    // 否则首段文字会使用 QTextEdit 默认小字号，直到第一次滚轮才被纠正。
+    applyTextEditorFont();
+    textDraft_.first = physicalPoint(textEditor_->pos());
     updateToolbar();
 }
 void SelectionOverlay::finishText(bool commit, bool restoreFocus)
