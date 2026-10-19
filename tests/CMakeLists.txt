@@ -34,7 +34,8 @@ add_test(NAME selection_geometry COMMAND selection_geometry_test)
 qt_add_executable(image_output_test unit/image_output_test.cpp)
 target_link_libraries(image_output_test PRIVATE waibusnap_output Qt6::Test waibusnap_options)
 set_target_properties(image_output_test PROPERTIES WIN32_EXECUTABLE FALSE)
-add_test(NAME image_output COMMAND image_output_test)
+add_test(NAME image_output COMMAND image_output_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/image_output-output.txt,txt")
 set_tests_properties(image_output PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(annotation_test unit/annotation_test.cpp)
