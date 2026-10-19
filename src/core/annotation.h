@@ -24,12 +24,16 @@ const std::array<QString, annotationColorCount>& annotationColorNames();
 inline constexpr int annotationDefaultWidth = 4;
 inline constexpr int annotationMinimumWidth = 1;
 inline constexpr int annotationMaximumWidth = 24;
+inline constexpr int annotationMinimumTextSize = 9;
+inline constexpr int annotationMaximumTextSize = 96;
 bool annotationUsesLineWidth(AnnotationType type);
 // 两编辑面共用高分辨率滚轮累积；角度优先，只有像素输入时每 15px 一格。
+// 调用方传入不同上下限：线宽默认 1–24，文本字号使用 9–96。
 class AnnotationWidthWheel
 {
   public:
-    int adjust(int width, QPoint angleDelta, QPoint pixelDelta = {});
+    int adjust(int value, QPoint angleDelta, QPoint pixelDelta = {},
+               int minimum = annotationMinimumWidth, int maximum = annotationMaximumWidth);
     void reset()
     {
         remainder_ = 0;
@@ -47,6 +51,9 @@ struct AnnotationStyle
     int lineWidth = annotationDefaultWidth;
     int textSize = annotationTextSizes[1];
     QString fontFamily;
+    bool bold = false;
+    bool italic = false;
+    bool underline = false;
 };
 struct Annotation
 {
@@ -72,6 +79,8 @@ class AnnotationHistory
     // 调整最近一条标注的线宽；仅用于刚绘制完、仍处于可调选中态的图形。
     // 不新增历史项，清空重做栈；返回是否实际改变。
     bool setLastLineWidth(int width);
+    // 调整最近一条文本的字号与整段粗体 / 斜体 / 下划线；规则同线宽。
+    bool setLastTextStyle(int textSize, bool bold, bool italic, bool underline);
     bool canUndo() const { return annotations_.size() > firstUndoable_; }
     bool canRedo() const { return !redo_.isEmpty(); }
     bool undo();

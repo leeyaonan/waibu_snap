@@ -570,6 +570,9 @@ void compareAnnotations(const QVector<waibusnap::Annotation>& actual,
         QCOMPARE(a.style.lineWidth, b.style.lineWidth);
         QCOMPARE(a.style.textSize, b.style.textSize);
         QCOMPARE(a.style.fontFamily, b.style.fontFamily);
+        QCOMPARE(a.style.bold, b.style.bold);
+        QCOMPARE(a.style.italic, b.style.italic);
+        QCOMPARE(a.style.underline, b.style.underline);
     }
 }
 void compareCoveredPixels(const QImage& actual, const QImage& before, QRect cover, QColor color)
@@ -3521,8 +3524,10 @@ class StartupSmokeTest final : public QObject
         auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton"));
         QVERIFY(more && more->isVisible());
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
-        QCOMPARE(menu->actions().size(), qsizetype(12));
+        QCOMPARE(menu->actions().size(), qsizetype(13));
         QVERIFY(sticker->rect().contains(more->geometry()));
+        auto* formatMenu = menu->actions()[7];
+        QCOMPARE(formatMenu->menu()->actions().size(), qsizetype(3));
         auto* privacy = menu->actions()[4];
         auto* coverAction = privacy->menu()->actions()[0];
         auto* mosaicAction = privacy->menu()->actions()[1];
@@ -3531,6 +3536,8 @@ class StartupSmokeTest final : public QObject
         QVERIFY(sizes->isEnabled());
         menu->actions()[6]->menu()->actions()[2]->trigger();
         QCOMPARE(sizes->currentIndex(), 2);
+        formatMenu->menu()->actions()[0]->trigger();
+        QVERIFY(sticker->findChild<QPushButton*>("stickerEditTextBoldButton")->isChecked());
         coverAction->trigger();
         QVERIFY(sticker->activeTool() == AnnotationType::Cover);
         QVERIFY(privacy->isChecked() && coverAction->isChecked());
@@ -5547,16 +5554,17 @@ class StartupSmokeTest final : public QObject
             clickAnnotationTool(*canvas, qPrintable(name));
             QVERIFY(!label->isVisible());
             const qreal scale = sticker ? window->scale() : 1;
+            const bool textTool = tool == QStringLiteral("textToolButton");
             annotationWheel(*canvas, 120);
             QCOMPARE(label->text(), previous);
-            if (sticker)
+            if (sticker && !textTool)
                 QVERIFY(window->scale() > scale);
-            if (tool == QStringLiteral("textToolButton"))
+            if (textTool)
             {
                 QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, {130, 180});
                 auto* editor = canvas->findChild<AnnotationTextEdit*>();
                 QVERIFY(editor && editor->isVisible());
-                editor->setPlainText(QStringLiteral("字号不受滚轮影响"));
+                editor->setPlainText(QStringLiteral("字号可由滚轮调整"));
                 QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
             }
             else if (sticker)
@@ -5565,7 +5573,7 @@ class StartupSmokeTest final : public QObject
                 dragLogical(overlay, {130, 180}, {210, 200});
             annotations = sticker ? window->annotations() : overlay.annotations();
             QCOMPARE(annotations.last().style.lineWidth, expectedWidth);
-            QCOMPARE(annotations.last().style.textSize, 28);
+            QCOMPARE(annotations.last().style.textSize, 29);
             QCOMPARE(annotations.last().style.color, annotationColors().front());
         }
         if (!sticker)
@@ -5681,6 +5689,91 @@ class StartupSmokeTest final : public QObject
         if (sticker)
             window->setSaved(true);
     }
+    void annotationTextWheelAndFormat_data()
+    {
+        QTest::addColumn<bool>("sticker");
+        QTest::addColumn<qreal>("factor");
+        for (bool sticker : {false, true})
+            for (qreal factor : {qreal(1), qreal(2)})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(sticker).arg(factor)))
+                    << sticker << factor;
+    }
+    void annotationTextWheelAndFormat()
+    {
+        QFETCH(bool, sticker);
+        QFETCH(qreal, factor);
+        using namespace waibusnap;
+        auto frame = annotationFrame();
+        frame.display.devicePixelRatio = factor;
+        frame.pixels = QImage(QSize(800, 600) * factor, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(factor);
+        SelectionOverlay overlay(frame);
+        StickerManager manager;
+        QWidget* canvas = &overlay;
+        StickerWindow* window = nullptr;
+        if (sticker)
+        {
+            QImage source(1200, 1000, QImage::Format_ARGB32_Premultiplied);
+            source.fill(Qt::white);
+            QVERIFY(manager.create(source, {40, 50}, true).success);
+            window = manager.windows().first();
+            window->setScale(factor, window->pos());
+            window->setEditing(true);
+            canvas = window;
+            stickerClick(*window, "stickerEditTextToolButton");
+        }
+        else
+        {
+            overlay.show();
+            dragLogical(overlay, {50, 50}, {700, 500});
+            clickAnnotationTool(overlay, "textToolButton");
+        }
+        const QString prefix =
+            sticker ? QStringLiteral("stickerEdit") : QStringLiteral("annotation");
+        const auto annotations = [&]() -> const QVector<Annotation>&
+        { return sticker ? window->annotations() : overlay.annotations(); };
+        QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        auto* editor = canvas->findChild<AnnotationTextEdit*>();
+        QVERIFY(editor && editor->isVisible());
+        QTest::keyClicks(editor, QStringLiteral("ABC"));
+        const QFont beforeFont = editor->font();
+        annotationWheel(*editor, 120, editor->rect().center());
+        QVERIFY(editor->font().pointSizeF() > beforeFont.pointSizeF());
+        QVERIFY(editor->isVisible());
+        QTest::keyClick(editor, Qt::Key_B, Qt::ControlModifier);
+        QVERIFY(editor->isVisible());
+        auto* bold = canvas->findChild<QPushButton*>(prefix + "TextBoldButton");
+        auto* italic = canvas->findChild<QPushButton*>(prefix + "TextItalicButton");
+        auto* underline = canvas->findChild<QPushButton*>(prefix + "TextUnderlineButton");
+        QVERIFY(bold && italic && underline);
+        QVERIFY(bold->isChecked());
+        QVERIFY(editor->font().bold());
+        QTest::mouseClick(underline, Qt::LeftButton);
+        QVERIFY(editor->isVisible());
+        QTRY_VERIFY(editor->hasFocus());
+        QVERIFY(underline->isChecked());
+        QVERIFY(editor->font().underline());
+        QTest::mouseClick(underline, Qt::LeftButton);
+        QTRY_VERIFY(editor->hasFocus());
+        QVERIFY(!underline->isChecked());
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
+        QCOMPARE(annotations().size(), qsizetype(1));
+        QCOMPARE(annotations().last().style.textSize, 29);
+        QVERIFY(annotations().last().style.bold);
+        QTest::mouseClick(italic, Qt::LeftButton);
+        QTest::mouseClick(underline, Qt::LeftButton);
+        QVERIFY(annotations().last().style.italic);
+        QVERIFY(annotations().last().style.underline);
+        annotationWheel(*canvas, 120, {200, 100});
+        QCOMPARE(annotations().last().style.textSize, 30);
+        QTest::mouseClick(bold, Qt::LeftButton);
+        QVERIFY(!annotations().last().style.bold);
+        QVERIFY(annotations().last().style.italic);
+        QVERIFY(annotations().last().style.underline);
+        if (sticker)
+            window->setSaved(true);
+    }
     void secondaryBarIsSingleRow()
     {
         using namespace waibusnap;
@@ -5720,6 +5813,41 @@ class StartupSmokeTest final : public QObject
         QVERIFY(editToolbar->rect().contains(stickerPalette->geometry()));
         QVERIFY(stickerBar->geometry().right() < stickerPalette->x());
         sticker->setSaved(true);
+    }
+    void textToolbarResponsive_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::newRow("compact") << 320;
+        QTest::newRow("normal") << 800;
+    }
+    void textToolbarResponsive()
+    {
+        QFETCH(int, width);
+        using namespace waibusnap;
+        auto frame = annotationFrame();
+        frame.display.logicalGeometry = {0, 0, width, 600};
+        frame.display.availableLogicalGeometry = {0, 25, width, 505};
+        frame.pixels = QImage(QSize(width, 600) * 2, QImage::Format_ARGB32_Premultiplied);
+        frame.pixels.fill(Qt::white);
+        frame.pixels.setDevicePixelRatio(2);
+        SelectionOverlay overlay(frame);
+        overlay.show();
+        dragLogical(overlay, {0, 0}, {width, 600});
+        clickAnnotationTool(overlay, "textToolButton");
+        auto* options = overlay.findChild<QWidget*>(QStringLiteral("annotationOptionsBar"));
+        auto* bold = button(overlay, "annotationTextBoldButton");
+        auto* italic = button(overlay, "annotationTextItalicButton");
+        auto* underline = button(overlay, "annotationTextUnderlineButton");
+        auto* sizeLabel = overlay.findChild<QLabel*>(QStringLiteral("annotationTextSizeLabel"));
+        auto* size = button(overlay, "annotationTextSize0Button");
+        QVERIFY(options && bold && italic && underline && sizeLabel && size);
+        QVERIFY(options->isVisible());
+        QVERIFY(options->width() <= width);
+        QVERIFY(frame.display.availableLogicalGeometry.contains(options->geometry()));
+        QVERIFY(bold->isVisible() && italic->isVisible() && underline->isVisible());
+        QCOMPARE(sizeLabel->isVisible(), width >= 340);
+        QCOMPARE(size->isVisible(), width >= 440);
+        QVERIFY(button(overlay, "annotationColor0Button")->isVisible());
     }
     void annotationGroupDefaultsAndMemory()
     {

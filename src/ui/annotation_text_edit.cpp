@@ -9,6 +9,8 @@
 #include <QPainterPath>
 #include <QPen>
 #include <QScopedValueRollback>
+#include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextFrame>
 #include <QtMath>
 #include <algorithm>
@@ -47,6 +49,27 @@ void AnnotationTextEdit::setEditingArea(QPoint origin, QRect bounds)
     const int initialHeight = std::min(qCeil(QFontMetricsF(font()).height()), bounds_.height());
     origin_ = {std::clamp(origin.x(), bounds_.left(), bounds_.right() - initialWidth + 1),
                std::clamp(origin.y(), bounds_.top(), bounds_.bottom() - initialHeight + 1)};
+    updateEditorGeometry();
+}
+void AnnotationTextEdit::setAnnotationFont(const QFont& font)
+{
+    if (composing_)
+        return;
+    setFont(font);
+    QTextCharFormat format;
+    format.setFont(font);
+    format.setFontWeight(font.weight());
+    format.setFontItalic(font.italic());
+    format.setFontUnderline(font.underline());
+    QTextCursor cursor = textCursor();
+    const int anchor = cursor.anchor();
+    const int position = cursor.position();
+    cursor.select(QTextCursor::Document);
+    cursor.mergeCharFormat(format);
+    cursor.setPosition(anchor);
+    cursor.setPosition(position, QTextCursor::KeepAnchor);
+    setTextCursor(cursor);
+    setCurrentCharFormat(format);
     updateEditorGeometry();
 }
 void AnnotationTextEdit::updateEditorGeometry()
@@ -127,6 +150,12 @@ void AnnotationTextEdit::keyPressEvent(QKeyEvent* event)
         // Qt ControlModifier 对应 macOS Command，Windows 为 Ctrl。
         if (!composing_)
             emit commitRequested();
+    }
+    else if (event->modifiers() == Qt::ControlModifier &&
+             (event->key() == Qt::Key_B || event->key() == Qt::Key_I || event->key() == Qt::Key_U))
+    {
+        const int format = event->key() == Qt::Key_B ? 0 : event->key() == Qt::Key_I ? 1 : 2;
+        emit formatToggleRequested(format);
     }
     else
         QTextEdit::keyPressEvent(event);

@@ -5,6 +5,8 @@
 #include <QSignalSpy>
 #include <QTest>
 #include <QTextBlock>
+#include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextLayout>
 
 class AnnotationTextEditTest final : public QObject
@@ -207,6 +209,42 @@ class AnnotationTextEditTest final : public QObject
         QVERIFY(!editor.isComposing());
         QTest::keyClick(&editor, Qt::Key_Escape);
         QCOMPARE(cancel.count(), 1);
+    }
+    void annotationFontAppliesToEditorAndTyping()
+    {
+        QWidget canvas;
+        canvas.resize(800, 600);
+        waibusnap::AnnotationTextEdit editor(&canvas);
+        editor.setEditingArea({50, 50}, canvas.rect());
+        canvas.show();
+        editor.show();
+        editor.setFocus();
+        QFont font = editor.font();
+        font.setPixelSize(28);
+        font.setBold(true);
+        font.setItalic(true);
+        font.setUnderline(true);
+        editor.setAnnotationFont(font);
+        QTest::keyClicks(&editor, "ABC");
+        QCOMPARE(editor.toPlainText(), QStringLiteral("ABC"));
+        QVERIFY(editor.font().bold());
+        QVERIFY(editor.font().italic());
+        QVERIFY(editor.font().underline());
+        QTextCursor cursor = editor.document()->find(QStringLiteral("A"));
+        QVERIFY(!cursor.isNull());
+        cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        const QTextCharFormat format = cursor.charFormat();
+        QVERIFY(format.fontWeight() >= QFont::Bold);
+        QVERIFY(format.fontItalic());
+        QVERIFY(format.fontUnderline());
+        QSignalSpy formats(&editor, &waibusnap::AnnotationTextEdit::formatToggleRequested);
+        QTest::keyClick(&editor, Qt::Key_B, Qt::ControlModifier);
+        QTest::keyClick(&editor, Qt::Key_I, Qt::ControlModifier);
+        QTest::keyClick(&editor, Qt::Key_U, Qt::ControlModifier);
+        QCOMPARE(formats.count(), 3);
+        QCOMPARE(formats.at(0).at(0).toInt(), 0);
+        QCOMPARE(formats.at(1).at(0).toInt(), 1);
+        QCOMPARE(formats.at(2).at(0).toInt(), 2);
     }
     void textUndoRedoKeepsOnlyTextHistory()
     {

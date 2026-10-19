@@ -3,6 +3,7 @@
 #include <QColorSpace>
 #include <QDir>
 #include <QFile>
+#include <QFontDatabase>
 #include <QImageReader>
 #include <QTemporaryDir>
 #include <QTest>
@@ -693,6 +694,39 @@ class ImageOutputTest final : public QObject
             QVERIFY(textImage != previousText);
             previousText = textImage;
         }
+    }
+    void textStyleFlagsChangeRendering()
+    {
+        using namespace waibusnap;
+        QImage background(360, 120, QImage::Format_ARGB32_Premultiplied);
+        background.fill(Qt::white);
+        Annotation text{
+            AnnotationType::Text, {}, {10, 10}, {}, {}, QStringLiteral("Bold Italic Underline")};
+        text.style.textSize = 28;
+        text.style.color = Qt::black;
+        text.style.fontFamily = QFontDatabase::systemFont(QFontDatabase::GeneralFont).family();
+        Annotation boldStyle = text;
+        boldStyle.style.bold = true;
+        // Windows offscreen 字体后端可能不合成粗体；此时像素差异没有意义，留待实机验收。
+        if (QFontMetricsF(annotationFont(boldStyle.style)).horizontalAdvance(text.text) ==
+            QFontMetricsF(annotationFont(text.style)).horizontalAdvance(text.text))
+            QSKIP("当前 offscreen 字体后端不区分粗体宽度。");
+        const QImage normal = renderAnnotatedSelection(background, {text}, background.rect());
+        QVERIFY(normal != background);
+        auto variant = [&](bool bold, bool italic, bool underline)
+        {
+            Annotation copy = text;
+            copy.style.bold = bold;
+            copy.style.italic = italic;
+            copy.style.underline = underline;
+            return renderAnnotatedSelection(background, {copy}, background.rect());
+        };
+        const QImage bold = variant(true, false, false);
+        const QImage italic = variant(false, true, false);
+        const QImage underline = variant(false, false, true);
+        QVERIFY(bold != normal);
+        QVERIFY(italic != normal);
+        QVERIFY(underline != normal);
     }
     void cropKeepsPhysicalPixels()
     {

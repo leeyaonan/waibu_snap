@@ -836,3 +836,30 @@ Qt::Tool 默认失活隐藏是独立风险，覆盖层现补 WA_MacAlwaysShowToo
 独立目录 `WAIBUSNAP_BUILD_DIR=build/verify-v005fix`，未改动 `build/macos`。macOS 27.0.1 / arm64、Qt 6.11.2 Release：`build-project.sh`、全部 **17 项 CTest** 通过；主冒烟 **486 → 491**，高 DPI 冒烟 **430**（本批新用例未纳入原高 DPI 子集），`annotation` **155 → 156**、`annotation_text_edit` **18 → 20**、`image_output` **72**、`hotkey_settings` **53**，均 0 失败 / 0 跳过；clang-format **18.1.8** 的 `lint-code.sh` 与 `git diff --check` 通过。覆盖层与贴图参数栏、文字空态提示均已用构造图目视确认单条栏和黑 / 白描边提示。
 
 人工待验收：真实鼠标滚轮 / 触控板在刚画完图形上的连续调宽手感与方向；切换工具 / 点击空白后的“结束可调态”是否符合预期；透明提示在复杂深浅截图和中文候选窗口旁的观感；320px 选区与极小贴图的参数栏、Windows 11 高 DPI 与实机手感。CI 与合成事件不替代这些实机项。
+
+## 文本字号滚轮与加粗 / 斜体 / 下划线（2026-10-19）
+
+用户追加需求：文本标注也要像线宽一样用滚轮实时调字号，并增加常见的粗体、斜体、下划线。实现保持 v005 的透明编辑框、颜色和提交语义，新增 `AnnotationStyle::bold / italic / underline`，按**整段文本**应用格式；不做同一文本内的局部富文本。
+
+### 行为与边界
+
+- 文本工具激活后，在画布或文字编辑框上滚轮均可调字号：范围 **9–96 源图物理像素**，每格 1px，角度 120 单位 / 纯像素 15px 累积，到边界夹取；标签「字号 Npx」同步。文本预设仍保留 18 / 28 / 40px，窄选区隐藏预设与数值标签，但滚轮和 B/I/U 保留。
+- 透明编辑框可输入时直接点 B / I / U（不再因按钮抢焦点而提前提交）；`⌘/Ctrl+B/I/U` 在编辑框内同样生效。按钮按下即应用，编辑框保持焦点和文本，直到点击画布 / 其他工具 / `⌘/Ctrl+Enter` 提交或 Esc 取消。
+- 刚提交的文本保持可选中的可调态：切换工具前滚轮直接改该文本字号并立即重绘；点 B/I/U 直接改该文本整段格式。切换工具、新起文本、撤销 / 重做、进入 OCR、退出贴图编辑后结束可调态；后续操作改下一段默认样式。
+- 文本样式与字号在截图覆盖层和贴图编辑面共用；贴图编辑栏新增 B/I/U、字号标签，保留字号下拉框；极小贴图的「更多」菜单新增「文字格式」子菜单，避免紧凑模式无法访问。
+- 透明背景、无边框、单行起高 / 自适应高度、中文预编辑、输入法焦点、复制 / 保存 / 钉图 / 贴图导出均沿用原逻辑；粗体 / 斜体 / 下划线只改变字体绘制，不写入文本内容，也不影响 OCR。
+
+### 自动化覆盖
+
+- `annotation::textStyleAndWheelBounds`：`annotationFont` 三个标志、字号滚轮 9 / 96 边界、`setLastTextStyle` 只作用于文本、同值不重复、清空重做栈。
+- `annotation_text_edit::annotationFontAppliesToEditorAndTyping`：整段字体 / 下划线应用到已有文字与后续键入，`⌘/Ctrl+B/I/U` 发出 0 / 1 / 2 格式请求。
+- `image_output::textStyleFlagsChangeRendering`：普通 / 粗体 / 斜体 / 下划线四张原像素渲染互不相同，确认 `QTextDocument` 默认字体链路支持三种格式。
+- `startup_smoke::annotationTextWheelAndFormat`，4 行（覆盖层 / 贴图 × DPR 1 / 2）：编辑中滚轮改字号、B 快捷键、编辑中点 U 不提交且立即生效、提交后字号与粗体保留、提交后滚轮继续调字号、I / U 按钮修改已提交文本、再次 B 取消粗体。
+- `startup_smoke::textToolbarResponsive`，2 行：320px 显示九色 + B/I/U 且参数栏不越界，隐藏字号标签与预设；800px 显示标签与三档预设。
+- 贴图紧凑菜单 `stickerAnnotationGroupsAndMenu` 扩展为 13 个一级动作，新增「文字格式」三个子项；覆盖层/贴图既有九色、滚轮线宽、透明文本矩阵与保存 / 复制 / 钉图回归全部保留。
+
+### 本机验证
+
+独立目录 `WAIBUSNAP_BUILD_DIR=build/verify-text-format`，未改动 `build/macos`。macOS 27.0.1 / arm64、Qt 6.11.2 Release：`build-project.sh`、全部 **17 项 CTest** 通过；主冒烟 **491 → 497**，高 DPI 冒烟 **430**，`annotation` **156 → 157**、`annotation_text_edit` **20 → 21**、`image_output` **72 → 73**、`hotkey_settings` **53**，均 0 失败 / 0 跳过；clang-format **18.1.8** 与 `git diff --check` 通过。覆盖层 320 / 800 文本参数栏、贴图文本参数栏与编辑框均已用构造图目视检查。
+
+人工待验收：真实触控板在文字编辑框上的连续字号手感（会优先调字号而非滚动文本）、B/I/U 与中文候选窗口 / 输入法焦点、整段格式在深浅截图和贴图缩放下的观感；Windows 11 的 Ctrl 快捷键提示 / 高 DPI。当前不支持一段文本内混合不同格式，若需要应另立需求。
