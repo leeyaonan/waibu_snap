@@ -20,12 +20,23 @@ struct HistoryPreferences
     QString currentGroupId;
     CleanupPolicy defaultCleanup;
 };
+struct HistoryWindowState
+{
+    QByteArray geometry;
+    QByteArray splitterState;
+    QString lastView = QStringLiteral("all");
+    QString lastSelection;
+    // 空值为各视图默认顺序；其余为 oldest / newest。
+    QString sortOrder;
+};
 class AppSettings
 {
   public:
     explicit AppSettings(QString filePath = {});
     HistoryPreferences loadHistoryPreferences(QString* notice = nullptr) const;
     QString saveHistoryPreferences(const HistoryPreferences& preferences) const;
+    HistoryWindowState loadHistoryWindowState() const;
+    QString saveHistoryWindowState(const HistoryWindowState& state) const;
     LoadedHotkey loadHotkey() const;
     SavePreferences loadSavePreferences() const;
     bool loadStickerCloseReminder() const;
@@ -45,6 +56,7 @@ class AppSettings
     QString filePath_;
     mutable bool stickerCloseReminderWriteFailed_ = false;
     mutable bool historyWriteFailed_ = false;
+    mutable bool historyWindowWriteFailed_ = false;
 };
 struct HotkeyStartup
 {

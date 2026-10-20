@@ -71,7 +71,8 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     sessionWatchdog_.setInterval(5000);
     connect(&sessionWatchdog_, &QTimer::timeout, this,
             &ApplicationController::checkSessionWatchdog);
-    menu_.addAction(QStringLiteral("截图"), this, [this] { trigger(QStringLiteral("tray")); });
+    menu_.addAction(QStringLiteral("截图"), this, [this] { trigger(QStringLiteral("tray")); })
+        ->setObjectName(QStringLiteral("screenshotAction"));
     scrollAction_ = menu_.addAction(QStringLiteral("截长图"), this,
                                     [this] { trigger(QStringLiteral("tray-scroll")); });
     scrollAction_->setObjectName(QStringLiteral("scrollCaptureAction"));
@@ -84,6 +85,10 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     clipboardStickerAction_->setObjectName(QStringLiteral("clipboardStickerAction"));
     settingsAction_ =
         menu_.addAction(QStringLiteral("设置…"), this, &ApplicationController::openSettings);
+    settingsAction_->setObjectName(QStringLiteral("settingsAction"));
+    openHistoryAction_ =
+        menu_.addAction(QStringLiteral("打开历史…"), this, &ApplicationController::openHistory);
+    openHistoryAction_->setObjectName(QStringLiteral("openHistoryAction"));
     hideAllStickersAction_ = menu_.addAction(QStringLiteral("隐藏全部贴图"), this,
                                              [this]
                                              {
@@ -98,7 +103,8 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                                     refreshStickerActions();
                                                 });
     restoreAllStickersAction_->setObjectName(QStringLiteral("restoreAllStickersAction"));
-    menu_.addAction(QStringLiteral("退出"), this, &ApplicationController::quit);
+    menu_.addAction(QStringLiteral("退出"), this, &ApplicationController::quit)
+        ->setObjectName(QStringLiteral("quitAction"));
     connect(&menu_, &QMenu::aboutToShow, this, &ApplicationController::refreshStickerActions);
     refreshStickerActions();
     tray_.setIcon(createTrayIcon());
@@ -123,6 +129,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
 ApplicationController::~ApplicationController() { cleanup(); }
 void ApplicationController::refreshStickerActions()
 {
+    openHistoryAction_->setEnabled(!active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_);
     clipboardStickerAction_->setEnabled(!active_ && !resolvingQuit_ && !quitting_);
     bool visible = false, hidden = false;
     for (const auto& window : stickers_.windows())
@@ -206,6 +213,7 @@ void ApplicationController::openSettings()
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
         return;
     settingsOpen_ = true;
+    refreshStickerActions();
     QString shapeNotice;
     const auto templates = settings_.loadShapeTemplates(&shapeNotice);
     SettingsDialog dialog(
@@ -230,6 +238,19 @@ void ApplicationController::openSettings()
         autostartActions_);
     dialog.exec();
     settingsOpen_ = false;
+    refreshStickerActions();
+}
+void ApplicationController::openHistory()
+{
+    if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
+        return;
+    if (!historyWindow_)
+        historyWindow_ = new HistoryWindow(history_, settings_);
+    else
+        historyWindow_->refresh();
+    historyWindow_->show();
+    historyWindow_->raise();
+    historyWindow_->activateWindow();
 }
 void ApplicationController::trigger(const QString& source)
 {
@@ -798,6 +819,11 @@ void ApplicationController::cleanup()
     quitting_ = true;
     refreshStickerActions();
     clipboardToast_.reset();
+    if (historyWindow_)
+    {
+        historyWindow_->close();
+        delete historyWindow_.data();
+    }
     const QPointer<SelectionOverlay> closingOverlay = overlay_;
     if (active_)
         finish({}, scrollFlowActive_ ? scrollCancelledOutcome : 9);
@@ -861,15 +887,20 @@ void ApplicationController::startSmokeTest()
         0, this,
         [this]
         {
+            const auto action = [this](const char* name)
+            { return menu_.findChild<QAction*>(QLatin1String(name)); };
+            const auto* clipboard = action("clipboardStickerAction");
+            const auto* settings = action("settingsAction");
+            const auto* history = action("openHistoryAction");
+            const auto* hide = action("hideAllStickersAction");
+            const auto* restore = action("restoreAllStickersAction");
             if (tray_.icon().isNull() || tray_.icon().availableSizes().isEmpty() ||
-                application_.quitOnLastWindowClosed() || menu_.actions().size() != 7 ||
-                menu_.actions().at(2)->text() != QStringLiteral("剪贴板贴图") ||
-                menu_.actions().at(2)->objectName() != QStringLiteral("clipboardStickerAction") ||
-                !menu_.actions().at(2)->isEnabled() ||
-                menu_.actions().at(3)->text() != QStringLiteral("设置…") ||
-                menu_.actions().at(4)->objectName() != QStringLiteral("hideAllStickersAction") ||
-                menu_.actions().at(5)->objectName() != QStringLiteral("restoreAllStickersAction") ||
-                menu_.actions().at(4)->isEnabled() || menu_.actions().at(5)->isEnabled() ||
+                application_.quitOnLastWindowClosed() || !action("screenshotAction") ||
+                !action("scrollCaptureAction") || !action("quitAction") || !clipboard ||
+                clipboard->text() != QStringLiteral("剪贴板贴图") || !clipboard->isEnabled() ||
+                !settings || settings->text() != QStringLiteral("设置…") || !history ||
+                !history->isEnabled() || history->text() != QStringLiteral("打开历史…") || !hide ||
+                !restore || hide->isEnabled() || restore->isEnabled() ||
                 !QApplication::topLevelWidgets().contains(&menu_))
             {
                 application_.exit(20);
@@ -934,7 +965,7 @@ void ApplicationController::startSmokeTest()
                             }
                             const auto pinned = stickers_.windows();
                             qInfo("托盘生命周期已验证（tray-lifecycle-verified）");
-                            menu_.actions().last()->trigger();
+                            menu_.findChild<QAction*>(QStringLiteral("quitAction"))->trigger();
                             if (stickers_.count() != 0 || pinned.at(0) || pinned.at(1))
                                 application_.exit(24);
                             else

@@ -12,6 +12,16 @@ struct HistorySession
     QString id;
     QString groupId;
 };
+struct HistorySnapshot
+{
+    QVector<HistoryGroupSnapshot> groups;
+    QString currentGroupId;
+    QString error;
+};
+struct HistoryImageResult : HistoryStatus
+{
+    QImage image;
+};
 class HistoryManager final : public QObject
 {
     Q_OBJECT
@@ -27,6 +37,10 @@ class HistoryManager final : public QObject
     std::optional<HistoryGroup> currentGroup() const;
     QVector<HistoryGroup> groups() const { return groups_; }
     HistoryStatus setCurrentGroup(const QString& groupId);
+    // 浏览刷新不修改入库错误、当前分组或会话去重表。
+    HistorySnapshot refresh();
+    HistorySnapshot snapshot() const;
+    HistoryImageResult loadImage(const QString& itemId, QSize bounds = {}) const;
     HistorySession beginSession() const;
     HistoryWriteResult record(const HistorySession& session, const QImage& image,
                               HistorySource source);
@@ -43,6 +57,7 @@ class HistoryManager final : public QObject
     std::unique_ptr<HistoryStore> store_;
     QVector<HistoryGroup> groups_;
     QHash<QString, HistoryItem> sessions_;
+    HistorySnapshot snapshot_;
     QString error_;
     bool ready_ = false;
 };

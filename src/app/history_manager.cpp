@@ -1,5 +1,6 @@
 #include "app/history_manager.h"
 #include <QDebug>
+#include <QImageReader>
 #include <QUuid>
 namespace waibusnap
 {
@@ -45,6 +46,7 @@ HistoryStatus HistoryManager::initialize()
                                                                     : rootOverride_,
                                             preferences_.defaultCleanup);
     const auto scanned = store_->initialize();
+    snapshot_ = {scanned.groups, {}, scanned.error};
     groups_.clear();
     for (const auto& snapshot : scanned.groups)
         groups_.append(snapshot.group);
@@ -94,6 +96,44 @@ HistoryStatus HistoryManager::setCurrentGroup(const QString& groupId)
 HistorySession HistoryManager::beginSession() const
 {
     return {QUuid::createUuid().toString(QUuid::WithoutBraces), currentGroupId()};
+}
+HistorySnapshot HistoryManager::snapshot() const
+{
+    auto result = snapshot_;
+    result.currentGroupId = currentGroupId();
+    return result;
+}
+HistorySnapshot HistoryManager::refresh()
+{
+    if (!store_)
+        snapshot_ = {{}, {}, QStringLiteral("历史库未初始化，请稍后重试。")};
+    else
+    {
+        const auto scanned = store_->scan();
+        snapshot_ = {scanned.groups, {}, scanned.error};
+    }
+    return snapshot();
+}
+HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds) const
+{
+    // 路径只能来自本次扫描的记录；视图不传入任意文件路径。
+    for (const auto& group : snapshot_.groups)
+        for (const auto& item : group.items)
+            if (historyItemId(item) == itemId)
+            {
+                QImageReader reader(item.absolutePath);
+                reader.setAutoTransform(true);
+                if (bounds.isValid() && reader.size().isValid())
+                    reader.setScaledSize(reader.size().scaled(bounds, Qt::KeepAspectRatio));
+                auto image = reader.read();
+                if (image.isNull())
+                    return {{false, QStringLiteral("图片已丢失、无法读取或格式损坏，请刷新历史。%1")
+                                        .arg(reader.errorString())},
+                            {}};
+                image.setDevicePixelRatio(1);
+                return {{true, {}}, image};
+            }
+    return {{false, QStringLiteral("历史记录已不存在，请刷新历史。")}, {}};
 }
 HistoryWriteResult HistoryManager::record(const HistorySession& session, const QImage& image,
                                           HistorySource source)
