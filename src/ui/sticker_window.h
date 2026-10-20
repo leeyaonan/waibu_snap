@@ -94,6 +94,7 @@ class StickerWindow final : public QWidget
 
   private:
     void setCenteredScale(qreal scale);
+    void updateScaleLabel();
     void applyGeometry(QPointF position, QSize size);
     void copyImage();
     void ensureEditToolbar();
@@ -158,6 +159,7 @@ class StickerWindow final : public QWidget
     Annotation textDraft_;
     std::unique_ptr<StickerFocusSession> focusSession_;
     QLabel* status_ = nullptr;
+    QPushButton* scaleButton_ = nullptr;
     QPushButton* moreButton_ = nullptr;
     QTimer statusTimeout_;
     QPointF dragFraction_;

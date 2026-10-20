@@ -869,3 +869,11 @@ Qt::Tool 默认失活隐藏是独立风险，覆盖层现补 WA_MacAlwaysShowToo
 真机反馈：覆盖层拉起截图后添加文本框，工具栏显示默认 28px，但首次输入的文字明显偏小；第一次滚轮 +1px 后突然变正常大小。复现确认首段文字的 `QTextCharFormat` 字号为 0、编辑框字体为系统默认 13pt，而滚轮后统一应用 29px。
 
 根因是 `SelectionOverlay::startText` 在 `textEditor_->show()` 之前调用 `applyTextEditorFont()`，而该函数对不可见编辑框直接返回，首段文字未获得 `AnnotationStyle` 字号 / 粗斜下划线；第一次滚轮时编辑框已可见，才补上正确字符格式。修正为 `show / raise / setFocus` 之后再应用字体，并重新计算物理起点；贴图编辑面原顺序正确，未改动。`annotationTextWheelAndFormat` 增加断言：键入首字符的字符格式字号必须大于 0 且与编辑框字体一致，防止再次回归。17 项 CTest、主冒烟 497、高 DPI 430 与 lint 通过。
+
+## 贴图缩放百分比显示修正（2026-10-20）
+
+真机反馈：贴图控制条中间的百分比一直显示 100%，用滚轮或加减按钮缩放后不变化，无法判断当前真实缩放比例。
+
+根因是控制条第 3 个按钮原本只作为「恢复 100%」的固定文字动作，创建后从未随 `scale_` 更新。修正为保留点击恢复 100% 的行为，同时让按钮文字、tooltip 和无障碍名称实时显示当前比例；`setCenteredScale`、`setScale` 与画布滚轮三条缩放路径统一调用 `updateScaleLabel()`，标签宽度变化后重新排布控制条。`stickerWindowsScaleDragAndCloseIndependently` 增加断言：初始 100%、滚轮 125%、按钮缩放 400% / 25%、直接 `setScale` 175%、恢复后回到 100%；tooltip 同步包含当前比例。
+
+验证：独立目录 `build/verify-text-format`，macOS 27.0.1 / arm64、Qt 6.11.2 Release；17 项 CTest 全通过，clang-format 18.1.8 的 `lint-code.sh` 与 `git diff --check` 通过。
