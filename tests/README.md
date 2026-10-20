@@ -1005,7 +1005,7 @@ macOS 27.0.1 / arm64、Qt 6.11.2 Release，独立 `WAIBUSNAP_BUILD_DIR=build/ver
 
 映射完整覆盖共享合法规则：F1–F12、Ctrl / Alt / Meta 修饰的 A–Z / 0–9 与可选 Shift；Qt Control→Ctrl、Alt→Alt、Shift→Shift、Meta→Win。F12 由 Windows 调试器保留，Win 组合也可能为系统保留，按系统真实注册结果返回中文原因 / 错误码，不声称一定可注册。空序列、多段序列、单独字母 / 数字、仅 Shift 的字母 / 数字、F13、空格 / Tab / Esc、Keypad / GroupSwitch 均拒绝。保留 F1 与旧 `hotkey/sequence`，历史 F7 / F8 / F9 及 7a 的独立设置键不变。
 
-Windows 专属 CTest `windows_hotkey` 替换 `windows_hotkey_pending`。测试注入 Register / Unregister 两个系统调用，执行生产 WindowsHotkey 的映射、动作 ID、独立释放、析构全释放、重复 / 非法拒绝、同键更新、注册失败旧回调保留、新键替换 / 换回时过期消息拒绝、中文错误分类、MOD_NOREPEAT，以及 Qt 已安装过滤器链和回调自注销。构造 `MSG` 是分发逻辑测试，不是原生按键取证；CI 不调用真实 RegisterHotKey，不占用 runner 键盘组合。原生系统注册 / 真实键盘输入只保证双端 CI 中 Windows 源码真实编译，运行行为留给人工。
+Windows 专属 CTest `windows_hotkey` 替换 `windows_hotkey_pending`。测试注入 Register / Unregister 两个系统调用，执行生产 WindowsHotkey 的映射、动作 ID、独立释放、析构全释放、重复 / 非法拒绝、同键更新、注册失败旧回调保留、新键替换 / 换回时过期消息拒绝、中文错误分类、失败时 GetLastError=0 仍保留旧键、MOD_NOREPEAT，以及 Qt 已安装过滤器链和回调自注销。构造 `MSG` 是分发逻辑测试，不是原生按键取证；CI 不调用真实 RegisterHotKey，不占用 runner 键盘组合。原生系统注册 / 真实键盘输入只保证双端 CI 中 Windows 源码真实编译，运行行为留给人工。
 
 `history_settings` 与高 DPI 显式清单增加导航回归：无上次选中项从最新起步并应用方向；恢复其他分组中的中间 / 边缘选中项后移动；丢失项回退；真正关闭销毁 / 再打开继续；更旧 / 更新边缘夹停；已开窗口的组内两种排序 / 方向键行为与窗口复用。全局负 step 更旧、正 step 更新，局部方向键仍按列表行序。使用 QTemporaryDir 历史根、临时 INI 与 fake GlobalHotkey，断言不增加历史、不改变当前分组；未访问真实 Pictures / 剪贴板 / 回收站。
 

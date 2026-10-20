@@ -28,7 +28,7 @@ QString registrationError(DWORD error, const WindowsHotkeyChord& chord)
     {
     case ERROR_HOTKEY_ALREADY_REGISTERED:
         return QStringLiteral("该组合已被其他应用或系统占用");
-    case ERROR_INVALID_HOTKEY:
+    case ERROR_INVALID_FLAGS:
     case ERROR_INVALID_PARAMETER:
         return QStringLiteral("Windows 不支持该热键组合");
     case ERROR_ACCESS_DENIED:
@@ -105,10 +105,10 @@ HotkeyRegistration WindowsHotkey::registerHotkey(HotkeyAction action, const QKey
     const int replacementId = nextIdBlock + int(*index);
     nextIdBlock += int(hotkeyActions.size());
     const auto error = api_.registerKey(replacementId, chord->modifiers | MOD_NOREPEAT, chord->key);
-    if (error != ERROR_SUCCESS)
+    if (error)
         return {false, QStringLiteral("%1（系统错误码 %2）；%3")
-                           .arg(registrationError(error, *chord))
-                           .arg(error)
+                           .arg(registrationError(*error, *chord))
+                           .arg(*error)
                            .arg(state)};
     const int previousId = binding.id;
     binding = {replacementId, *chord, std::move(handler)};
@@ -149,12 +149,11 @@ bool WindowsHotkey::nativeEventFilter(const QByteArray& type, void* message, qin
 std::unique_ptr<GlobalHotkey> createGlobalHotkey()
 {
     return std::make_unique<WindowsHotkey>(WindowsHotkeyApi{
-        [](int id, UINT modifiers, UINT key) -> DWORD
+        [](int id, UINT modifiers, UINT key) -> std::optional<DWORD>
         {
             if (RegisterHotKey(nullptr, id, modifiers, key))
-                return ERROR_SUCCESS;
-            const auto error = GetLastError();
-            return error == ERROR_SUCCESS ? ERROR_INVALID_HOTKEY : error;
+                return {};
+            return GetLastError();
         },
         [](int id)
         {

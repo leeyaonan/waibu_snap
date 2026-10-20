@@ -14,7 +14,8 @@ std::optional<WindowsHotkeyChord> windowsHotkeyMapping(const QKeySequence& seque
 // 注入边界只包裹系统调用；测试仍执行生产注册、替换、释放与消息分发逻辑。
 struct WindowsHotkeyApi
 {
-    std::function<DWORD(int, UINT, UINT)> registerKey;
+    // 空值表示成功；失败时保留 GetLastError 原值（即使为 0）。
+    std::function<std::optional<DWORD>(int, UINT, UINT)> registerKey;
     std::function<void(int)> unregisterKey;
 };
 class WindowsHotkey final : public GlobalHotkey, public QAbstractNativeEventFilter

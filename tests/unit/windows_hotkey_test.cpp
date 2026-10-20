@@ -11,18 +11,19 @@ struct FakeApi
     QMap<int, WindowsHotkeyChord> active;
     QVector<int> registered, released;
     DWORD error = ERROR_SUCCESS;
+    bool failWithoutError = false;
     std::function<void()> beforeRegistration;
     WindowsHotkeyApi api()
     {
-        return {[this](int id, UINT modifiers, UINT key)
+        return {[this](int id, UINT modifiers, UINT key) -> std::optional<DWORD>
                 {
                     registered.append(id);
                     if (beforeRegistration)
                         beforeRegistration();
-                    if (error != ERROR_SUCCESS)
+                    if (error != ERROR_SUCCESS || failWithoutError)
                         return error;
                     active.insert(id, {key, modifiers});
-                    return DWORD(ERROR_SUCCESS);
+                    return {};
                 },
                 [this](int id)
                 {
@@ -243,7 +244,7 @@ class WindowsHotkeyTest final : public QObject
         QTest::addColumn<int>("key");
         QTest::newRow("occupied") << quint32(ERROR_HOTKEY_ALREADY_REGISTERED)
                                   << QStringLiteral("占用") << int(Qt::Key_F2);
-        QTest::newRow("invalid") << quint32(ERROR_INVALID_HOTKEY) << QStringLiteral("不支持")
+        QTest::newRow("invalid") << quint32(ERROR_INVALID_FLAGS) << QStringLiteral("不支持")
                                  << int(Qt::Key_F2);
         QTest::newRow("parameter")
             << quint32(ERROR_INVALID_PARAMETER) << QStringLiteral("不支持") << int(Qt::Key_F2);
@@ -252,7 +253,7 @@ class WindowsHotkeyTest final : public QObject
         QTest::newRow("unknown") << quint32(0xffff) << QStringLiteral("注册热键失败")
                                  << int(Qt::Key_F2);
         QTest::newRow("reserved-f12")
-            << quint32(ERROR_INVALID_HOTKEY) << QStringLiteral("调试器保留") << int(Qt::Key_F12);
+            << quint32(ERROR_INVALID_FLAGS) << QStringLiteral("调试器保留") << int(Qt::Key_F12);
     }
     void errorReasons()
     {
@@ -271,6 +272,26 @@ class WindowsHotkeyTest final : public QObject
         QVERIFY(hotkey.registerHotkey(HotkeyAction::HistoryNext, QKeySequence(Qt::Key_F8), [] {})
                     .enabled);
         QCOMPARE(fake.active.size(), 1);
+    }
+    void failedApiWithZeroLastError()
+    {
+        FakeApi fake;
+        WindowsHotkey hotkey(fake.api());
+        int calls = 0;
+        QVERIFY(hotkey
+                    .registerHotkey(HotkeyAction::Screenshot, QKeySequence(Qt::Key_F1),
+                                    [&] { ++calls; })
+                    .enabled);
+        const auto original = fake.message(fake.registered.last());
+        fake.failWithoutError = true;
+        const auto failed =
+            hotkey.registerHotkey(HotkeyAction::Screenshot, QKeySequence(Qt::Key_F2), [] {});
+        QVERIFY(!failed.enabled);
+        QVERIFY(failed.explanation.contains(QStringLiteral("系统错误码 0")));
+        QVERIFY(failed.explanation.contains(QStringLiteral("原绑定保留")));
+        QVERIFY(fake.released.isEmpty());
+        QVERIFY(dispatch(hotkey, original));
+        QCOMPARE(calls, 1);
     }
     void nativeFilterAndSelfRelease()
     {
