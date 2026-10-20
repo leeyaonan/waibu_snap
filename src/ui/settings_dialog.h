@@ -1,4 +1,5 @@
 #pragma once
+#include "app/app_settings.h"
 #include "core/aspect_ratio.h"
 #include "core/shape_mask.h"
 #include "interfaces/autostart.h"
@@ -13,6 +14,7 @@ class QCheckBox;
 class QLineEdit;
 class QKeySequenceEdit;
 class QLabel;
+class QSpinBox;
 namespace waibusnap
 {
 struct SaveSettingsActions
@@ -30,6 +32,17 @@ struct SaveSettingsActions
     bool stickerCloseReminder = true;
     std::function<QString(bool)> saveStickerCloseReminder;
 };
+struct HistorySettingsActions
+{
+    HistoryPreferences preferences;
+    std::array<QKeySequence, 3> hotkeys = {QKeySequence(Qt::Key_F7), QKeySequence(Qt::Key_F8),
+                                           QKeySequence(Qt::Key_F9)};
+    GroupUsage usage;
+    QString usageNotice;
+    std::function<QString(const HistoryPreferences&)> savePreferences;
+    std::function<QString(HotkeyAction, const QKeySequence&)> saveHotkey;
+    std::function<QString(QWidget*, const QString&)> chooseDirectory;
+};
 class SettingsDialog final : public QDialog
 {
     Q_OBJECT
@@ -38,7 +51,8 @@ class SettingsDialog final : public QDialog
     explicit SettingsDialog(const QKeySequence& current, SaveHotkey save,
                             const QString& notice = {}, QWidget* parent = nullptr,
                             SaveSettingsActions saveSettings = {},
-                            AutostartActions autostartActions = {});
+                            AutostartActions autostartActions = {},
+                            HistorySettingsActions historySettings = {});
 
   protected:
     bool event(QEvent* event) override;
@@ -46,6 +60,8 @@ class SettingsDialog final : public QDialog
 
   private:
     void save();
+    void buildHistoryPage(QWidget* page);
+    HistoryPreferences collectHistoryPreferences() const;
     void rebuildRatioList();
     void rebuildShapeTemplateList();
     void refreshQuickRatios();
@@ -75,5 +91,13 @@ class SettingsDialog final : public QDialog
     AutostartActions autostartActions_;
     QCheckBox* autostartCheck_ = nullptr;
     QCheckBox* stickerCloseReminderCheck_ = nullptr;
+    HistorySettingsActions historySettings_;
+    QLineEdit* historyDirectory_ = nullptr;
+    std::array<QKeySequenceEdit*, 3> historyEditors_{};
+    std::array<QCheckBox*, 3> historyRules_{};
+    QSpinBox* historyDays_ = nullptr;
+    QSpinBox* historyCount_ = nullptr;
+    QDoubleSpinBox* historyMiB_ = nullptr;
+    double originalHistoryMiB_ = 100;
 };
 }

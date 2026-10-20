@@ -30,6 +30,8 @@ class HistoryManager final : public QObject
     explicit HistoryManager(AppSettings settings, QString rootOverride = {},
                             QObject* parent = nullptr);
     HistoryStatus initialize();
+    HistoryStatus savePreferences(HistoryPreferences preferences);
+    GroupUsage totalUsage(const QString& selectedId = {});
     bool ready() const { return ready_; }
     QString error() const { return error_; }
     QString rootDirectory() const;

@@ -1,5 +1,7 @@
 #include "app/history_manager.h"
+#include <QDateTime>
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QUuid>
@@ -69,6 +71,77 @@ HistoryStatus HistoryManager::initialize()
             return persisted;
     }
     return status(notice);
+}
+HistoryStatus HistoryManager::savePreferences(HistoryPreferences preferences)
+{
+    const auto validation = cleanupPolicyError(preferences.defaultCleanup);
+    if (!validation.isEmpty())
+        return {false, validation};
+    if (preferences.rootDirectory.isEmpty())
+        preferences.rootDirectory = HistoryStore::defaultRootDirectory();
+    if (!QDir::isAbsolutePath(preferences.rootDirectory))
+        return {false, QStringLiteral("历史根目录必须为绝对路径。")};
+    preferences.rootDirectory = QDir::cleanPath(preferences.rootDirectory);
+    const bool switching = !ready_ || preferences.rootDirectory != rootDirectory();
+    std::unique_ptr<HistoryStore> candidate;
+    HistoryScanResult scanned;
+    if (switching)
+    {
+        candidate =
+            std::make_unique<HistoryStore>(preferences.rootDirectory, preferences.defaultCleanup);
+        scanned = candidate->initialize();
+        if (!scanned.error.isEmpty())
+            return {false, QStringLiteral("历史根目录切换失败，旧目录保留：%1").arg(scanned.error)};
+        preferences.currentGroupId.clear();
+        for (const auto& group : scanned.groups)
+            if (group.group.isDefault)
+                preferences.currentGroupId = group.group.id;
+        if (preferences.currentGroupId.isEmpty())
+            return {false, QStringLiteral("新历史库缺少默认分组，旧目录保留。")};
+    }
+    else
+        preferences.currentGroupId = currentGroupId();
+    auto stored = preferences;
+    // 受控根覆盖不因保存模板而写回；只有用户明确选择不同根时才持久切换。
+    if (!switching && !rootOverride_.isEmpty())
+        stored.rootDirectory = settings_.loadHistoryPreferences().rootDirectory;
+    const auto error = settings_.saveHistoryPreferences(stored);
+    if (!error.isEmpty())
+        return {false, error};
+    preferences_ = stored;
+    if (switching)
+    {
+        store_ = std::move(candidate);
+        rootOverride_.clear();
+        ready_ = true;
+        snapshot_ = {scanned.groups, preferences.currentGroupId, {}};
+        groups_.clear();
+        for (const auto& group : scanned.groups)
+            groups_.append(group.group);
+        // 保留 sessions_：切回旧根后同一会话仍更新原记录，不重新生成副本。
+        status();
+        emit groupsChanged();
+        emit currentGroupChanged(currentGroupId());
+    }
+    return {true, {}};
+}
+GroupUsage HistoryManager::totalUsage(const QString& selectedId)
+{
+    GroupUsage result;
+    for (const auto& group : refresh().groups)
+    {
+        result.managedCount += group.usage.managedCount;
+        result.managedBytes += group.usage.managedBytes;
+        result.externalCount += group.usage.externalCount;
+        result.externalBytes += group.usage.externalBytes;
+        auto policy = group.group.cleanup;
+        policy.enabled = false;
+        const auto protectedItems = selectCleanupCandidates(
+            policy, group.items, QDateTime::currentMSecsSinceEpoch(), selectedId);
+        result.protectedCount += protectedItems.protectedCount;
+        result.protectedBytes += protectedItems.protectedBytes;
+    }
+    return result;
 }
 HistoryStatus HistoryManager::setCurrentGroup(const QString& groupId)
 {

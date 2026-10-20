@@ -38,7 +38,7 @@ class AppSettings
     QString saveHistoryCurrentGroupId(const QString& groupId) const;
     HistoryWindowState loadHistoryWindowState() const;
     QString saveHistoryWindowState(const HistoryWindowState& state) const;
-    LoadedHotkey loadHotkey() const;
+    LoadedHotkey loadHotkey(HotkeyAction action = HotkeyAction::Screenshot) const;
     SavePreferences loadSavePreferences() const;
     bool loadStickerCloseReminder() const;
     QString saveStickerCloseReminder(bool enabled) const;
@@ -51,7 +51,8 @@ class AppSettings
     QString saveCaptureRatios(const CaptureRatioSettings& ratios) const;
     QString saveSavePreferences(const SavePreferences& preferences) const;
     // 注册成功后才调用；失败返回中文原因，不声称重启后已保留。
-    QString saveHotkey(const QKeySequence& sequence) const;
+    QString saveHotkey(const QKeySequence& sequence,
+                       HotkeyAction action = HotkeyAction::Screenshot) const;
 
   private:
     QString filePath_;
@@ -68,7 +69,8 @@ struct HotkeyStartup
 class HotkeySettings
 {
   public:
-    HotkeySettings(AppSettings settings, GlobalHotkey& hotkey, std::function<void()> handler);
+    HotkeySettings(AppSettings settings, GlobalHotkey& hotkey, std::function<void()> handler,
+                   HotkeyAction action = HotkeyAction::Screenshot);
     HotkeyStartup initialize();
     QString changeHotkey(const QKeySequence& sequence);
     bool enabled() const { return !enabledSequence_.isEmpty(); }
@@ -78,6 +80,7 @@ class HotkeySettings
 
   private:
     HotkeyRegistration registerSequence(const QKeySequence& sequence);
+    HotkeyAction action_;
     AppSettings settings_;
     GlobalHotkey& hotkey_;
     std::function<void()> handler_;

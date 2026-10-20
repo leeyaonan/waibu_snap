@@ -2,6 +2,50 @@
 namespace waibusnap
 {
 QKeySequence defaultScreenshotHotkey() { return QKeySequence(Qt::Key_F1); }
+QKeySequence defaultHotkey(HotkeyAction action)
+{
+    switch (action)
+    {
+    case HotkeyAction::Screenshot:
+        return defaultScreenshotHotkey();
+    case HotkeyAction::HistoryPrevious:
+        return QKeySequence(Qt::Key_F7);
+    case HotkeyAction::HistoryNext:
+        return QKeySequence(Qt::Key_F8);
+    case HotkeyAction::HistoryOpen:
+        return QKeySequence(Qt::Key_F9);
+    }
+    return {};
+}
+QString hotkeyActionName(HotkeyAction action)
+{
+    switch (action)
+    {
+    case HotkeyAction::Screenshot:
+        return QStringLiteral("截图");
+    case HotkeyAction::HistoryPrevious:
+        return QStringLiteral("上一张");
+    case HotkeyAction::HistoryNext:
+        return QStringLiteral("下一张");
+    case HotkeyAction::HistoryOpen:
+        return QStringLiteral("打开历史");
+    }
+    return {};
+}
+QString hotkeyConflictError(const std::array<QKeySequence, 4>& sequences)
+{
+    for (size_t i = 0; i < sequences.size(); ++i)
+    {
+        const auto error = hotkeyValidationError(sequences[i]);
+        if (!error.isEmpty())
+            return hotkeyActionName(hotkeyActions[i]) + QStringLiteral("：") + error;
+        for (size_t j = 0; j < i; ++j)
+            if (sequences[i] == sequences[j])
+                return QStringLiteral("%1与%2快捷键重复，请分别设置。")
+                    .arg(hotkeyActionName(hotkeyActions[i]), hotkeyActionName(hotkeyActions[j]));
+    }
+    return {};
+}
 QString hotkeyValidationError(const QKeySequence& sequence)
 {
     if (sequence.isEmpty())

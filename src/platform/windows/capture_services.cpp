@@ -19,11 +19,12 @@ class WindowsWindowEnumerator final : public WindowEnumerator
 class WindowsHotkey final : public GlobalHotkey
 {
   public:
-    HotkeyRegistration registerHotkey(const QKeySequence&, std::function<void()>) override
+    HotkeyRegistration registerHotkey(HotkeyAction, const QKeySequence&,
+                                      std::function<void()>) override
     {
-        return {false, QStringLiteral("Windows 全局热键尚未实现，请使用托盘入口。")};
+        return {false, QStringLiteral("Windows 多动作全局热键待批次 7b，请使用托盘入口。")};
     }
-    void unregister() override {}
+    void unregister(HotkeyAction) override {}
 };
 class WindowsDisplays final : public DisplayTopology
 {

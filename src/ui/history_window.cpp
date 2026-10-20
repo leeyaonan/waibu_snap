@@ -475,6 +475,23 @@ void HistoryWindow::rebuildGroups(const QString& view)
     notice_->setText(snapshot_.error);
     notice_->setVisible(!snapshot_.error.isEmpty());
 }
+void HistoryWindow::navigate(int step, bool allHistory)
+{
+    if (allHistory)
+    {
+        view_ = QStringLiteral("all");
+        order_ = HistorySort::NewestFirst;
+        rebuildGroups(view_);
+        rebuildItems({});
+        return;
+    }
+    if (thumbnails_->count())
+    {
+        thumbnails_->setCurrentRow(
+            std::clamp(thumbnails_->currentRow() + step, 0, thumbnails_->count() - 1));
+        thumbnails_->scrollToItem(thumbnails_->currentItem());
+    }
+}
 void HistoryWindow::selectView(const QString& view, bool useDefaultSort)
 {
     if (view == QStringLiteral("new-group"))

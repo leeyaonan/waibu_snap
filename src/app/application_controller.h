@@ -50,12 +50,14 @@ class ApplicationController final : public QObject
                                    ClipboardActions clipboardActions = {},
                                    AutostartActions autostartActions = {},
                                    HistoryWindowActions historyActions = {},
-                                   std::shared_ptr<FileManager> fileManager = {});
+                                   std::shared_ptr<FileManager> fileManager = {},
+                                   std::unique_ptr<GlobalHotkey> hotkey = {});
     ~ApplicationController() override;
     void start();
     void trigger(const QString& source);
     void quit();
     void openHistory();
+    void navigateHistory(int step);
     QMenu* menu() { return &menu_; }
     bool active() const { return active_; }
     StickerManager& stickers() { return stickers_; }
@@ -86,12 +88,17 @@ class ApplicationController final : public QObject
     void updateCurrentGroupMenu();
     void pinClipboardImage();
     ImageOutputResult pinHistoryImage(const QImage& image);
-    QString changeHotkey(const QKeySequence& sequence);
+    QString changeHotkey(const QKeySequence& sequence,
+                         HotkeyAction action = HotkeyAction::Screenshot);
+    HotkeySettings& hotkeySettings(HotkeyAction action);
     QApplication& application_;
     RunOptions options_;
     QAction* scrollAction_ = nullptr;
     QAction* settingsAction_ = nullptr;
     QAction* openHistoryAction_ = nullptr;
+    QAction* historyPreviousAction_ = nullptr;
+    QAction* historyNextAction_ = nullptr;
+    QMenu* historyMenu_ = nullptr;
     QAction* clipboardStickerAction_ = nullptr;
     QAction* hideAllStickersAction_ = nullptr;
     QAction* restoreAllStickersAction_ = nullptr;
@@ -103,6 +110,7 @@ class ApplicationController final : public QObject
     HistoryManager history_;
     HistorySession historySession_;
     HotkeySettings hotkeySettings_;
+    std::array<std::unique_ptr<HotkeySettings>, 3> historyHotkeys_;
     std::unique_ptr<DisplayTopology> displays_;
     std::unique_ptr<CaptureProvider> capture_;
     std::unique_ptr<WindowEnumerator> windows_;
