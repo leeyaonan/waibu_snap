@@ -360,6 +360,8 @@ void ScrollResultWindow::applyCrop()
         image_ = image_.copy(rectangle);
         output_ = false;
         view_->setImage(image_);
+        if (actions_.historyUpdated)
+            actions_.historyUpdated(image_);
     }
     setCropping(false);
 }

@@ -61,6 +61,19 @@ class MeasurementTest(unittest.TestCase):
         self.assertTrue(incomplete)
         self.assertEqual(delta, 0)
 
+    def test_nf01_launch_isolates_history_root(self):
+        args = SimpleNamespace(cold=1, warm=0, stable_seconds=1, interval_seconds=0)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            with patch.object(measurement, "start_nf01_process",
+                              side_effect=RuntimeError("停止测试")) as start:
+                with self.assertRaisesRegex(RuntimeError, "停止测试"):
+                    measurement.measure_nf01(args, Path("app"), Path("probe"), output)
+            launched = start.call_args.args[3]
+            self.assertIn("--history-root", launched)
+            self.assertEqual(launched[launched.index("--history-root") + 1],
+                             str(output / "history"))
+
     def test_launchservices_uses_bundle_and_new_pid(self):
         app = Path("/tmp/构建目录/WaibuSnap.app/Contents/MacOS/WaibuSnap")
         with patch.object(measurement, "application_pids", side_effect=[set(), {123}]), \

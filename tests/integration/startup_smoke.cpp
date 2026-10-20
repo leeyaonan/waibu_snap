@@ -54,12 +54,27 @@
 #include <QTemporaryFile>
 #include <QTest>
 #include <QTextEdit>
+#include <QUuid>
 #include <QWheelEvent>
 #include <QWindow>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 
+namespace
+{
+waibusnap::RunOptions isolatedHistory(waibusnap::RunOptions options = {})
+{
+    static QTemporaryDir temporary;
+    if (!temporary.isValid())
+        qFatal("无法创建测试历史根目录，拒绝使用真实用户目录。");
+    const QString path = temporary.filePath(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    options.historyRoot = QDir(path).filePath(QStringLiteral("history"));
+    if (options.settingsFile.isEmpty())
+        options.settingsFile = QDir(path).filePath(QStringLiteral("settings.ini"));
+    return options;
+}
+}
 namespace waibusnap
 {
 struct OverlayScrollTestAccess
@@ -769,7 +784,7 @@ class StartupSmokeTest final : public QObject
     void scrollPlatformAndMenu()
     {
         using namespace waibusnap;
-        ApplicationController controller(*qApp, {});
+        ApplicationController controller(*qApp, isolatedHistory());
         auto* action =
             controller.menu()->findChild<QAction*>(QStringLiteral("scrollCaptureAction"));
         QVERIFY(action);
@@ -1100,7 +1115,7 @@ class StartupSmokeTest final : public QObject
         options.metricsFile = temp.filePath(QStringLiteral("metrics.jsonl"));
         auto capture = std::make_shared<RegionStubState>();
         auto injector = std::make_shared<InjectorStubState>();
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         ApplicationControllerTestAccess::factory(
             controller,
             [=](RegionCaptureRequest request, QRect bar, QObject* parent)
@@ -1200,7 +1215,7 @@ class StartupSmokeTest final : public QObject
         options.metricsFile = temp.filePath(QStringLiteral("metrics.jsonl"));
         auto capture = std::make_shared<RegionStubState>();
         auto injector = std::make_shared<InjectorStubState>();
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         auto frame = annotationFrame();
         ApplicationControllerTestAccess::retryDependencies(controller, frame);
         ApplicationControllerTestAccess::factory(
@@ -1252,7 +1267,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temp;
         RunOptions options;
         options.metricsFile = temp.filePath(QStringLiteral("metrics.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         auto capture = std::make_shared<RegionStubState>();
         auto injector = std::make_shared<InjectorStubState>();
         ApplicationControllerTestAccess::factory(
@@ -1419,7 +1434,7 @@ class StartupSmokeTest final : public QObject
         RunOptions options;
         options.metricsFile = temp.filePath(QStringLiteral("metrics.jsonl"));
         auto capture = std::make_shared<RegionStubState>();
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         ApplicationControllerTestAccess::factory(
             controller,
             [=](RegionCaptureRequest request, QRect bar, QObject* parent)
@@ -2685,7 +2700,7 @@ class StartupSmokeTest final : public QObject
     void stickerMenuAvailabilityAndOverlayIsolation()
     {
         using namespace waibusnap;
-        ApplicationController controller(*qApp, {});
+        ApplicationController controller(*qApp, isolatedHistory());
         auto* menu = controller.menu();
         QCOMPARE(menu->actions().size(), qsizetype(7));
         QCOMPARE(menu->actions()[0]->text(), QStringLiteral("截图"));
@@ -2791,7 +2806,7 @@ class StartupSmokeTest final : public QObject
             summaries = count;
             return StickerQuitDecision::Cancel;
         };
-        ApplicationController controller(*qApp, options, actions,
+        ApplicationController controller(*qApp, isolatedHistory(options), actions,
                                          {[&]
                                           {
                                               ++reads;
@@ -2818,7 +2833,8 @@ class StartupSmokeTest final : public QObject
         compareImagePixels(first->image(), before);
         QCOMPARE(source, before);
         QVERIFY(!first->isSaved());
-        QVERIFY(QDir(temporary.path()).entryList(QDir::Files).isEmpty());
+        QCOMPARE(QDir(temporary.path()).entryList(QDir::Files),
+                 QStringList{QStringLiteral("settings.ini")});
         QVERIFY(!QFile::exists(options.metricsFile));
         action->trigger();
         QCOMPARE(reads, 2);
@@ -2862,7 +2878,7 @@ class StartupSmokeTest final : public QObject
         int reads = 0;
         QPointer<QLabel> toast;
         {
-            ApplicationController controller(*qApp, options, {},
+            ApplicationController controller(*qApp, isolatedHistory(options), {},
                                              {[&]
                                               {
                                                   ++reads;
@@ -2951,7 +2967,7 @@ class StartupSmokeTest final : public QObject
     {
         using namespace waibusnap;
         int reads = 0;
-        ApplicationController controller(*qApp, {}, {},
+        ApplicationController controller(*qApp, isolatedHistory(), {},
                                          {[&]
                                           {
                                               ++reads;
@@ -2974,7 +2990,7 @@ class StartupSmokeTest final : public QObject
     {
         using namespace waibusnap;
         QImage source;
-        ApplicationController controller(*qApp, {}, {}, {[&] { return source; }});
+        ApplicationController controller(*qApp, isolatedHistory(), {}, {[&] { return source; }});
         auto* action = clipboardAction(controller);
         action->trigger();
         QCOMPARE(controller.stickers().count(), 0);
@@ -3015,7 +3031,7 @@ class StartupSmokeTest final : public QObject
             quitGuarded &= reads == 1;
             return StickerQuitDecision::Cancel;
         };
-        ApplicationController controller(*qApp, options, actions,
+        ApplicationController controller(*qApp, isolatedHistory(options), actions,
                                          {[&]
                                           {
                                               ++reads;
@@ -3077,7 +3093,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temporary;
         RunOptions options;
         options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         QPointer<SelectionOverlay> overlay;
         if (overlayState)
             overlay = new SelectionOverlay(sampleFrame());
@@ -3126,7 +3142,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temporary;
         RunOptions options;
         options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         QPointer<SelectionOverlay> overlay = new SelectionOverlay(sampleFrame());
         overlay->show();
         ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
@@ -3184,7 +3200,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temporary;
         RunOptions options;
         options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         auto* overlay = new SelectionOverlay(sampleFrame());
         overlay->show();
         overlay->activateWindow();
@@ -3227,7 +3243,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temporary;
         RunOptions options;
         options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         auto* overlay = new SelectionOverlay(sampleFrame());
         overlay->show();
         ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
@@ -3266,7 +3282,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temporary;
         RunOptions options;
         options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         ApplicationControllerTestAccess::visibility(controller, true);
         for (int iteration = 0; iteration < 100; ++iteration)
         {
@@ -3307,7 +3323,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temporary;
         RunOptions options;
         options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         QPointer<SelectionOverlay> overlay;
         if (state == 2)
         {
@@ -3340,7 +3356,7 @@ class StartupSmokeTest final : public QObject
         QTemporaryDir temporary;
         RunOptions options;
         options.metricsFile = temporary.filePath(QStringLiteral("sessions.jsonl"));
-        ApplicationController controller(*qApp, options);
+        ApplicationController controller(*qApp, isolatedHistory(options));
         auto* overlay = new SelectionOverlay(sampleFrame());
         overlay->show();
         ApplicationControllerTestAccess::seedSession(controller, overlay, 30000);
@@ -3393,7 +3409,7 @@ class StartupSmokeTest final : public QObject
                                           Q_ARG(QScreen*, QGuiApplication::primaryScreen()));
             return StickerQuitDecision::Cancel;
         };
-        ApplicationController controller(*qApp, options, actions);
+        ApplicationController controller(*qApp, isolatedHistory(options), actions);
         QVERIFY(controller.stickers().create(sampleFrame().pixels, {30, 40}).success);
         overlay = new SelectionOverlay(sampleFrame());
         if (state != 1)
@@ -3443,7 +3459,7 @@ class StartupSmokeTest final : public QObject
         const QImage before = real && hasImage ? clipboard->image() : stored;
         const QString beforeText = real && !hasImage ? clipboard->text() : text;
         QSignalSpy changes(clipboard, &QClipboard::dataChanged);
-        ApplicationController controller(*qApp, {}, {}, input);
+        ApplicationController controller(*qApp, isolatedHistory(), {}, input);
         clipboardAction(controller)->trigger();
         QCoreApplication::processEvents();
         QCOMPARE(changes.size(), 0);
@@ -3981,7 +3997,7 @@ class StartupSmokeTest final : public QObject
             return StickerCloseConfirmation{StickerCloseDecision::Discard, true};
         };
         AutostartStub startup;
-        ApplicationController controller(*qApp, options, actions,
+        ApplicationController controller(*qApp, isolatedHistory(options), actions,
                                          {[] { return sampleFrame().pixels; }}, startup.actions());
         QVERIFY(controller.stickers().create(sampleFrame().pixels, {80, 90}).success);
         clipboardAction(controller)->trigger();
@@ -4313,7 +4329,7 @@ class StartupSmokeTest final : public QObject
             current->quit();
             return StickerQuitDecision::Cancel;
         };
-        ApplicationController controller(*qApp, {}, actions);
+        ApplicationController controller(*qApp, isolatedHistory(), actions);
         current = &controller;
         QVERIFY(controller.stickers().create(image, {80, 90}).success);
         const auto windows = controller.stickers().windows();
@@ -7788,7 +7804,7 @@ class StartupSmokeTest final : public QObject
         RunOptions options;
         options.settingsFile = temporary.filePath(QStringLiteral("settings.ini"));
         AutostartStub stub;
-        ApplicationController controller(*qApp, options, {}, {}, stub.actions());
+        ApplicationController controller(*qApp, isolatedHistory(options), {}, {}, stub.actions());
         QCOMPARE(stub.queries, 0);
         int handled = 0;
         QTimer::singleShot(
@@ -7950,7 +7966,7 @@ class StartupSmokeTest final : public QObject
             ++panels;
             return QString();
         };
-        ApplicationController controller(*qApp, options, actions);
+        ApplicationController controller(*qApp, isolatedHistory(options), actions);
         QVERIFY(controller.stickers().create(sampleFrame().pixels, {30, 40}).success);
         const auto window = controller.stickers().windows().first();
         QVERIFY(!window->saveImage());
@@ -9319,7 +9335,9 @@ class StartupSmokeTest final : public QObject
         process.setProgram(executable);
         process.setWorkingDirectory(temporary.path());
         process.setArguments({QStringLiteral("--smoke-test"), QStringLiteral("--settings-file"),
-                              temporary.filePath(QStringLiteral("settings.ini"))});
+                              temporary.filePath(QStringLiteral("settings.ini")),
+                              QStringLiteral("--history-root"),
+                              temporary.filePath(QStringLiteral("history"))});
         process.setProcessEnvironment(childProcessEnvironment());
         process.start();
         QVERIFY2(process.waitForStarted(5000), qPrintable(process.errorString()));
@@ -9345,7 +9363,9 @@ class StartupSmokeTest final : public QObject
         process.setProcessEnvironment(childProcessEnvironment());
         process.start(qEnvironmentVariable("WAIBUSNAP_TEST_APP"),
                       {"--test-count", "2", "--settings-file",
-                       temporary.filePath(QStringLiteral("settings.ini"))});
+                       temporary.filePath(QStringLiteral("settings.ini")),
+                       QStringLiteral("--history-root"),
+                       temporary.filePath(QStringLiteral("history"))});
         QVERIFY2(process.waitForFinished(5000), qPrintable(process.errorString()));
         QCOMPARE(process.exitCode(), 2);
         QVERIFY(process.readAllStandardError().contains("--test-mode"));

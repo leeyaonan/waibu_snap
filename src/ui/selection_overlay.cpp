@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QDebug>
 #include <QDir>
 #include <QFocusEvent>
 #include <QHBoxLayout>
@@ -27,6 +28,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QShowEvent>
+#include <QUuid>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
@@ -44,6 +46,8 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
       frame_(std::move(frame)), actions_(std::move(actions)), windows_(std::move(windows))
 {
+    if (actions_.historySessionId.isEmpty())
+        actions_.historySessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     scrollSupported_ = regionCaptureSupported();
     if (!snappingError.isEmpty() || windows_.isEmpty())
     {
@@ -971,9 +975,13 @@ void SelectionOverlay::copySelection()
         dragMode_ != DragMode::None)
         return;
     finishText(true);
-    const ImageOutputResult result = actions_.copyImage(outputImage());
+    const QImage image = outputImage();
+    const ImageOutputResult result = actions_.copyImage(image);
     if (result.success)
+    {
+        recordHistory(image);
         complete(copiedSessionOutcome);
+    }
     else
         showStatus(QStringLiteral("复制失败：%1 点击「复制」重试。").arg(result.explanation),
                    false);
@@ -984,11 +992,15 @@ void SelectionOverlay::pinSelection()
         dragMode_ != DragMode::None)
         return;
     finishText(true);
+    const QImage image = outputImage();
     const ImageOutputResult result =
-        actions_.pinImage ? actions_.pinImage(outputImage())
+        actions_.pinImage ? actions_.pinImage(image)
                           : ImageOutputResult{false, QStringLiteral("贴图管理器不可用。")};
     if (result.success)
+    {
+        recordHistory(image);
         complete(pinnedSessionOutcome);
+    }
     else
         showStatus(QStringLiteral("钉图失败：%1 点击「钉到屏幕」重试。").arg(result.explanation),
                    false);
@@ -1038,7 +1050,10 @@ void SelectionOverlay::saveSelection()
     activateWindow();
     setFocus(Qt::OtherFocusReason);
     if (!target.path.isEmpty())
-        finishSave(saveImageToTarget(outputImage(), target));
+    {
+        const QImage image = outputImage();
+        finishSave(saveImageToTarget(image, target), image);
+    }
 }
 bool SelectionOverlay::exportToPath(const QString& path)
 {
@@ -1046,10 +1061,22 @@ bool SelectionOverlay::exportToPath(const QString& path)
         dragMode_ != DragMode::None || path.isEmpty())
         return false;
     finishText(true);
-    return finishSave(exportImageToPath(
-        outputImage(), activeShape_ >= 0 ? savePanelFilePath(path, ImageFormat::Png) : path));
+    const QImage image = outputImage();
+    return finishSave(exportImageToPath(image, activeShape_ >= 0
+                                                   ? savePanelFilePath(path, ImageFormat::Png)
+                                                   : path),
+                      image);
 }
-bool SelectionOverlay::finishSave(const ImageFileResult& output)
+void SelectionOverlay::recordHistory(const QImage& image, const QString& savedPath)
+{
+    if (actions_.recordHistory)
+    {
+        const auto result = actions_.recordHistory(image, savedPath);
+        if (!result.success)
+            qWarning().noquote() << "截图输出成功，历史写入失败：" << result.error;
+    }
+}
+bool SelectionOverlay::finishSave(const ImageFileResult& output, const QImage& image)
 {
     if (!output.result.success)
     {
@@ -1059,6 +1086,7 @@ bool SelectionOverlay::finishSave(const ImageFileResult& output)
         return false;
     }
     saved_ = true;
+    recordHistory(image, output.path);
     showStatus((activeShape_ >= 0 ? QStringLiteral("形状截图以 PNG 保存\n") : QString()) +
                    QStringLiteral("已保存：%1").arg(output.path),
                true);

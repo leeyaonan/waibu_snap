@@ -1,5 +1,6 @@
 #pragma once
 #include "app/app_settings.h"
+#include "app/history_manager.h"
 #include "app/scroll_capture.h"
 #include "app/sticker_manager.h"
 #include "interfaces/autostart.h"
@@ -30,6 +31,7 @@ struct RunOptions
 {
     QString metricsFile;
     QString settingsFile;
+    QString historyRoot;
     bool testMode = false;
     bool smokeTest = false;
     int testCount = 1;
@@ -88,6 +90,8 @@ class ApplicationController final : public QObject
     QSystemTrayIcon tray_;
     std::unique_ptr<GlobalHotkey> hotkey_;
     AppSettings settings_;
+    HistoryManager history_;
+    HistorySession historySession_;
     HotkeySettings hotkeySettings_;
     std::unique_ptr<DisplayTopology> displays_;
     std::unique_ptr<CaptureProvider> capture_;
