@@ -368,15 +368,22 @@ class HistoryActionsTest final : public QObject
         const auto original = bytes(item.absolutePath);
         const auto index = bytes(f.index());
         bool disrupted = false;
+        QFile heldIndex(f.index());
         f.files->afterTrash = [&]
         {
-            // 移走暂存文件的父目录，使 QSaveFile 提交失败；旧索引原样复制回原路径。
+#ifdef Q_OS_WIN
+            // Windows 不允许替换仍被 QFile 打开的目标文件，旧索引原位保留。
+            disrupted = heldIndex.open(QIODevice::ReadOnly);
+#else
+            // macOS 允许替换打开文件；改为移走暂存目录，并把旧索引原样放回。
+
             const auto meta = QFileInfo(f.index()).absolutePath();
             const auto moved = f.temp.filePath(QStringLiteral("原元数据"));
             disrupted = QDir().rename(meta, moved) && QDir().mkdir(meta) &&
                         QFile::copy(QDir(moved).filePath(QStringLiteral("group.json")),
                                     QDir(meta).filePath(QStringLiteral("group.json"))) &&
                         QFile::copy(QDir(moved).filePath(QStringLiteral("items.json")), f.index());
+#endif
         };
         f.click("historyDelete");
         QVERIFY(disrupted);
