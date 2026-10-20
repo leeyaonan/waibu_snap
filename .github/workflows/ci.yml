@@ -33,12 +33,13 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
-      - name: 安装精确版本 Qt（仅 qtbase）
+      - name: 安装精确版本 Qt（qtbase 与官方图片格式插件）
         uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4
         with:
           version: '6.11.2'
           arch: ${{ matrix.qt-arch }}
           archives: qtbase
+          modules: qtimageformats
           setup-python: false
           # 3.3.0 尚未包含 Windows Qt 6.11 仓库布局修复（上游 PR #1000）。
           aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b'

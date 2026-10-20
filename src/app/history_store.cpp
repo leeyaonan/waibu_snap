@@ -42,7 +42,7 @@ bool imageFileName(const QString& name)
         return false;
     const QString suffix = QFileInfo(name).suffix().toLower();
     return suffix == QStringLiteral("png") || suffix == QStringLiteral("jpg") ||
-           suffix == QStringLiteral("jpeg");
+           suffix == QStringLiteral("jpeg") || suffix == QStringLiteral("webp");
 }
 QString sourceText(HistorySource source)
 {

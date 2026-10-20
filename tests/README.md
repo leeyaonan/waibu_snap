@@ -969,3 +969,18 @@ macOS 27.0.1 / arm64、Qt 6.11.2 Release，独立 `WAIBUSNAP_BUILD_DIR=build/ver
 退出回归先在新增用例中复现崩溃，修复为拒绝分组对话框、关闭菜单后延迟销毁历史窗口，让触发控件信号退出；三个场景均纳入高 DPI 清单。应用子进程冒烟原先断言仅有一个顶层窗口，新增 QMenu 本身也是隐藏顶层对象；现按真实主菜单 / 当前组菜单对象核对，仍拒绝残留临时窗口。
 
 本机 Qt 6.11.2 Release 标准构建、正常系统上下文 `test-project.sh` **27/27 CTest**、clang-format **18.1.8** lint、`git diff --check` 与 ObjC 块捕获门禁通过。主 / 高 DPI 冒烟 **497 / 430**、历史窗口各 **17**、历史动作各 **21**、历史入库 **35**、分组标准 / 高 DPI **23 / 16**，均 0 失败 / 0 跳过。首轮沙箱的原生在屏和 OCR 服务受限，另有子菜单顶层数量旧断言已修复；系统上下文复验完整通过。交付 [PR #44](https://github.com/leeyaonan/waibu_snap/pull/44)，双端 CI 与 Intel 交叉构建结果见 [PR 检查页](https://github.com/leeyaonan/waibu_snap/pull/44/checks)。人工待验收：双端真实中文 / 长分组名输入与右键菜单、分组列折叠入口、原生回收站成功 / 拒绝 / 网络卷、跨重启当前组、420px 窄窗与 Windows 11 高 DPI 分组设置及托盘子菜单。`build/macos` 未改动或启动；外部 WebP、历史设置页、全局热键、清理执行均不属于本批。
+
+## v006 批次 6：外部图片与 WebP（2026-10-20）
+
+基于 `main` `dbc284b`，分支 `feat/v006-history-external`，独立构建目录 `build/verify-v006-history-external`；没有修改或启动 `build/macos`。外部 PNG / JPEG 的既有扫描、动作、标记和占用模型保持不变，扫描与索引校验新增大小写不敏感的 WebP 扩展名。WebP 使用 Qt 官方 qtimageformats 动态插件；加载失败逐项中文提示，不升级为全库错误。JPEG 继续 AutoTransform；所有完整加载 DPR=1、原像素，缩略图仍按可见区懒加载。
+
+新增三项 CTest：
+
+- `history_external` / `history_external_high_dpi`：标准与 2 倍 DPR 完整清单各 **15 项**。真实 QImageReader / QImageWriter WebP 编解码、42 字节最小静态样本、无损像素；顶层 PNG / JPG / JPEG / WebP 扫描、隐藏文件 / 嵌套目录 / 普通非分组目录排除、macOS 真符号链接排除；长图 / 外部标记、原像素主图 / 缩略图、星标持久化 / 星标视图 / 取消后移除索引项、复制 / Enter / Shift+Enter 钉图与定位成功 / 失败、外部删除禁用；文件损坏 / 丢失提示与其他图片可用；JPEG EXIF 方向 6 自动旋转；启动 / 开窗 / 手动重扫，当前组 / INI / 入库错误 / session 去重保留；纯候选算法排除全部外部格式、外部占用单独统计。
+- `history_missing_webp`：独立进程 **3 项**，已加载 offscreen 平台插件后、首次图片查询前，将 Qt 动态插件路径改为临时空目录；断言真实 supportedImageFormats 不含 WebP。扫描仍保留 WebP，Manager 原图 / 缩略图与窗口错误均明确提示缺少 Qt WebP 插件及 qtimageformats，失败复制 / 钉图不调用替身；同库 PNG 仍能预览和复制、星标仍能写入，历史条数不增加。不会移动或删除已安装的 Qt 插件。
+
+所有新增测试使用临时历史根、临时 INI、复制 / 钉图 / 回收站 / 文件定位替身，不读取真实 Pictures/WaibuSnap 或用户图片，不访问真实剪贴板、回收站或文件管理器。最小样本来源与生成方法见 [fixture 说明](fixtures/history/README.md)。正常 WebP 测试在 initTestCase 明确要求 Qt 能读写 WebP，缺失是失败的环境阻塞，不设 QSKIP。
+
+本机起初仅装 qtbase，确实缺少 `libqwebp.dylib`；更新后的 prepare 脚本已实测非零失败并给出补装命令。随后用已有 aqt 3.3.0 执行 `aqt install-qt mac desktop 6.11.2 clang_64 --noarchives --modules qtimageformats -O /Users/rot/Qt`，仅补一个官方模块包，再实测真实编解码通过。双端脚本检查 qmake 返回的插件目录，缺失明确失败；补装步骤与 Windows 下载器固定提交见 [脚本说明](../scripts/README.md#已有-qt-补装-webp)。
+
+人工待验收：macOS / Windows 11 把透明 WebP、带 EXIF 的 JPEG 和大图放入真实分组文件夹后的预览与手动刷新；Finder / Explorer 中文、空格、网络卷路径的定位反馈；真实复制与钉图像素、混合 DPI 和窄窗体验。无实时监听，无实际自动清理；历史设置页、全局热键和分组增强均未提前实现。本机 macOS / arm64、Qt 6.11.2 Release，标准 build-project.sh、系统服务上下文 test-project.sh **30/30 CTest**、clang-format **18.1.8** lint、git diff --check 和 ObjC 块捕获门禁均通过。主 / 高 DPI 冒烟 **497 / 430**，外部图片各 **15**、缺插件 **3**、历史窗口各 **17**、动作各 **21**、分组 **23 / 16**、入库 **35**，均 0 失败 / 0 跳过。最后仅将缺插件测试的栈窗口属性提前设置，重建并单独复验该项通过。双端完整构建 / CTest / lint 与 CI 结果在本批 PR 记录。
