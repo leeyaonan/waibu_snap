@@ -957,4 +957,4 @@ macOS 27.0.1 / arm64、Qt 6.11.2 Release，独立 `WAIBUSNAP_BUILD_DIR=build/ver
 
 本机 macOS / arm64、Qt 6.11.2 Release：标准 `build-project.sh` 通过，正常系统上下文 `test-project.sh` **25/25 CTest**，clang-format **18.1.8** `lint-code.sh`、`git diff --check` 与 ObjC 块捕获门禁通过。主 / 高 DPI 冒烟 **497 / 430**、历史窗口各 **17**、历史入库 **35**，上述 Qt Test 均 0 失败 / 0 跳过。首次沙箱全量 **23/25**，原生在屏无屏幕、真实 OCR 服务受限；完整系统上下文复验 **25/25** 通过，没有修改原生 / OCR 断言。Windows 预计 **23 项 CTest**，最终双端 CI 与 Intel 构建见本批 PR 记录。
 
-首轮 CI 的 macOS 含 Intel 构建通过；Windows 编译通过，动作测试的索引提交故障注入未生效（Windows 拒绝重命名含打开文件的父目录）。已改为 Windows 持有目标索引文件，利用共享规则阻止替换，保持原图恢复 / 旧索引不变断言；生产实现未改。最终 CI 记录见下文。
+首轮 CI 的 macOS 含 Intel 构建通过；Windows 编译通过，动作测试的索引提交故障注入未生效（Windows 拒绝重命名含打开文件的父目录）。已改为 Windows 持有目标索引文件，利用共享规则阻止替换，保持原图恢复 / 旧索引不变断言；生产实现未改。最终双端检查与 Intel 构建以 [PR #43 的当前 head 检查](https://github.com/leeyaonan/waibu_snap/pull/43/checks) 为准。
