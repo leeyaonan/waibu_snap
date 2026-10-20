@@ -293,7 +293,7 @@ def measure_nf01(args, app, probe, output):
             process = start_nf01_process(app, stdout, stderr, ["--test-mode", "--test-count", str(count),
                 "--test-stable-ms", str(round(args.stable_seconds * 1000)),
                 "--test-interval-ms", str(round(args.interval_seconds * 1000)),
-                "--metrics-file", str(log)])
+                "--metrics-file", str(log), "--history-root", str(output / "history")])
             stability = collect_stability(probe, process, args.stable_seconds)
             write_json(output / f"{kind}-{index:02d}-stability.json", stability)
             if not stability["stable"]:
@@ -330,7 +330,9 @@ def graphics_report(pid, output, name):
 def measure_idle(args, app, probe, output):
     # 普通启动：无 --test-mode，无自动触发和受控定时器。
     with (output / "app-stderr.log").open("w", encoding="utf-8") as diagnostics:
-        process = subprocess.Popen([str(app), "--metrics-file", str(output / "idle-sessions.jsonl")], stdout=diagnostics, stderr=diagnostics)
+        process = subprocess.Popen([str(app), "--metrics-file", str(output / "idle-sessions.jsonl"),
+                                    "--history-root", str(output / "history")],
+                                   stdout=diagnostics, stderr=diagnostics)
         try:
             stability = collect_stability(probe, process, args.stable_seconds)
             write_json(output / "stability.json", stability)
