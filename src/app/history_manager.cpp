@@ -114,6 +114,45 @@ HistorySnapshot HistoryManager::refresh()
     }
     return snapshot();
 }
+std::optional<HistoryItem> HistoryManager::findItem(const QString& itemId) const
+{
+    for (const auto& group : snapshot_.groups)
+        for (const auto& item : group.items)
+            if (historyItemId(item) == itemId)
+                return item;
+    return {};
+}
+HistoryStatus HistoryManager::setStarred(const QString& itemId, bool starred)
+{
+    const auto item = findItem(itemId);
+    if (!item || !store_)
+        return {false, QStringLiteral("历史记录已不存在，请刷新历史。")};
+    const auto result = store_->setStarred(item->groupId, item->fileName, starred);
+    if (result.success)
+        refresh();
+    return result;
+}
+HistoryStatus HistoryManager::deleteItem(const QString& itemId, const HistoryTrash& trash)
+{
+    const auto item = findItem(itemId);
+    if (!item || !store_)
+        return {false, QStringLiteral("历史记录已不存在，请刷新历史。")};
+    const auto result = store_->deleteManagedItem(*item, trash);
+    if (result.success)
+        refresh();
+    return result;
+}
+HistoryStatus HistoryManager::revealItem(const QString& itemId, const HistoryTrash& reveal) const
+{
+    const auto item = findItem(itemId);
+    if (!item || !store_)
+        return {false, QStringLiteral("历史记录已不存在，请刷新历史。")};
+    const auto checked = store_->validateItem(*item);
+    if (!checked.success)
+        return checked;
+    return reveal ? reveal(item->absolutePath)
+                  : HistoryStatus{false, QStringLiteral("文件管理器服务不可用，请稍后重试。")};
+}
 HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds) const
 {
     // 路径只能来自本次扫描的记录；视图不传入任意文件路径。
@@ -121,6 +160,9 @@ HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds
         for (const auto& item : group.items)
             if (historyItemId(item) == itemId)
             {
+                const auto checked = store_->validateItem(item);
+                if (!checked.success)
+                    return {checked, {}};
                 QImageReader reader(item.absolutePath);
                 reader.setAutoTransform(true);
                 if (bounds.isValid() && reader.size().isValid())

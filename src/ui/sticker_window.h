@@ -54,7 +54,7 @@ class StickerWindow final : public QWidget
     Q_OBJECT
   public:
     explicit StickerWindow(QImage image, QPoint position, bool saved = false,
-                           StickerActions actions = {});
+                           StickerActions actions = {}, qreal initialScale = 1);
     const QImage& image() const { return image_; }
     qreal scale() const { return scale_; }
     bool isSaved() const { return saved_; }

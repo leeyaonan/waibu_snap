@@ -3,6 +3,14 @@
 #include <cmath>
 namespace waibusnap
 {
+qreal historyStickerScale(QSize pixels, QRect available, qreal dpr)
+{
+    if (pixels.isEmpty() || available.isEmpty() || !std::isfinite(dpr) || dpr <= 0)
+        return 0;
+    const int width = std::max(1, int(std::floor(available.width() * 0.8)));
+    const int height = std::max(1, int(std::floor(available.height() * 0.8)));
+    return std::min({qreal(1), width * dpr / pixels.width(), height * dpr / pixels.height()});
+}
 qreal clampedStickerScale(qreal scale)
 {
     return std::isfinite(scale) ? std::clamp(scale, minimumStickerScale, maximumStickerScale) : 1;
@@ -16,8 +24,8 @@ QSizeF stickerLogicalSize(QSize pixels, qreal scale, qreal dpr)
 {
     if (pixels.isEmpty() || !std::isfinite(scale) || scale <= 0 || !std::isfinite(dpr) || dpr <= 0)
         return {};
-    const QSizeF size(pixels.width() * clampedStickerScale(scale) / dpr,
-                      pixels.height() * clampedStickerScale(scale) / dpr);
+    const QSizeF size(pixels.width() * std::min(scale, maximumStickerScale) / dpr,
+                      pixels.height() * std::min(scale, maximumStickerScale) / dpr);
     // Qt 顶层窗口有整数尺寸上限，拒绝无法表示的几何，不能溢出为负尺寸。
     if (!std::isfinite(size.width()) || !std::isfinite(size.height()) || size.width() > 16777215 ||
         size.height() > 16777215)

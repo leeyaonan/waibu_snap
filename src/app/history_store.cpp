@@ -577,6 +577,100 @@ HistoryStatus HistoryStore::setStarred(const QString& groupId, const QString& fi
     error = saveIndex(snapshot->group.absolutePath, index);
     return {error.isEmpty(), error};
 }
+HistoryStatus HistoryStore::validateItem(const HistoryItem& item) const
+{
+    const QFileInfo root(rootDirectory_);
+    const QFileInfo file(item.absolutePath);
+    const QFileInfo group(file.absolutePath());
+    const QFileInfo metadata(QDir(group.absoluteFilePath()).filePath(QStringLiteral(".waibusnap")));
+    const QString expected = QDir(group.absoluteFilePath()).filePath(item.fileName);
+    if (!rootError(rootDirectory_).isEmpty() || !imageFileName(item.fileName) ||
+        item.absolutePath != expected || !file.isFile() || file.isSymLink() || root.isJunction() ||
+        !group.isDir() || group.isSymLink() || group.isJunction() ||
+        group.canonicalFilePath() != QDir(root.canonicalFilePath()).filePath(group.fileName()) ||
+        QFileInfo(group.absolutePath()).canonicalFilePath() != root.canonicalFilePath() ||
+        file.canonicalFilePath() != QDir(group.canonicalFilePath()).filePath(item.fileName) ||
+        metadata.isSymLink() || metadata.isJunction())
+        return {false, QStringLiteral("图片已丢失、路径越界或包含符号链接，请刷新历史。")};
+    return {true, {}};
+}
+HistoryStatus HistoryStore::deleteManagedItem(const HistoryItem& item, const HistoryTrash& trash)
+{
+    auto checked = validateItem(item);
+    if (!checked.success)
+        return checked;
+    if (!item.managed || !managedFileName(item.fileName))
+        return {false, QStringLiteral("外部图片请在文件管理器中操作。")};
+    QLockFile lock(QDir(rootDirectory_).filePath(QStringLiteral(".waibusnap.lock")));
+    QString error = lockError(lock);
+    if (!error.isEmpty())
+        return {false, error};
+    const auto scanned = scanUnlocked();
+    const auto* group = findGroup(scanned, item.groupId, error);
+    if (!group)
+        return {false, error};
+    bool matched = false;
+    for (const auto& current : group->items)
+        matched |= current.managed && current.fileName == item.fileName &&
+                   current.absolutePath == item.absolutePath && current.source == item.source;
+    if (!matched)
+        return {false, QStringLiteral("目标不是当前扫描的受管历史项，已拒绝删除。")};
+    if (!trash)
+        return {false, QStringLiteral("未提供回收站服务，原文件和索引已保留。")};
+    QJsonObject index;
+    error = readIndex(group->group.absolutePath, index);
+    if (!error.isEmpty())
+        return {false, error};
+    index.remove(item.fileName);
+    QSaveFile staged(itemsFile(group->group.absolutePath));
+    staged.setDirectWriteFallback(false);
+    const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"), 1},
+                                                      {QStringLiteral("items"), index}})
+                                .toJson();
+    if (!staged.open(QIODevice::WriteOnly) || staged.write(json) != json.size())
+        return {
+            false,
+            QStringLiteral("无法暂存历史索引，原文件和索引已保留：%1").arg(staged.errorString())};
+    // 回收站与索引不能跨文件原子提交。保留同目录恢复副本，索引失败时恢复原图。
+    QTemporaryFile backup(
+        QDir(group->group.absolutePath).filePath(QStringLiteral(".history-delete-XXXXXX")));
+    QFile original(item.absolutePath);
+    if (!backup.open() || !original.open(QIODevice::ReadOnly))
+        return {false, QStringLiteral("无法准备删除恢复副本，原图和索引已保留。")};
+    while (!original.atEnd())
+    {
+        const QByteArray block = original.read(1024 * 1024);
+        if (original.error() != QFileDevice::NoError || backup.write(block) != block.size())
+            return {false, QStringLiteral("删除恢复副本写入失败，原图和索引已保留。")};
+    }
+    if (!backup.flush())
+        return {false, QStringLiteral("删除恢复副本提交失败，原图和索引已保留。")};
+    original.close();
+    backup.close();
+    checked = validateItem(item);
+    if (!checked.success)
+        return checked;
+    const auto moved = trash(item.absolutePath);
+    if (!moved.success)
+        error = QStringLiteral("图片移入回收站失败：%1").arg(moved.error);
+    else if (QFileInfo::exists(item.absolutePath) || QFileInfo(item.absolutePath).isSymLink())
+        error = QStringLiteral("回收站返回成功但原文件仍存在，索引已保留。");
+    else if (!staged.commit())
+        error = QStringLiteral("历史索引提交失败，已尝试恢复原图：%1").arg(staged.errorString());
+    else
+        return {true, {}};
+    if (!QFileInfo::exists(item.absolutePath) && !QFileInfo(item.absolutePath).isSymLink())
+    {
+        if (backup.rename(item.absolutePath))
+            backup.setAutoRemove(false);
+        else
+        {
+            backup.setAutoRemove(false);
+            error += QStringLiteral("；原图恢复失败，恢复副本保留于：%1").arg(backup.fileName());
+        }
+    }
+    return {false, error};
+}
 HistoryItemsResult HistoryStore::itemsForGroup(const QString& groupId, HistorySort order,
                                                const QString& selectedId) const
 {

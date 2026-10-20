@@ -1,5 +1,6 @@
 #pragma once
 #include "app/history_manager.h"
+#include "output/image_output.h"
 #include <QGraphicsView>
 #include <QWidget>
 class QComboBox;
@@ -9,6 +10,13 @@ class QSplitter;
 class QToolButton;
 namespace waibusnap
 {
+struct HistoryWindowActions
+{
+    std::function<ImageOutputResult(const QImage&)> copyImage;
+    std::function<ImageOutputResult(const QImage&)> pinImage;
+    HistoryTrash trash;
+    HistoryTrash reveal;
+};
 class HistoryImageItem;
 class HistoryImageView final : public QGraphicsView
 {
@@ -34,7 +42,8 @@ class HistoryWindow final : public QWidget
 {
     Q_OBJECT
   public:
-    explicit HistoryWindow(HistoryManager& manager, AppSettings settings);
+    explicit HistoryWindow(HistoryManager& manager, AppSettings settings,
+                           HistoryWindowActions actions = {});
     void refresh();
 
   protected:
@@ -47,6 +56,12 @@ class HistoryWindow final : public QWidget
     void selectView(const QString& view, bool useDefaultSort);
     void rebuildItems(const QString& selected);
     void showSelection();
+    QString selectedId() const;
+    void updateActions();
+    void toggleStar();
+    void outputImage(bool pin, bool closeAfter = false);
+    void deleteSelection();
+    void showActionResult(const HistoryStatus& result);
     void scheduleThumbnails();
     void loadVisibleThumbnails();
     void updateLayout();
@@ -54,6 +69,7 @@ class HistoryWindow final : public QWidget
     void saveWindowState();
     HistoryManager& manager_;
     AppSettings settings_;
+    HistoryWindowActions actions_;
     HistorySnapshot snapshot_;
     QVector<HistoryItem> items_;
     QString view_ = QStringLiteral("all");
@@ -63,6 +79,11 @@ class HistoryWindow final : public QWidget
     QComboBox* groupCombo_;
     QComboBox* sortCombo_;
     QToolButton* collapse_;
+    QToolButton* star_;
+    QToolButton* pin_;
+    QToolButton* copy_;
+    QToolButton* reveal_;
+    QToolButton* delete_;
     QSplitter* splitter_;
     QSplitter* imageSplitter_;
     HistoryImageView* imageView_;

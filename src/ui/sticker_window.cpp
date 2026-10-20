@@ -34,7 +34,8 @@
 #include <cmath>
 namespace waibusnap
 {
-StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerActions actions)
+StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerActions actions,
+                             qreal initialScale)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool |
                            Qt::WindowDoesNotAcceptFocus),
       image_(std::move(image)), actions_(std::move(actions)), geometryPosition_(position),
@@ -79,6 +80,8 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
                                       : StickerCloseDecision::Discard;
             return StickerCloseConfirmation{decision, doNotRemind->isChecked()};
         };
+    scale_ =
+        std::isfinite(initialScale) && initialScale > 0 && initialScale <= 1 ? initialScale : 1;
     winId();
     if (QScreen* target = QGuiApplication::screenAt(position))
         windowHandle()->setScreen(target);

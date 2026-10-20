@@ -4,6 +4,7 @@
 
 | CTest 名称 | 覆盖 |
 | --- | --- |
+| `history_actions` / `history_actions_high_dpi` | 临时历史根 / INI + fake copy / pin / FileManager；星标往返与计数 / 外部星标 / 失败回滚、原像素 DPR=1 复制、Enter / Shift+Enter 与失败留窗、80% 缩放及 24px 级联、回收站 / 索引失败与恢复、外部禁删 / 路径逃逸 / 符号链接拒绝、丢图与定位错误、窄窗按钮、控制器与入库隔离；第二项为 2 倍 DPR 显式清单 |
 | `history_window` / `history_window_high_dpi` | 临时历史根 / INI；三栏只读过滤 / 计数 / 当前组隔离、排序与方向键 / Esc、可见缩略图加载释放、主图 DPR / 透明棋盘格像素、长图缩放 / 滚动 / 拖动、窄窗 / 分组折叠、几何 / 分隔条 / 视图 / 选中恢复、离屏 / 损坏状态、丢文件 / 索引 / 根目录失效、刷新保持错误与去重、设置失败重试、托盘入口懒创建 / 重用 / 销毁及设置模态 guard；第二项为 2 倍 DPR 显式清单 |
 | `history_types` | 历史模型 / 来源 / 稳定排序 / 占用；分组名去空白、NFC 与大小写重名、控制字符、路径与 Windows 保留名；默认清理策略及 JSON 严格校验 |
 | `history_cleanup` | 时长 / 张数 / 字节 OR、混合规则、精确边界、禁用、星标 / 最新 / 当前回放 / 超大项保护、外部不清理、受保护超限、重复 / 跨组 / 溢出输入拒绝 |
@@ -933,3 +934,27 @@ macOS 27.0.1 / arm64、Qt 6.11.2 Release，独立 `WAIBUSNAP_BUILD_DIR=build/ver
 分组过滤和浏览刷新不调用设置当前组或入库；测试验证 Manager 错误状态不被浏览清空、重复 session 在刷新后仍更新同一条。丢图、根目录失效和损坏索引都有中文提示；加载仅接受扫描产生的稳定 ID。AppSettings 的窗口键与既有历史根 / 当前组 / 清理模板、未知键互不覆盖，写入失败不阻止关闭且可重试。控制器测试覆盖 lazy / show / 重用刷新 / close-delete / 重开 / 清理，以及截图 / 设置 / 退出 guard；设置模态用真实 SettingsDialog + fake Autostart 验证。新测试没有访问真实 Pictures/WaibuSnap、真实剪贴板、真实保存面板或回收站，不新增图像 fixture 或依赖。
 
 人工待验收：macOS LSUIElement 应用从菜单栏激活普通窗口、多 Space / 全屏 / 多屏负坐标与混合 DPI；大量历史和大图切换的同步解码耗时、滚轮 / 触控板缩放与平移手感；Windows 11 真实托盘、中文路径、高 DPI 列表 / 分隔条 / 透明主图。星标操作、复制 / 钉图 / 删除、分组管理、设置页、WebP 与清理执行按后续批次处理。
+
+
+## v006 批次 4：历史窗口动作（2026-10-20）
+
+分支 `feat/v006-history-actions`，基于远程 `main` `923aa8e`，独立构建目录 `build/verify-v006-history-actions`，未更改或启动 `build/macos`。本批只实现星标、复制、钉图、删除、在文件夹中显示及双端 FileManager；分组 CRUD、设置页、全局热键、清理执行与 WebP 扫描均留待后续批次。
+
+新增 `history_actions` / `history_actions_high_dpi` 两项 CTest，标准 / DPR=2 各 **21 项通过，0 失败 / 0 跳过**（含初始化、收尾与三档 DPR 数据行）。控件固定 objectName：`historyStar`、`historyPin`、`historyCopy`、`historyReveal`、`historyDelete`；缩略图使用可勾选的单档星标。覆盖：
+
+- 主图工具栏、缩略图与 S 星标往返，星标视图取消后立即移除与计数刷新，外部图片星标索引创建 / 清除，锁失败保留旧状态 / 选择 / 索引。
+- fake 剪贴板复制原始像素与 alpha、DPR=1，成功 / 失败均不新增记录；Enter 成功关窗，Shift+Enter 留窗，钉图失败保持选择；工具栏钉图同样验证成功 / 失败。
+- 受管项删除到临时 fake 回收目录，成功同步索引 / 视图 / 计数；回收站失败与损坏索引不动原图和索引；fake 在回收后制造索引提交失败（macOS 移动暂存目录，Windows 持有目标索引文件阻止替换），验证恢复原 PNG 与旧索引。恢复副本使用分块复制，避免将文件一次读进内存。
+- 外部图片删除禁用并提示“请在文件管理器中操作”；伪造 managed、路径逃逸、当前索引身份改变被拒绝；文件缺失时 copy / pin / trash / reveal 均报错且不调用替身。macOS 额外创建真实临时符号链接验证拒绝读取 / 删除；Windows junction 与符号链接由规范路径 / `isJunction` 检查拒绝，Windows 实机链接场景仍待人工。
+- fake FileManager 定位成功 / 失败、外部中文空格路径；420px 窄窗五个动作可达、空态禁用、tooltip；标准与高 DPI 显式清单相同。
+- 纯几何在 DPR=1 / 1.5 / 2 验证原像素小图、横图 / 超长图适应屏幕可用区 80%、24px 级联；生产控制器实际创建两张贴图，验证完整原图与 DPR=1、初始比例可低于 25%、窗口尺寸及级联位置；钉图失败不推进序号。历史与贴图复制不回调入库，session 更新仍去重，当前分组与既有入库错误不被动作清空。
+
+所有新测试只使用 `QTemporaryDir`、临时 INI 与 fake copy / pin / trash / reveal；生产钉图装配用例仅创建 offscreen 贴图，贴图复制也走 fake。没有调用真实用户目录、系统剪贴板、回收站、Finder / Explorer 或原生保存面板。双端平台实现通过 CI 编译验证，不能替代系统文件管理器人工验收。
+
+平台核对：Qt **6.11.2** 的 Windows `QFile::moveToTrash` 使用 IFileOperation，PreDeleteItem 会拒绝没有回收标志的操作；本项目没有 QFile::remove 降级。macOS 使用 NSFileManager 回收站与 NSWorkspace；Finder 定位 API 无完成回调，成功只表示请求已提交。索引提交失败恢复原图后，系统回收站可能仍留有同图副本；若恢复本身也失败，明确显示保留的临时恢复文件路径。应用崩溃 / 断电与用户同时更改文件不属于跨文件事务保证。
+
+人工待验收：macOS 真实 Finder 中文 / 空格路径定位与回收站成功 / 失败、恢复后的图片；Windows 11 Explorer 定位、回收站不可用 / 禁用 / 网络卷、junction / 符号链接与中文路径；双端真实 S / Enter / Shift+Enter、缩略图勾选、窄窗高 DPI 与多屏钉图级联 / 超长图初始缩放手感。
+
+本机 macOS / arm64、Qt 6.11.2 Release：标准 `build-project.sh` 通过，正常系统上下文 `test-project.sh` **25/25 CTest**，clang-format **18.1.8** `lint-code.sh`、`git diff --check` 与 ObjC 块捕获门禁通过。主 / 高 DPI 冒烟 **497 / 430**、历史窗口各 **17**、历史入库 **35**，上述 Qt Test 均 0 失败 / 0 跳过。首次沙箱全量 **23/25**，原生在屏无屏幕、真实 OCR 服务受限；完整系统上下文复验 **25/25** 通过，没有修改原生 / OCR 断言。Windows 预计 **23 项 CTest**，最终双端 CI 与 Intel 构建见本批 PR 记录。
+
+首轮 CI 的 macOS 含 Intel 构建通过；Windows 编译通过，动作测试的索引提交故障注入未生效（Windows 拒绝重命名含打开文件的父目录）。已改为 Windows 持有目标索引文件，利用共享规则阻止替换，保持原图恢复 / 旧索引不变断言；生产实现未改。最终双端检查与 Intel 构建以 [PR #43 的当前 head 检查](https://github.com/leeyaonan/waibu_snap/pull/43/checks) 为准。
