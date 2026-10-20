@@ -1009,6 +1009,6 @@ Windows 专属 CTest `windows_hotkey` 替换 `windows_hotkey_pending`。测试�
 
 `history_settings` 与高 DPI 显式清单增加导航回归：无上次选中项从最新起步并应用方向；恢复其他分组中的中间 / 边缘选中项后移动；丢失项回退；真正关闭销毁 / 再打开继续；更旧 / 更新边缘夹停；已开窗口的组内两种排序 / 方向键行为与窗口复用。全局负 step 更旧、正 step 更新，局部方向键仍按列表行序。使用 QTemporaryDir 历史根、临时 INI 与 fake GlobalHotkey，断言不增加历史、不改变当前分组；未访问真实 Pictures / 剪贴板 / 回收站。
 
-回归取证：修复前新增专项 6 通过 / 5 失败 / 0 跳过；修复后含既有导航专项 12 通过 / 0 失败 / 0 跳过。本机 Qt 6.11.2 / arm64 Release 标准 build-project.sh、正常系统服务上下文 test-project.sh **33/33 CTest**、clang-format **18.1.8** lint、差异检查与 ObjC 块捕获门禁通过；主 / 高 DPI 冒烟 **500 / 433**，历史设置 / 导航 **26 / 22**，Carbon **4**，均 0 失败 / 0 跳过。CI 数字在完成后补记；独立目录 `build/verify-v006-windows-hotkeys`，没有改动或启动正在运行的 `build/macos`。
+回归取证：修复前新增专项 6 通过 / 5 失败 / 0 跳过；修复后含既有导航专项 12 通过 / 0 失败 / 0 跳过。本机 Qt 6.11.2 / arm64 Release 标准 build-project.sh、正常系统服务上下文 test-project.sh **33/33 CTest**、clang-format **18.1.8** lint、差异检查与 ObjC 块捕获门禁通过；主 / 高 DPI 冒烟 **500 / 433**，历史设置 / 导航 **26 / 22**，Carbon **4**，均 0 失败 / 0 跳过。最终双端 CI、Windows 专属结果与 head 见 [PR #47](https://github.com/leeyaonan/waibu_snap/pull/47) 的验证记录；独立目录 `build/verify-v006-windows-hotkeys`，没有改动或启动正在运行的 `build/macos`。
 
 人工待验收：Windows 10 / Windows 11 的真实 F1 / F7 / F8 / F9、Ctrl / Alt / Win 字母与数字、Fn 模式、长按无重复、系统 / 其他应用占用、逐项换键失败保留旧键、单项释放与退出后可被其他应用注册；真实键盘到 WM_HOTKEY 再到控制器的端到端行为。双端全局首步与持久选择 / 重启恢复、已开组内两种排序 / 边缘夹停、截图 / 设置 / 退出 guard 的真机手感。Windows 截图采集本身仍沿用既有未实现边界，本批只接通截图动作触发。
