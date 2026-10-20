@@ -2111,6 +2111,9 @@ class StartupSmokeTest final : public QObject
         QVERIFY(first->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
         auto* controls = first->findChild<QWidget*>(QStringLiteral("stickerControls"));
         QVERIFY(!controls->isVisible());
+        auto* scaleButton = first->findChild<QPushButton*>(QStringLiteral("stickerResetButton"));
+        QVERIFY(scaleButton);
+        QCOMPARE(scaleButton->text(), QStringLiteral("100%"));
         QEnterEvent enter({20, 20}, {20, 20}, first->mapToGlobal(QPoint(20, 20)));
         QApplication::sendEvent(first, &enter);
         QVERIFY(controls->isVisible());
@@ -2121,6 +2124,8 @@ class StartupSmokeTest final : public QObject
                           Qt::NoModifier, Qt::NoScrollPhase, false);
         QApplication::sendEvent(first, &wheel);
         QCOMPARE(first->scale(), qreal(1.25));
+        QCOMPARE(scaleButton->text(), QStringLiteral("125%"));
+        QVERIFY(scaleButton->toolTip().contains(QStringLiteral("当前缩放 125%")));
         QCOMPARE(first->size(), stickerWindowSize(image.size(), 1.25, dpr));
         const QPointF expected =
             anchoredStickerPosition(oldPosition, oldSize, first->size(), anchor);
@@ -2134,19 +2139,28 @@ class StartupSmokeTest final : public QObject
         };
         click("stickerResetButton");
         QCOMPARE(first->scale(), qreal(1));
+        QCOMPARE(scaleButton->text(), QStringLiteral("100%"));
         const QPointF center =
             QPointF(first->pos()) + QPointF(first->width() / 2.0, first->height() / 2.0);
         for (int index = 0; index < 20; ++index)
             click("stickerZoomInButton");
         QCOMPARE(first->scale(), qreal(4));
+        QCOMPARE(scaleButton->text(), QStringLiteral("400%"));
         QCOMPARE(first->size(), stickerWindowSize(image.size(), 4, dpr));
         QCOMPARE(QPointF(first->pos()) + QPointF(first->width() / 2.0, first->height() / 2.0),
                  center);
         for (int index = 0; index < 20; ++index)
             click("stickerZoomOutButton");
         QCOMPARE(first->scale(), qreal(0.25));
+        QCOMPARE(scaleButton->text(), QStringLiteral("25%"));
         QCOMPARE(first->size(), stickerWindowSize(image.size(), 0.25, dpr));
         click("stickerResetButton");
+        QCOMPARE(scaleButton->text(), QStringLiteral("100%"));
+        first->setScale(1.75, anchor);
+        QCOMPARE(first->scale(), qreal(1.75));
+        QCOMPARE(scaleButton->text(), QStringLiteral("175%"));
+        click("stickerResetButton");
+        QCOMPARE(scaleButton->text(), QStringLiteral("100%"));
         const QPoint before = first->pos();
         const QPointF press = QPointF(before) + QPointF(80, 80);
         const QPointF release = press + QPointF(70, 40);

@@ -67,7 +67,7 @@
 
 `StickerWindow` 使用 Frameless / StaysOnTop / Tool / DoesNotAcceptFocus 与 ShowWithoutActivating，子控件 NoFocus。Qt Tool 的失活隐藏通过 `WA_MacAlwaysShowToolWindow` 禁用；macOS 在显示前为 Qt 创建的 NSPanel 加 `NSWindowStyleMaskNonactivatingPanel` 并保持可见。Qt 的拒绝 key window 处理与 NSPanel 样式取舍依据 [Qt 6.11.2 Cocoa 窗口实现](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qcocoawindow.mm) 与 [QNSWindow](https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qnswindow.mm)。处理集中在 `platform/macos/sticker_window_behavior.mm`，沿用已有呈现观察器的 NSView 桥接方式；Windows 编辑态允许前台输入并持有原前台窗口，退出编辑时通过同一行为会话恢复。offscreen 不转换原生句柄，真实浏览器 / 编辑器键盘焦点仍须人工核对。
 
-缩放范围 25%–400%，每档 25 个百分点；纯几何无 QWidget 依赖。窗口逻辑尺寸为图像物理尺寸 × 缩放 ÷ 当前屏 DPR，向上取整至整数（最小 1）；100% 不平滑、不重采样原像素，非整除尺寸留不足 1 逻辑像素边缘。拖动跨屏按光标下屏幕切换，保持鼠标下图像位置；亚像素窗口位置避免连续缩放累计漂移。悬停控制条不影响图像窗口尺寸，极小图使用操作菜单与右键入口。
+缩放范围 25%–400%，每档 25 个百分点；纯几何无 QWidget 依赖。窗口逻辑尺寸为图像物理尺寸 × 缩放 ÷ 当前屏 DPR，向上取整至整数（最小 1）；100% 不平滑、不重采样原像素，非整除尺寸留不足 1 逻辑像素边缘。拖动跨屏按光标下屏幕切换，保持鼠标下图像位置；亚像素窗口位置避免连续缩放累计漂移。悬停控制条不影响图像窗口尺寸，控制条中间的百分比按钮实时显示当前缩放，点击恢复 100%；极小图使用操作菜单与右键入口。
 
 `StickerWindow` 的编辑工具条按需创建，两个编辑面均将矩形 / 椭圆、直线 / 箭头、遮盖 / 马赛克合并为三组，一级按钮加画笔 / 文本共五个；八类工具、三色 / 三线宽 / 三字号、20 步历史和折叠菜单共用 `Annotation`、`AnnotationHistory`、`AnnotationTextEdit` 及样式常量。贴图标注坐标为基图物理像素，显示变换统一为缩放 ÷ 当前屏 DPR，基图、已提交标注和草稿使用相同变换；100% 的基图不重采样。输出调用全图 `renderAnnotatedSelection`，无标注时直接返回隐式共享基图，DPR=1。钉图前的标注已烘焙进基图，不进入新的历史。新增 / 撤销 / 重做 / 非空文本提交标记未保存，空点击 / 空拖不改变状态；完成编辑保留历史，复制不改变保存状态。
 

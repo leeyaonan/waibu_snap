@@ -117,6 +117,8 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
         button->setFocusPolicy(Qt::NoFocus);
         button->setToolTip(tips[index]);
         button->setAccessibleName(tips[index]);
+        if (index == 2)
+            scaleButton_ = button;
         auto* action = new QAction(tips[index], this);
         addAction(action);
         menu->addAction(action);
@@ -158,6 +160,7 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
     status_->hide();
     statusTimeout_.setSingleShot(true);
     connect(&statusTimeout_, &QTimer::timeout, status_, &QWidget::hide);
+    updateScaleLabel();
     positionControls();
     controls_->hide();
     connect(windowHandle(), &QWindow::screenChanged, this, &StickerWindow::refreshScreenGeometry);
@@ -227,6 +230,17 @@ void StickerWindow::applyGeometry(QPointF position, QSize size)
     geometryPosition_ = position;
     setGeometry(QRect(position.toPoint(), size));
 }
+void StickerWindow::updateScaleLabel()
+{
+    if (!scaleButton_)
+        return;
+    const int percent = qRound(scale_ * 100);
+    scaleButton_->setText(QStringLiteral("%1%").arg(percent));
+    const QString tip = percent == 100 ? QStringLiteral("当前缩放 100%")
+                                       : QStringLiteral("当前缩放 %1%，点击恢复 100%").arg(percent);
+    scaleButton_->setToolTip(tip);
+    scaleButton_->setAccessibleName(tip);
+}
 void StickerWindow::moveEvent(QMoveEvent* event)
 {
     if (event->pos() != geometryPosition_.toPoint())
@@ -244,6 +258,8 @@ void StickerWindow::setCenteredScale(qreal scale)
     const QPointF center = (geometryPosition_ + QPointF(width() / 2.0, height() / 2.0)).toPoint();
     scale_ = next;
     applyGeometry(center - QPointF(nextSize.width() / 2.0, nextSize.height() / 2.0), nextSize);
+    updateScaleLabel();
+    positionControls();
     update();
 }
 void StickerWindow::setScale(qreal scale, QPointF globalAnchor)
@@ -259,6 +275,8 @@ void StickerWindow::setScale(qreal scale, QPointF globalAnchor)
     scale_ = next;
     applyGeometry(position, nextSize);
     positionTextEditor();
+    updateScaleLabel();
+    positionControls();
     update();
 }
 void StickerWindow::refreshScreenGeometry()
@@ -481,6 +499,8 @@ void StickerWindow::wheelEvent(QWheelEvent* event)
         scale_ = next;
         applyGeometry(position, nextSize);
         positionTextEditor();
+        updateScaleLabel();
+        positionControls();
         update();
     }
     event->accept();
