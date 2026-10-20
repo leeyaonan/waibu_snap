@@ -311,3 +311,33 @@ set_target_properties(history_missing_webp_test PROPERTIES WIN32_EXECUTABLE FALS
 add_test(NAME history_missing_webp COMMAND history_missing_webp_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/history_missing_webp-output.txt,txt")
 set_tests_properties(history_missing_webp PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
+qt_add_executable(history_settings_test integration/history_settings_test.cpp)
+target_link_libraries(history_settings_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(history_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_settings COMMAND history_settings_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_settings-output.txt,txt")
+set_tests_properties(history_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+add_test(NAME history_settings_high_dpi COMMAND history_settings_test
+    pageControlsAndUsage directoryChooseClearCancelAndEscape rootSwitchAndNoMigration
+    rootFailureKeepsOldAndRetry templateOnlyAffectsNewGroupsAndAtLeastOne bytePrecisionAndProtection
+    dialogDuplicateInvalidAndSingleFailure trayMenusEmptyAndGuards
+    navigationAllGroupsCurrentSelectionAndReuse controllerSettingsRootSwitchAndModalGuard
+    -o "${CMAKE_CURRENT_BINARY_DIR}/history_settings-high-dpi-output.txt,txt")
+set_tests_properties(history_settings_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+if(APPLE)
+    qt_add_executable(macos_hotkey_dispatch_test unit/macos_hotkey_dispatch_test.mm)
+    target_link_libraries(macos_hotkey_dispatch_test PRIVATE waibusnap_platform Qt6::Test
+        waibusnap_options "${Carbon_FRAMEWORK}")
+    target_compile_options(macos_hotkey_dispatch_test PRIVATE -fobjc-arc)
+    add_test(NAME macos_hotkey_dispatch COMMAND macos_hotkey_dispatch_test -o
+        "${CMAKE_CURRENT_BINARY_DIR}/macos_hotkey_dispatch-output.txt,txt")
+elseif(WIN32)
+    qt_add_executable(windows_hotkey_pending_test unit/windows_hotkey_pending_test.cpp)
+    target_link_libraries(windows_hotkey_pending_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+    set_target_properties(windows_hotkey_pending_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME windows_hotkey_pending COMMAND windows_hotkey_pending_test -o
+        "${CMAKE_CURRENT_BINARY_DIR}/windows_hotkey_pending-output.txt,txt")
+endif()

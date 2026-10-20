@@ -45,6 +45,8 @@ class HistoryWindow final : public QWidget
     explicit HistoryWindow(HistoryManager& manager, AppSettings settings,
                            HistoryWindowActions actions = {});
     void refresh();
+    void navigate(int step, bool allHistory = false);
+    QString selectedItemId() const { return selectedId(); }
     bool dismissGroupDialogs();
     void setGroupActionsEnabled(bool enabled);
   signals:

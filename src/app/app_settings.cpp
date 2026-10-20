@@ -17,7 +17,21 @@ namespace waibusnap
 {
 namespace
 {
-const QString sequenceKey = QStringLiteral("hotkey/sequence");
+QString sequenceKey(HotkeyAction action)
+{
+    switch (action)
+    {
+    case HotkeyAction::Screenshot:
+        return QStringLiteral("hotkey/sequence");
+    case HotkeyAction::HistoryPrevious:
+        return QStringLiteral("hotkey/historyPrevious");
+    case HotkeyAction::HistoryNext:
+        return QStringLiteral("hotkey/historyNext");
+    case HotkeyAction::HistoryOpen:
+        return QStringLiteral("hotkey/historyOpen");
+    }
+    return {};
+}
 const QString stickerCloseReminderKey = QStringLiteral("sticker/confirmUnsavedClose");
 }
 AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
@@ -206,20 +220,25 @@ QString AppSettings::saveHistoryWindowState(const HistoryWindowState& state) con
     historyWindowWriteFailed_ = false;
     return {};
 }
-LoadedHotkey AppSettings::loadHotkey() const
+LoadedHotkey AppSettings::loadHotkey(HotkeyAction action) const
 {
     QSettings settings(filePath_, QSettings::IniFormat);
-    const QString text = settings.value(sequenceKey, QStringLiteral("F1")).toString().trimmed();
+    const QString text =
+        settings
+            .value(sequenceKey(action), defaultHotkey(action).toString(QKeySequence::PortableText))
+            .toString()
+            .trimmed();
     const auto sequence = QKeySequence::fromString(text, QKeySequence::PortableText);
     const QString error = hotkeyValidationError(sequence);
     // 完整往返避免解析器容忍多余文本或截断长序列，把损坏配置误判为合法。
     if (settings.status() != QSettings::NoError || !error.isEmpty() ||
         sequence.toString(QKeySequence::PortableText).compare(text, Qt::CaseInsensitive) != 0)
         return {
-            defaultScreenshotHotkey(),
+            defaultHotkey(action),
             QStringLiteral(
-                "存储的截图键无效或设置文件无法读取，已回退默认 F1；启用状态以实际注册结果为准。%1")
-                .arg(error)};
+                "存储的%1键无效或设置文件无法读取，已回退默认 %2；启用状态以实际注册结果为准。%3")
+                .arg(hotkeyActionName(action),
+                     defaultHotkey(action).toString(QKeySequence::PortableText), error)};
     return {sequence, {}};
 }
 SavePreferences AppSettings::loadSavePreferences() const
@@ -445,7 +464,7 @@ QString AppSettings::saveSavePreferences(const SavePreferences& preferences) con
         return QStringLiteral("保存偏好写入失败，请重试保存。");
     return {};
 }
-QString AppSettings::saveHotkey(const QKeySequence& sequence) const
+QString AppSettings::saveHotkey(const QKeySequence& sequence, HotkeyAction action) const
 {
     const QString error = hotkeyValidationError(sequence);
     if (!error.isEmpty())
@@ -453,21 +472,21 @@ QString AppSettings::saveHotkey(const QKeySequence& sequence) const
     if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()))
         return QStringLiteral("无法创建设置目录。新键已生效，但重启后可能无法保留，请重试保存。");
     QSettings settings(filePath_, QSettings::IniFormat);
-    settings.setValue(sequenceKey, sequence.toString(QKeySequence::PortableText));
+    settings.setValue(sequenceKey(action), sequence.toString(QKeySequence::PortableText));
     settings.sync();
     if (settings.status() != QSettings::NoError)
         return QStringLiteral("设置文件写入失败。新键已生效，但重启后可能无法保留，请重试保存。");
     return {};
 }
 HotkeySettings::HotkeySettings(AppSettings settings, GlobalHotkey& hotkey,
-                               std::function<void()> handler)
-    : settings_(std::move(settings)), hotkey_(hotkey), handler_(std::move(handler)),
-      preferredSequence_(defaultScreenshotHotkey())
+                               std::function<void()> handler, HotkeyAction action)
+    : action_(action), settings_(std::move(settings)), hotkey_(hotkey),
+      handler_(std::move(handler)), preferredSequence_(defaultHotkey(action))
 {
 }
 HotkeyRegistration HotkeySettings::registerSequence(const QKeySequence& sequence)
 {
-    const auto registration = hotkey_.registerHotkey(sequence, handler_);
+    const auto registration = hotkey_.registerHotkey(action_, sequence, handler_);
     if (registration.enabled)
         enabledSequence_ = sequence;
     explanation_ = registration.explanation;
@@ -475,7 +494,7 @@ HotkeyRegistration HotkeySettings::registerSequence(const QKeySequence& sequence
 }
 HotkeyStartup HotkeySettings::initialize()
 {
-    const auto loaded = settings_.loadHotkey();
+    const auto loaded = settings_.loadHotkey(action_);
     preferredSequence_ = loaded.sequence;
     QStringList report;
     QStringList warnings;
@@ -486,11 +505,13 @@ HotkeyStartup HotkeySettings::initialize()
     }
     auto registration = registerSequence(preferredSequence_);
     report.append(registration.explanation);
-    if (!registration.enabled && preferredSequence_ != defaultScreenshotHotkey())
+    if (!registration.enabled && preferredSequence_ != defaultHotkey(action_))
     {
         warnings.append(registration.explanation);
-        report.append(QStringLiteral("存储截图键注册失败，尝试默认 F1。"));
-        preferredSequence_ = defaultScreenshotHotkey();
+        report.append(QStringLiteral("存储%1键注册失败，尝试默认 %2。")
+                          .arg(hotkeyActionName(action_),
+                               defaultHotkey(action_).toString(QKeySequence::PortableText)));
+        preferredSequence_ = defaultHotkey(action_);
         registration = registerSequence(preferredSequence_);
         report.append(registration.explanation);
     }
@@ -517,6 +538,6 @@ QString HotkeySettings::changeHotkey(const QKeySequence& sequence)
     if (!registration.enabled)
         return registration.explanation;
     preferredSequence_ = sequence;
-    return settings_.saveHotkey(sequence);
+    return settings_.saveHotkey(sequence, action_);
 }
 }

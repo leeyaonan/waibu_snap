@@ -16,17 +16,21 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 namespace waibusnap
 {
 SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, const QString& notice,
                                QWidget* parent, SaveSettingsActions saveSettings,
-                               AutostartActions autostartActions)
+                               AutostartActions autostartActions,
+                               HistorySettingsActions historySettings)
     : QDialog(parent), saveHotkey_(std::move(save)), originalSequence_(current),
-      saveSettings_(std::move(saveSettings)), autostartActions_(std::move(autostartActions))
+      saveSettings_(std::move(saveSettings)), autostartActions_(std::move(autostartActions)),
+      historySettings_(std::move(historySettings))
 {
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
@@ -55,6 +59,7 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     auto* savePage = addPage(QStringLiteral("保存"), QStringLiteral("settingsSavePage"));
     auto* capturePage = addPage(QStringLiteral("截图"), QStringLiteral("settingsCapturePage"));
     auto* stickerPage = addPage(QStringLiteral("贴图"), QStringLiteral("settingsStickerPage"));
+    buildHistoryPage(addPage(QStringLiteral("历史"), QStringLiteral("settingsHistoryPage")));
     auto* stickerLayout = new QVBoxLayout(stickerPage);
     stickerCloseReminderCheck_ = new QCheckBox(QStringLiteral("关闭未保存贴图前提醒"), stickerPage);
     stickerCloseReminderCheck_->setObjectName(QStringLiteral("stickerCloseReminderCheck"));
@@ -476,16 +481,172 @@ bool SettingsDialog::eventFilter(QObject* watched, QEvent* event)
     }
     return QDialog::eventFilter(watched, event);
 }
+void SettingsDialog::buildHistoryPage(QWidget* page)
+{
+    auto* layout = new QVBoxLayout(page);
+    layout->addWidget(new QLabel(QStringLiteral("历史根目录（只切换，不迁移；旧目录保留）"), page));
+    auto* row = new QHBoxLayout;
+    historyDirectory_ = new QLineEdit(historySettings_.preferences.rootDirectory, page);
+    historyDirectory_->setObjectName(QStringLiteral("historyRootDirectory"));
+    historyDirectory_->setReadOnly(true);
+    historyDirectory_->setPlaceholderText(QStringLiteral("默认 Pictures/WaibuSnap"));
+    historyDirectory_->setToolTip(historyDirectory_->text());
+    row->addWidget(historyDirectory_, 1);
+    auto* choose = new QPushButton(QStringLiteral("选择…"), page);
+    choose->setObjectName(QStringLiteral("historyChooseDirectory"));
+    auto* clear = new QPushButton(QStringLiteral("清除"), page);
+    clear->setObjectName(QStringLiteral("historyClearDirectory"));
+    row->addWidget(choose);
+    row->addWidget(clear);
+    layout->addLayout(row);
+    if (!historySettings_.chooseDirectory)
+        historySettings_.chooseDirectory = [](QWidget* parent, const QString& current) {
+            return QFileDialog::getExistingDirectory(parent, QStringLiteral("选择历史根目录"),
+                                                     current);
+        };
+    connect(choose, &QPushButton::clicked, this,
+            [this]
+            {
+                const auto path = historySettings_.chooseDirectory(this, historyDirectory_->text());
+                if (!path.isEmpty())
+                {
+                    historyDirectory_->setText(QDir(path).absolutePath());
+                    historyDirectory_->setToolTip(historyDirectory_->text());
+                }
+            });
+    connect(clear, &QPushButton::clicked, this,
+            [this]
+            {
+                historyDirectory_->clear();
+                historyDirectory_->setToolTip({});
+            });
+    auto* policy = new QGroupBox(QStringLiteral("新建分组的默认清理策略"), page);
+    auto* rules = new QVBoxLayout(policy);
+    const auto original = historySettings_.preferences.defaultCleanup;
+    const std::array<QString, 3> ids = {QStringLiteral("historyAgeEnabled"),
+                                        QStringLiteral("historyCountEnabled"),
+                                        QStringLiteral("historyBytesEnabled")};
+    const std::array<QString, 3> labels = {QStringLiteral("保留时长"), QStringLiteral("保留张数"),
+                                           QStringLiteral("存储大小")};
+    const std::array<bool, 3> checked = {original.ageEnabled, original.countEnabled,
+                                         original.bytesEnabled};
+    historyDays_ = new QSpinBox(policy);
+    historyDays_->setObjectName(QStringLiteral("historyMaxAgeDays"));
+    historyDays_->setRange(1, std::numeric_limits<int>::max());
+    historyDays_->setSuffix(QStringLiteral(" 天"));
+    historyDays_->setValue(original.maxAgeDays);
+    historyCount_ = new QSpinBox(policy);
+    historyCount_->setObjectName(QStringLiteral("historyMaxCount"));
+    historyCount_->setRange(1, std::numeric_limits<int>::max());
+    historyCount_->setSuffix(QStringLiteral(" 张"));
+    historyCount_->setValue(original.maxCount);
+    historyMiB_ = new QDoubleSpinBox(policy);
+    historyMiB_->setObjectName(QStringLiteral("historyMaxMiB"));
+    historyMiB_->setDecimals(6);
+    historyMiB_->setRange(0.000001, 8589934591.999999);
+    historyMiB_->setSuffix(QStringLiteral(" MiB"));
+    historyMiB_->setValue(original.maxBytes / 1048576.0);
+    originalHistoryMiB_ = historyMiB_->value();
+    const std::array<QWidget*, 3> inputs = {historyDays_, historyCount_, historyMiB_};
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        auto* rule = new QHBoxLayout;
+        auto* check = new QCheckBox(labels[i], policy);
+        check->setObjectName(ids[i]);
+        check->setChecked(checked[i]);
+        inputs[i]->setEnabled(checked[i]);
+        historyRules_[i] = check;
+        rule->addWidget(check);
+        rule->addWidget(inputs[i], 1);
+        rules->addLayout(rule);
+        connect(check, &QCheckBox::toggled, inputs[i], &QWidget::setEnabled);
+    }
+    auto* help = new QLabel(
+        QStringLiteral("至少启用一项，任一超限即可触发；只影响以后新建的分组。自动清理尚未"
+                       "启用；届时只清理受管副本，外部图片不参与。"),
+        policy);
+    help->setWordWrap(true);
+    rules->addWidget(help);
+    layout->addWidget(policy);
+    const std::array<QString, 3> names = {QStringLiteral("historyPreviousHotkey"),
+                                          QStringLiteral("historyNextHotkey"),
+                                          QStringLiteral("historyOpenHotkey")};
+    for (size_t i = 0; i < historyEditors_.size(); ++i)
+    {
+        auto* line = new QHBoxLayout;
+        auto* label = new QLabel(hotkeyActionName(hotkeyActions[i + 1]), page);
+        auto* editor = new QKeySequenceEdit(historySettings_.hotkeys[i], page);
+        editor->setObjectName(names[i]);
+        editor->setMaximumSequenceLength(1);
+        editor->setClearButtonEnabled(true);
+        label->setBuddy(editor);
+        line->addWidget(label);
+        line->addWidget(editor, 1);
+        layout->addLayout(line);
+        historyEditors_[i] = editor;
+        editor->installEventFilter(this);
+        for (auto* child : editor->findChildren<QObject*>())
+            child->installEventFilter(this);
+    }
+    auto* usage = new QLabel(page);
+    usage->setObjectName(QStringLiteral("historyTotalUsage"));
+    usage->setTextFormat(Qt::PlainText);
+    usage->setWordWrap(true);
+    const auto u = historySettings_.usage;
+    usage->setText(QStringLiteral("分组库总占用：%1 MiB\n受管：%2 张 / %3 MiB；外部：%4 张 / %5 "
+                                  "MiB\n受保护：%6 张 / %7 MiB")
+                       .arg((u.managedBytes + u.externalBytes) / 1048576.0, 0, 'f', 2)
+                       .arg(u.managedCount)
+                       .arg(u.managedBytes / 1048576.0, 0, 'f', 2)
+                       .arg(u.externalCount)
+                       .arg(u.externalBytes / 1048576.0, 0, 'f', 2)
+                       .arg(u.protectedCount)
+                       .arg(u.protectedBytes / 1048576.0, 0, 'f', 2) +
+                   (historySettings_.usageNotice.isEmpty()
+                        ? QString()
+                        : QStringLiteral("\n") + historySettings_.usageNotice));
+    layout->addWidget(usage);
+    layout->addStretch();
+}
+HistoryPreferences SettingsDialog::collectHistoryPreferences() const
+{
+    auto result = historySettings_.preferences;
+    result.rootDirectory = historyDirectory_->text();
+    auto& policy = result.defaultCleanup;
+    policy.enabled = true;
+    policy.ageEnabled = historyRules_[0]->isChecked();
+    policy.maxAgeDays = historyDays_->value();
+    policy.countEnabled = historyRules_[1]->isChecked();
+    policy.maxCount = historyCount_->value();
+    policy.bytesEnabled = historyRules_[2]->isChecked();
+    if (historyMiB_->value() != originalHistoryMiB_)
+        policy.maxBytes =
+            std::min(qint64(std::llround(historyMiB_->value() * 1048576.0)), 9007199254740991LL);
+    return result;
+}
 void SettingsDialog::save()
 {
     const auto sequence = editor_->keySequence();
-    QString error = hotkeyValidationError(sequence);
+    const std::array<QKeySequence, 4> sequences = {sequence, historyEditors_[0]->keySequence(),
+                                                   historyEditors_[1]->keySequence(),
+                                                   historyEditors_[2]->keySequence()};
+    QString error = hotkeyConflictError(sequences);
+    const auto historyPreferences = collectHistoryPreferences();
+    if (error.isEmpty())
+        error = cleanupPolicyError(historyPreferences.defaultCleanup);
     if (error.isEmpty() && sequence != originalSequence_)
     {
         error = saveHotkey_(sequence);
         if (error.isEmpty())
             originalSequence_ = sequence;
     }
+    for (size_t i = 0; error.isEmpty() && i < historyEditors_.size(); ++i)
+        if (sequences[i + 1] != historySettings_.hotkeys[i] && historySettings_.saveHotkey)
+        {
+            error = historySettings_.saveHotkey(hotkeyActions[i + 1], sequences[i + 1]);
+            if (error.isEmpty())
+                historySettings_.hotkeys[i] = sequences[i + 1];
+        }
     if (error.isEmpty() && saveSettings_.savePreferences)
         error = saveSettings_.savePreferences({directory_->text(), format_->currentIndex() == 1
                                                                        ? ImageFormat::Jpeg
@@ -498,6 +659,8 @@ void SettingsDialog::save()
         error = saveSettings_.saveShapeTemplates(shapeTemplates_);
     if (error.isEmpty() && saveSettings_.saveStickerCloseReminder)
         error = saveSettings_.saveStickerCloseReminder(stickerCloseReminderCheck_->isChecked());
+    if (error.isEmpty() && historySettings_.savePreferences)
+        error = historySettings_.savePreferences(historyPreferences);
     if (!error.isEmpty())
     {
         status_->setText(error);

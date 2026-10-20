@@ -2,6 +2,7 @@
 #include "interfaces/global_hotkey.h"
 #include "interfaces/region_capture.h"
 #include "interfaces/window_enumerator.h"
+#include "platform/macos/hotkey_dispatch.h"
 #include "session/monotonic_clock.h"
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
@@ -12,6 +13,7 @@
 #include <QScreen>
 #include <QWindow>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 namespace waibusnap
@@ -133,41 +135,46 @@ class MacWindowEnumerator final : public WindowEnumerator
 class MacHotkey final : public GlobalHotkey
 {
   public:
-    ~MacHotkey() override { unregister(); }
-    void unregister() override
+    ~MacHotkey() override { GlobalHotkey::unregister(); }
+    void unregister(HotkeyAction action) override
     {
-        if (hotkey_)
-            UnregisterEventHotKey(hotkey_);
-        hotkey_ = nullptr;
-        if (eventHandler_)
+        const auto index = size_t(action);
+        auto& binding = bindings_[index];
+        if (binding.ref)
+            UnregisterEventHotKey(binding.ref);
+        binding = {};
+        callbacks_[index] = {};
+        if (eventHandler_ && std::none_of(bindings_.begin(), bindings_.end(),
+                                          [](const auto& item) { return item.ref != nullptr; }))
+        {
             RemoveEventHandler(eventHandler_);
-        eventHandler_ = nullptr;
-        handler_ = {};
-        sequence_ = {};
+            eventHandler_ = nullptr;
+        }
     }
-    HotkeyRegistration registerHotkey(const QKeySequence& sequence,
+    HotkeyRegistration registerHotkey(HotkeyAction action, const QKeySequence& sequence,
                                       std::function<void()> handler) override
     {
+        const auto index = size_t(action);
+        auto& binding = bindings_[index];
         const QString name = sequence.toString(QKeySequence::NativeText);
-        const QString bindingState = hotkey_
-                                         ? QStringLiteral("原绑定保留。")
-                                         : QStringLiteral("当前未启用截图快捷键，可使用托盘入口。");
+        const QString bindingState = binding.ref ? QStringLiteral("原绑定保留。")
+                                                 : QStringLiteral("此动作未启用，可使用托盘入口。");
         UInt32 code = 0;
         UInt32 modifiers = 0;
         if (!keyMapping(sequence, code, modifiers))
-            return {false,
-                    QStringLiteral("无法映射截图键 %1，请使用 F1–F12 或带修饰键的字母 / 数字；%2")
-                        .arg(name, bindingState)};
-        // 系统截图组合不能靠注册成功证明可用，不尝试抢占。
+            return {false, QStringLiteral("无法映射快捷键 %1；%2").arg(name, bindingState)};
         if (modifiers == (cmdKey | shiftKey) &&
             (code == kVK_ANSI_3 || code == kVK_ANSI_4 || code == kVK_ANSI_5))
             return {false,
-                    QStringLiteral("截图键 %1 可能被系统截图占用，无法确认可用；请换一个组合，%2")
-                        .arg(name, bindingState)};
-        const QString enabled = QStringLiteral("截图键 %1 已启用（Fn 模式由系统决定）。").arg(name);
-        if (hotkey_ && sequence == sequence_)
+                    QStringLiteral("快捷键 %1 可能被系统截图占用；%2").arg(name, bindingState)};
+        for (size_t i = 0; i < bindings_.size(); ++i)
+            if (i != index && bindings_[i].ref && bindings_[i].sequence == sequence)
+                return {false,
+                        QStringLiteral("快捷键 %1 与其他动作重复；%2").arg(name, bindingState)};
+        const QString enabled = QStringLiteral("快捷键 %1 已启用（Fn 模式由系统决定）。").arg(name);
+        if (binding.ref && sequence == binding.sequence)
         {
-            handler_ = std::move(handler);
+            callbacks_[index].handler = std::move(handler);
             return {true, enabled};
         }
         OSStatus status = noErr;
@@ -178,30 +185,28 @@ class MacHotkey final : public GlobalHotkey
                                                     &eventHandler_);
         }
         EventHotKeyRef replacement = nullptr;
-        const UInt32 replacementId = currentId_ + 1;
+        // 每次替换生成新 id，排队中的旧事件不能分发到新绑定。
+        const UInt32 replacementId = ++nextId_;
         if (status == noErr)
             status = RegisterEventHotKey(code, modifiers, {signature, replacementId},
                                          GetApplicationEventTarget(), kEventHotKeyExclusive,
                                          &replacement);
         if (status != noErr)
         {
-            if (!hotkey_ && eventHandler_)
+            if (eventHandler_ && std::none_of(bindings_.begin(), bindings_.end(),
+                                              [](const auto& item) { return item.ref != nullptr; }))
             {
                 RemoveEventHandler(eventHandler_);
                 eventHandler_ = nullptr;
             }
-            return {false, QStringLiteral("截图键 %1 无法启用（系统错误 "
-                                          "%2），可能被系统或其他应用占用；%3")
+            return {false, QStringLiteral("快捷键 %1 无法启用（系统错误 %2），可能被占用；%3")
                                .arg(name)
                                .arg(status)
-                               .arg(hotkey_ ? QStringLiteral("原绑定保留，可使用托盘截图。")
-                                            : bindingState)};
+                               .arg(bindingState)};
         }
-        const EventHotKeyRef previous = hotkey_;
-        hotkey_ = replacement;
-        currentId_ = replacementId;
-        sequence_ = sequence;
-        handler_ = std::move(handler);
+        const auto previous = binding.ref;
+        binding = {replacement, sequence};
+        callbacks_[index] = {replacementId, std::move(handler)};
         if (previous)
             UnregisterEventHotKey(previous);
         return {true, enabled};
@@ -252,23 +257,17 @@ class MacHotkey final : public GlobalHotkey
     }
     static OSStatus onEvent(EventHandlerCallRef, EventRef event, void* data)
     {
-        EventHotKeyID id = {};
-        const OSStatus status = GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID,
-                                                  nullptr, sizeof(id), nullptr, &id);
-        auto* hotkey = static_cast<MacHotkey*>(data);
-        if (status != noErr || id.signature != signature || id.id != hotkey->currentId_ ||
-            !hotkey->hotkey_ || !hotkey->handler_)
-            return eventNotHandledErr;
-        // 直接进入共享触发入口，避免队列延迟被排除在 t0 之后。
-        const auto handler = hotkey->handler_;
-        handler();
-        return noErr;
+        return dispatchMacHotkeyEvent(event, static_cast<MacHotkey*>(data)->callbacks_);
     }
-    std::function<void()> handler_;
-    EventHotKeyRef hotkey_ = nullptr;
+    struct Binding
+    {
+        EventHotKeyRef ref = nullptr;
+        QKeySequence sequence;
+    };
+    std::array<Binding, 4> bindings_;
+    std::array<MacHotkeyCallback, 4> callbacks_;
     EventHandlerRef eventHandler_ = nullptr;
-    QKeySequence sequence_;
-    UInt32 currentId_ = 0;
+    UInt32 nextId_ = 0;
     static constexpr UInt32 signature = 0x5742534e;
 };
 void deliver(std::function<void(CaptureResult)> completion, CaptureResult result)

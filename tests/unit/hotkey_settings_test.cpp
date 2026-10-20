@@ -15,7 +15,8 @@ class FakeHotkey final : public waibusnap::GlobalHotkey
     QKeySequence enabled;
     std::function<void()> handler;
     std::function<void()> beforeRegistration;
-    waibusnap::HotkeyRegistration registerHotkey(const QKeySequence& sequence,
+    waibusnap::HotkeyRegistration registerHotkey(waibusnap::HotkeyAction,
+                                                 const QKeySequence& sequence,
                                                  std::function<void()> callback) override
     {
         attempts.append(sequence);
@@ -30,7 +31,7 @@ class FakeHotkey final : public waibusnap::GlobalHotkey
             true,
             QStringLiteral("截图键 %1 已启用").arg(sequence.toString(QKeySequence::NativeText))};
     }
-    void unregister() override
+    void unregister(waibusnap::HotkeyAction) override
     {
         enabled = {};
         handler = {};

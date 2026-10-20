@@ -1,4 +1,5 @@
 #include "app/application_controller.h"
+#include "app/hotkey_rules.h"
 #include "core/sticker_geometry.h"
 #include "core/window_snapping.h"
 #include "interfaces/overlay_window_behavior.h"
@@ -22,9 +23,11 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                              ClipboardActions clipboardActions,
                                              AutostartActions autostartActions,
                                              HistoryWindowActions historyActions,
-                                             std::shared_ptr<FileManager> fileManager)
-    : application_(application), options_(std::move(options)), hotkey_(createGlobalHotkey()),
-      settings_(options_.settingsFile), history_(settings_, options_.historyRoot),
+                                             std::shared_ptr<FileManager> fileManager,
+                                             std::unique_ptr<GlobalHotkey> hotkey)
+    : application_(application), options_(std::move(options)),
+      hotkey_(hotkey ? std::move(hotkey) : createGlobalHotkey()), settings_(options_.settingsFile),
+      history_(settings_, options_.historyRoot),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
       displays_(createDisplayTopology()), capture_(createCaptureProvider()),
       windows_(createWindowEnumerator()),
@@ -43,6 +46,11 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
       autostartActions_(std::move(autostartActions)), historyActions_(std::move(historyActions)),
       fileManager_(fileManager ? std::move(fileManager) : createFileManager())
 {
+    const std::array<std::function<void()>, 3> handlers = {
+        [this] { navigateHistory(-1); }, [this] { navigateHistory(1); }, [this] { openHistory(); }};
+    for (size_t i = 0; i < historyHotkeys_.size(); ++i)
+        historyHotkeys_[i] = std::make_unique<HotkeySettings>(settings_, *hotkey_, handlers[i],
+                                                              hotkeyActions[i + 1]);
     history_.initialize();
     if (!historyActions_.copyImage)
         historyActions_.copyImage = copyImageToClipboard;
@@ -106,8 +114,17 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     settingsAction_ =
         menu_.addAction(QStringLiteral("设置…"), this, &ApplicationController::openSettings);
     settingsAction_->setObjectName(QStringLiteral("settingsAction"));
-    openHistoryAction_ =
-        menu_.addAction(QStringLiteral("打开历史…"), this, &ApplicationController::openHistory);
+    historyMenu_ = menu_.addMenu(QStringLiteral("历史"));
+    historyMenu_->setObjectName(QStringLiteral("historyMenu"));
+    historyMenu_->menuAction()->setObjectName(QStringLiteral("historyMenuAction"));
+    historyPreviousAction_ =
+        historyMenu_->addAction(QStringLiteral("上一张"), this, [this] { navigateHistory(-1); });
+    historyPreviousAction_->setObjectName(QStringLiteral("historyPreviousAction"));
+    historyNextAction_ =
+        historyMenu_->addAction(QStringLiteral("下一张"), this, [this] { navigateHistory(1); });
+    historyNextAction_->setObjectName(QStringLiteral("historyNextAction"));
+    openHistoryAction_ = historyMenu_->addAction(QStringLiteral("打开历史…"), this,
+                                                 &ApplicationController::openHistory);
     openHistoryAction_->setObjectName(QStringLiteral("openHistoryAction"));
     currentGroupMenu_ = menu_.addMenu(QStringLiteral("当前分组"));
     currentGroupMenu_->setObjectName(QStringLiteral("currentGroupMenu"));
@@ -133,7 +150,13 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     restoreAllStickersAction_->setObjectName(QStringLiteral("restoreAllStickersAction"));
     menu_.addAction(QStringLiteral("退出"), this, &ApplicationController::quit)
         ->setObjectName(QStringLiteral("quitAction"));
-    connect(&menu_, &QMenu::aboutToShow, this, &ApplicationController::refreshStickerActions);
+    connect(&menu_, &QMenu::aboutToShow, this,
+            [this]
+            {
+                if (!active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_)
+                    history_.refresh();
+                refreshStickerActions();
+            });
     refreshStickerActions();
     tray_.setIcon(createTrayIcon());
     tray_.setContextMenu(&menu_);
@@ -158,7 +181,13 @@ ApplicationController::~ApplicationController() { cleanup(); }
 void ApplicationController::refreshStickerActions()
 {
     const bool historyEnabled = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
+    historyMenu_->setEnabled(historyEnabled);
     openHistoryAction_->setEnabled(historyEnabled);
+    bool hasItems = false;
+    for (const auto& group : history_.snapshot().groups)
+        hasItems |= !group.items.isEmpty();
+    historyPreviousAction_->setEnabled(historyEnabled && hasItems);
+    historyNextAction_->setEnabled(historyEnabled && hasItems);
     currentGroupMenu_->setEnabled(historyEnabled && history_.ready());
     if (historyWindow_)
         historyWindow_->setGroupActionsEnabled(historyEnabled);
@@ -258,6 +287,8 @@ void ApplicationController::start()
     }
     const auto startup = hotkeySettings_.initialize();
     qInfo().noquote() << startup.report;
+    for (auto& historyHotkey : historyHotkeys_)
+        qInfo().noquote() << historyHotkey->initialize().report;
     tray_.setToolTip(hotkeySettings_.tooltip());
     tray_.show();
     if (!startup.warning.isEmpty() && !options_.testMode)
@@ -271,10 +302,19 @@ void ApplicationController::start()
                            [this] { trigger(QStringLiteral("injected")); });
     }
 }
-QString ApplicationController::changeHotkey(const QKeySequence& sequence)
+HotkeySettings& ApplicationController::hotkeySettings(HotkeyAction action)
 {
-    const QString error = hotkeySettings_.changeHotkey(sequence);
-    qInfo().noquote() << (error.isEmpty() ? hotkeySettings_.explanation() : error);
+    return action == HotkeyAction::Screenshot ? hotkeySettings_
+                                              : *historyHotkeys_[size_t(action) - 1];
+}
+QString ApplicationController::changeHotkey(const QKeySequence& sequence, HotkeyAction action)
+{
+    for (const auto other : hotkeyActions)
+        if (other != action && hotkeySettings(other).currentSequence() == sequence)
+            return QStringLiteral("%1与%2快捷键重复，原绑定保留。")
+                .arg(hotkeyActionName(action), hotkeyActionName(other));
+    const QString error = hotkeySettings(action).changeHotkey(sequence);
+    qInfo().noquote() << (error.isEmpty() ? hotkeySettings(action).explanation() : error);
     tray_.setToolTip(hotkeySettings_.tooltip());
     return error;
 }
@@ -286,6 +326,34 @@ void ApplicationController::openSettings()
     refreshStickerActions();
     QString shapeNotice;
     const auto templates = settings_.loadShapeTemplates(&shapeNotice);
+    HistorySettingsActions historySettings;
+    historySettings.preferences = settings_.loadHistoryPreferences();
+    historySettings.preferences.rootDirectory = history_.rootDirectory();
+    for (size_t i = 0; i < historyHotkeys_.size(); ++i)
+        historySettings.hotkeys[i] = historyHotkeys_[i]->currentSequence();
+    historySettings.usage =
+        history_.totalUsage(historyWindow_ ? historyWindow_->selectedItemId() : QString());
+    historySettings.usageNotice = history_.snapshot().error;
+    for (const auto& key : historyHotkeys_)
+        if (!key->enabled() && !key->explanation().isEmpty() &&
+            !historySettings.usageNotice.contains(key->explanation()))
+            historySettings.usageNotice += QStringLiteral("\n") + key->explanation();
+    historySettings.saveHotkey = [this](HotkeyAction action, const QKeySequence& sequence)
+    { return changeHotkey(sequence, action); };
+    historySettings.savePreferences = [this](const HistoryPreferences& preferences)
+    {
+        const auto oldRoot = history_.rootDirectory();
+        const auto result = history_.savePreferences(preferences);
+        if (result.success && oldRoot != history_.rootDirectory())
+        {
+            if (historyWindow_)
+                historyWindow_->navigate(0, true);
+            if (historyWindow_)
+                historyWindow_->refresh();
+        }
+        refreshStickerActions();
+        return result.error;
+    };
     SettingsDialog dialog(
         hotkeySettings_.currentSequence(),
         [this](const QKeySequence& sequence) { return changeHotkey(sequence); },
@@ -305,7 +373,7 @@ void ApplicationController::openSettings()
          {},
          settings_.loadStickerCloseReminder(),
          [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); }},
-        autostartActions_);
+        autostartActions_, std::move(historySettings));
     dialog.exec();
     settingsOpen_ = false;
     refreshStickerActions();
@@ -330,6 +398,16 @@ ImageOutputResult ApplicationController::pinHistoryImage(const QImage& image)
     refreshStickerActions();
     return result;
 }
+void ApplicationController::navigateHistory(int step)
+{
+    if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
+        return;
+    const bool opening = !historyWindow_ || !historyWindow_->isVisible();
+    openHistory();
+    if (historyWindow_)
+        historyWindow_->navigate(step, opening);
+    refreshStickerActions();
+}
 void ApplicationController::openHistory()
 {
     if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
@@ -349,6 +427,7 @@ void ApplicationController::openHistory()
     historyWindow_->show();
     historyWindow_->raise();
     historyWindow_->activateWindow();
+    refreshStickerActions();
 }
 void ApplicationController::trigger(const QString& source)
 {
@@ -1030,9 +1109,12 @@ void ApplicationController::startSmokeTest()
                         {
                             const auto windows = QApplication::topLevelWidgets();
                             if (!windows.contains(&menu_) ||
-                                std::any_of(
-                                    windows.cbegin(), windows.cend(), [this](QWidget* window)
-                                    { return window != &menu_ && window != currentGroupMenu_; }))
+                                std::any_of(windows.cbegin(), windows.cend(),
+                                            [this](QWidget* window) {
+                                                return window != &menu_ &&
+                                                       window != currentGroupMenu_ &&
+                                                       window != historyMenu_;
+                                            }))
                             {
                                 application_.exit(22);
                                 return;

@@ -573,7 +573,7 @@ class HistoryGroupsTest final : public QObject
             QCOMPARE(menu->title(), QStringLiteral("当前分组：新名称"));
             QStringList oldNames;
             for (auto* action : controller.menu()->actions())
-                if (action->objectName() != QStringLiteral("openHistoryAction") &&
+                if (action->objectName() != QStringLiteral("historyMenuAction") &&
                     action->objectName() != QStringLiteral("currentGroupAction"))
                     oldNames.append(action->objectName());
             QCOMPARE(oldNames, (QStringList{QStringLiteral("screenshotAction"),
