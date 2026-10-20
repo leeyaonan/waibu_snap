@@ -122,7 +122,7 @@ class HistoryWindowTest final : public QObject
         QVERIFY(w->isWindow());
         QVERIFY(!w->windowFlags().testFlag(Qt::WindowStaysOnTopHint));
         QVERIFY(w->testAttribute(Qt::WA_DeleteOnClose));
-        QCOMPARE(child<QListWidget>(w, "historyGroups")->count(), 3);
+        QCOMPARE(child<QListWidget>(w, "historyGroups")->count(), 4);
         QCOMPARE(thumbnails(w)->count(), 0);
         QVERIFY(
             child<QLabel>(w, "historyEmpty")->text().contains(QStringLiteral("还没有截图历史")));
@@ -147,7 +147,7 @@ class HistoryWindowTest final : public QObject
         QVERIFY(picture(Qt::green).save(external));
         auto* w = f.open();
         auto* list = child<QListWidget>(w, "historyGroups");
-        QCOMPARE(list->count(), 4);
+        QCOMPARE(list->count(), 5);
         QVERIFY(list->item(0)->text().contains(QStringLiteral("（3）")));
         QVERIFY(list->item(1)->text().contains(QStringLiteral("（1）")));
         QVERIFY(list->item(2)->text().startsWith(QStringLiteral("● ")));

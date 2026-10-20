@@ -119,6 +119,31 @@ QString AppSettings::saveHistoryPreferences(const HistoryPreferences& preference
     historyWriteFailed_ = false;
     return {};
 }
+QString AppSettings::saveHistoryCurrentGroupId(const QString& groupId) const
+{
+    if (QUuid(groupId).isNull() || QUuid(groupId).toString(QUuid::WithoutBraces) != groupId)
+        return QStringLiteral("当前历史分组 UUID 无效。");
+    const QString error = QStringLiteral("当前分组写入失败，原分组偏好已保留，请重试保存。");
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()) || QFileInfo(filePath_).isDir())
+        return error;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    const QString key = QStringLiteral("history/currentGroupId");
+    const auto previous = settings.value(key);
+    settings.setValue(key, groupId);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        if (previous.isValid())
+            settings.setValue(key, previous);
+        else
+            settings.remove(key);
+        return error;
+    }
+    return {};
+}
 HistoryWindowState AppSettings::loadHistoryWindowState() const
 {
     QFile file(filePath_);

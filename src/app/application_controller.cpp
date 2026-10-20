@@ -109,6 +109,14 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     openHistoryAction_ =
         menu_.addAction(QStringLiteral("打开历史…"), this, &ApplicationController::openHistory);
     openHistoryAction_->setObjectName(QStringLiteral("openHistoryAction"));
+    currentGroupMenu_ = menu_.addMenu(QStringLiteral("当前分组"));
+    currentGroupMenu_->setObjectName(QStringLiteral("currentGroupMenu"));
+    currentGroupMenu_->menuAction()->setObjectName(QStringLiteral("currentGroupAction"));
+    connect(&history_, &HistoryManager::groupsChanged, this,
+            &ApplicationController::rebuildCurrentGroupMenu);
+    connect(&history_, &HistoryManager::currentGroupChanged, this,
+            &ApplicationController::updateCurrentGroupMenu);
+    rebuildCurrentGroupMenu();
     hideAllStickersAction_ = menu_.addAction(QStringLiteral("隐藏全部贴图"), this,
                                              [this]
                                              {
@@ -149,7 +157,11 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
 ApplicationController::~ApplicationController() { cleanup(); }
 void ApplicationController::refreshStickerActions()
 {
-    openHistoryAction_->setEnabled(!active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_);
+    const bool historyEnabled = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
+    openHistoryAction_->setEnabled(historyEnabled);
+    currentGroupMenu_->setEnabled(historyEnabled && history_.ready());
+    if (historyWindow_)
+        historyWindow_->setGroupActionsEnabled(historyEnabled);
     clipboardStickerAction_->setEnabled(!active_ && !resolvingQuit_ && !quitting_);
     bool visible = false, hidden = false;
     for (const auto& window : stickers_.windows())
@@ -160,6 +172,44 @@ void ApplicationController::refreshStickerActions()
         }
     hideAllStickersAction_->setEnabled(visible);
     restoreAllStickersAction_->setEnabled(hidden);
+}
+void ApplicationController::rebuildCurrentGroupMenu()
+{
+    currentGroupMenu_->clear();
+    auto groups = history_.groups();
+    std::stable_sort(groups.begin(), groups.end(),
+                     [](const auto& a, const auto& b) { return a.isDefault && !b.isDefault; });
+    for (const auto& group : groups)
+    {
+        auto* action = currentGroupMenu_->addAction(
+            group.name, this,
+            [this, id = group.id]
+            {
+                if (active_ || settingsOpen_ || resolvingQuit_ || quitting_)
+                    return;
+                const auto result = history_.setCurrentGroup(id);
+                if (!result.success)
+                {
+                    qWarning().noquote() << result.error;
+                    if (!options_.testMode)
+                        tray_.showMessage(QStringLiteral("当前分组切换失败"), result.error,
+                                          QSystemTrayIcon::Warning);
+                }
+                updateCurrentGroupMenu();
+            });
+        action->setObjectName(QStringLiteral("currentGroupItem_%1").arg(group.id));
+        action->setData(group.id);
+        action->setCheckable(true);
+    }
+    updateCurrentGroupMenu();
+}
+void ApplicationController::updateCurrentGroupMenu()
+{
+    const auto group = history_.currentGroup();
+    currentGroupMenu_->setTitle(
+        QStringLiteral("当前分组：%1").arg(group ? group->name : QStringLiteral("不可用")));
+    for (auto* action : currentGroupMenu_->actions())
+        action->setChecked(action->data().toString() == history_.currentGroupId());
 }
 void ApplicationController::pinClipboardImage()
 {
@@ -285,7 +335,15 @@ void ApplicationController::openHistory()
     if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
         return;
     if (!historyWindow_)
+    {
         historyWindow_ = new HistoryWindow(history_, settings_, historyActions_);
+        connect(historyWindow_, &HistoryWindow::groupDialogOpenChanged, this,
+                [this](bool open)
+                {
+                    settingsOpen_ = open;
+                    refreshStickerActions();
+                });
+    }
     else
         historyWindow_->refresh();
     historyWindow_->show();
@@ -861,8 +919,15 @@ void ApplicationController::cleanup()
     clipboardToast_.reset();
     if (historyWindow_)
     {
-        historyWindow_->close();
-        delete historyWindow_.data();
+        auto* closing = historyWindow_.data();
+        historyWindow_.clear();
+        const bool nested = closing->dismissGroupDialogs();
+        closing->close();
+        // 先让对话框 / 菜单的嵌套循环和触发它们的控件信号退栈。
+        if (nested)
+            closing->deleteLater();
+        else
+            delete closing;
     }
     const QPointer<SelectionOverlay> closingOverlay = overlay_;
     if (active_)
@@ -963,7 +1028,11 @@ void ApplicationController::startSmokeTest()
                         50, this,
                         [this]
                         {
-                            if (QApplication::topLevelWidgets().size() != 1)
+                            const auto windows = QApplication::topLevelWidgets();
+                            if (!windows.contains(&menu_) ||
+                                std::any_of(
+                                    windows.cbegin(), windows.cend(), [this](QWidget* window)
+                                    { return window != &menu_ && window != currentGroupMenu_; }))
                             {
                                 application_.exit(22);
                                 return;

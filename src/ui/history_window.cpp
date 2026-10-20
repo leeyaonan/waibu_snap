@@ -1,22 +1,28 @@
 #include "ui/history_window.h"
+#include "ui/group_settings_dialog.h"
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDataStream>
 #include <QDateTime>
 #include <QDebug>
+#include <QDialogButtonBox>
 #include <QGraphicsItem>
 #include <QGraphicsScene>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPainter>
+#include <QPointer>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStandardItemModel>
 #include <QStyleOptionGraphicsItem>
 #include <QTimer>
 #include <QToolButton>
@@ -188,6 +194,8 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
     groups_ = new QListWidget(splitter_);
     groups_->setObjectName(QStringLiteral("historyGroups"));
     groups_->setMinimumSize(80, 60);
+    groups_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(groups_, &QWidget::customContextMenuRequested, this, &HistoryWindow::showGroupMenu);
     imageSplitter_ = new QSplitter(Qt::Horizontal, splitter_);
     imageSplitter_->setObjectName(QStringLiteral("historyImageSplitter"));
     thumbnails_ = new QListWidget(imageSplitter_);
@@ -265,6 +273,13 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
             &HistoryWindow::scheduleThumbnails);
     connect(imageSplitter_, &QSplitter::splitterMoved, this, &HistoryWindow::scheduleThumbnails);
     thumbnails_->viewport()->installEventFilter(this);
+    connect(&manager_, &HistoryManager::groupsChanged, this, &HistoryWindow::refresh);
+    connect(&manager_, &HistoryManager::currentGroupChanged, this,
+            [this]
+            {
+                snapshot_.currentGroupId = manager_.currentGroupId();
+                rebuildGroups(view_);
+            });
     const auto saved = settings_.loadHistoryWindowState();
     view_ = saved.lastView;
     order_ = saved.sortOrder == QStringLiteral("oldest") ||
@@ -280,6 +295,137 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
     installEventFilter(this);
     for (auto* widget : findChildren<QWidget*>())
         widget->installEventFilter(this);
+}
+void HistoryWindow::setGroupActionsEnabled(bool enabled)
+{
+    groupActionsEnabled_ = enabled;
+    if (groups_->count())
+        groups_->item(groups_->count() - 1)
+            ->setFlags(enabled ? Qt::ItemIsEnabled | Qt::ItemIsSelectable : Qt::NoItemFlags);
+    if (auto* model = qobject_cast<QStandardItemModel*>(groupCombo_->model()))
+        if (auto* item = model->item(groupCombo_->count() - 1))
+            item->setEnabled(enabled);
+}
+bool HistoryWindow::dismissGroupDialogs()
+{
+    const auto dialogs = findChildren<QDialog*>();
+    const auto menus = findChildren<QMenu*>();
+    for (auto* dialog : dialogs)
+        dialog->reject();
+    for (auto* menu : menus)
+        menu->close();
+    return !dialogs.isEmpty() || !menus.isEmpty();
+}
+void HistoryWindow::editGroupName(const QString& groupId)
+{
+    if (!groupActionsEnabled_)
+        return;
+    QPointer<QDialog> dialog = new QDialog(this);
+    dialog->setObjectName(QStringLiteral("historyGroupNameDialog"));
+    dialog->setWindowTitle(groupId.isEmpty() ? QStringLiteral("新建分组")
+                                             : QStringLiteral("分组改名"));
+    auto* layout = new QVBoxLayout(dialog);
+    layout->addWidget(new QLabel(QStringLiteral("分组名称"), dialog));
+    auto* edit = new QLineEdit(dialog);
+    edit->setObjectName(QStringLiteral("historyGroupName"));
+    for (const auto& group : manager_.groups())
+        if (group.id == groupId)
+            edit->setText(group.name);
+    edit->selectAll();
+    layout->addWidget(edit);
+    auto* error = new QLabel(dialog);
+    error->setObjectName(QStringLiteral("historyGroupNameError"));
+    error->setWordWrap(true);
+    layout->addWidget(error);
+    auto* buttons = new QDialogButtonBox(dialog);
+    buttons->addButton(QStringLiteral("确定"), QDialogButtonBox::AcceptRole)
+        ->setObjectName(QStringLiteral("historyGroupNameSave"));
+    buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, dialog,
+            [this, groupId, edit, error, dialog]
+            {
+                const auto result = groupId.isEmpty() ? manager_.createGroup(edit->text())
+                                                      : manager_.renameGroup(groupId, edit->text());
+                if (result.success)
+                {
+                    dialog->accept();
+                    if (groupId.isEmpty())
+                        selectView(result.group.id, true);
+                }
+                else
+                    error->setText(result.error);
+            });
+    const QPointer<HistoryWindow> guard(this);
+    emit groupDialogOpenChanged(true);
+    dialog->exec();
+    delete dialog.data();
+    if (guard)
+        emit groupDialogOpenChanged(false);
+}
+void HistoryWindow::openGroupSettings(const QString& groupId)
+{
+    if (!groupActionsEnabled_)
+        return;
+    QPointer<GroupSettingsDialog> dialog =
+        new GroupSettingsDialog(manager_, groupId, actions_.trash, selectedId(), this);
+    const QPointer<HistoryWindow> guard(this);
+    emit groupDialogOpenChanged(true);
+    dialog->exec();
+    delete dialog.data();
+    if (guard)
+        emit groupDialogOpenChanged(false);
+}
+void HistoryWindow::deleteGroup(const QString& groupId)
+{
+    if (!groupActionsEnabled_)
+        return;
+    const QPointer<HistoryWindow> guard(this);
+    emit groupDialogOpenChanged(true);
+    const auto result = confirmHistoryGroupDeletion(manager_, groupId, actions_.trash, this);
+    if (guard)
+    {
+        emit groupDialogOpenChanged(false);
+        if (result)
+            showActionResult(*result);
+    }
+}
+void HistoryWindow::showGroupMenu(const QPoint& point)
+{
+    if (!groupActionsEnabled_)
+        return;
+    const auto* entry = groups_->itemAt(point);
+    if (!entry)
+        return;
+    const auto id = entry->data(Qt::UserRole).toString();
+    for (const auto& group : manager_.groups())
+        if (group.id == id)
+        {
+            QPointer<QMenu> menu = new QMenu(this);
+            menu->setObjectName(QStringLiteral("historyGroupMenu"));
+            auto* current = menu->addAction(QStringLiteral("设为当前分组"), this,
+                                            [this, id]
+                                            {
+                                                if (groupActionsEnabled_)
+                                                    showActionResult(manager_.setCurrentGroup(id));
+                                            });
+            current->setObjectName(QStringLiteral("historyGroupSetCurrent"));
+            current->setCheckable(true);
+            current->setChecked(manager_.currentGroupId() == id);
+            menu->addAction(QStringLiteral("分组设置…"), this,
+                            [this, id] { openGroupSettings(id); })
+                ->setObjectName(QStringLiteral("historyGroupSettings"));
+            menu->addAction(QStringLiteral("改名…"), this, [this, id] { editGroupName(id); })
+                ->setObjectName(QStringLiteral("historyGroupRename"));
+            auto* remove =
+                menu->addAction(QStringLiteral("删除…"), this, [this, id] { deleteGroup(id); });
+            remove->setObjectName(QStringLiteral("historyGroupDelete"));
+            remove->setEnabled(!group.isDefault && bool(actions_.trash));
+            menu->exec(groups_->viewport()->mapToGlobal(point));
+            delete menu.data();
+            return;
+        }
 }
 void HistoryWindow::rebuildGroups(const QString& view)
 {
@@ -316,6 +462,10 @@ void HistoryWindow::rebuildGroups(const QString& view)
                              ? QStringLiteral("当前截图分组")
                              : QStringLiteral("仅查看此分组"));
     }
+    auto* create = new QListWidgetItem(QStringLiteral("新建分组…"), groups_);
+    create->setData(Qt::UserRole, QStringLiteral("new-group"));
+    groupCombo_->addItem(QStringLiteral("新建分组…"), QStringLiteral("new-group"));
+    setGroupActionsEnabled(groupActionsEnabled_);
     int row = groupCombo_->findData(view);
     if (row < 0)
         row = 0;
@@ -327,6 +477,17 @@ void HistoryWindow::rebuildGroups(const QString& view)
 }
 void HistoryWindow::selectView(const QString& view, bool useDefaultSort)
 {
+    if (view == QStringLiteral("new-group"))
+    {
+        {
+            const QSignalBlocker listBlock(groups_), comboBlock(groupCombo_);
+            const int row = groupCombo_->findData(view_);
+            groups_->setCurrentRow(row);
+            groupCombo_->setCurrentIndex(row);
+        }
+        editGroupName();
+        return;
+    }
     if (view == view_)
         return;
     view_ = view;

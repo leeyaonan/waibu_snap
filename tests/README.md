@@ -958,3 +958,14 @@ macOS 27.0.1 / arm64、Qt 6.11.2 Release，独立 `WAIBUSNAP_BUILD_DIR=build/ver
 本机 macOS / arm64、Qt 6.11.2 Release：标准 `build-project.sh` 通过，正常系统上下文 `test-project.sh` **25/25 CTest**，clang-format **18.1.8** `lint-code.sh`、`git diff --check` 与 ObjC 块捕获门禁通过。主 / 高 DPI 冒烟 **497 / 430**、历史窗口各 **17**、历史入库 **35**，上述 Qt Test 均 0 失败 / 0 跳过。首次沙箱全量 **23/25**，原生在屏无屏幕、真实 OCR 服务受限；完整系统上下文复验 **25/25** 通过，没有修改原生 / OCR 断言。Windows 预计 **23 项 CTest**，最终双端 CI 与 Intel 构建见本批 PR 记录。
 
 首轮 CI 的 macOS 含 Intel 构建通过；Windows 编译通过，动作测试的索引提交故障注入未生效（Windows 拒绝重命名含打开文件的父目录）。已改为 Windows 持有目标索引文件，利用共享规则阻止替换，保持原图恢复 / 旧索引不变断言；生产实现未改。最终双端检查与 Intel 构建以 [PR #43 的当前 head 检查](https://github.com/leeyaonan/waibu_snap/pull/43/checks) 为准。
+
+
+## v006 批次 5：分组管理与当前分组（2026-10-20）
+
+独立构建目录 `build/verify-v006-history-groups`。新增 `history_groups` 与 `history_groups_high_dpi` 两项 CTest；标准 **23 项**、2 倍 DPR 显式清单 **16 项**，均使用 `QTemporaryDir` 历史根 / INI 和移动到临时目录的 fake 回收站，没有访问真实 Pictures、用户图片或系统回收站。既有历史窗口数量断言包含新增的「新建分组…」行；托盘动作按 objectName 查找。
+
+覆盖：新建 / 去首尾空白 / 改名、空名 / 重名 / 路径逃逸 / Windows 保留名；默认组改名 UUID 不变与禁删；新组实时复制全局模板、已有组独立；删除当前组回退默认并重启保留；回收站失败 / 未注入 / 失效分组 / INI 不可写保留当前组与目录；策略至少一项 / 禁用全部、三项数值、恢复当前模板、字节精度、取消不写回、策略锁失败及偏好写失败后重试；总占用 / 外部占用 / 星标 + 最新 + 选中项保护，无清理和无额外入库；浏览只过滤、上下文显式切换 / 设置 / 改名 / 删除、删除确认包含外部数量与取消；托盘标题 / 唯一勾选 / 默认组优先 / 原七动作顺序 / 四种禁用态 / 窗口复用；命名 / 设置 / 删除确认嵌套循环中的控制器退出清理。
+
+退出回归先在新增用例中复现崩溃，修复为拒绝分组对话框、关闭菜单后延迟销毁历史窗口，让触发控件信号退出；三个场景均纳入高 DPI 清单。应用子进程冒烟原先断言仅有一个顶层窗口，新增 QMenu 本身也是隐藏顶层对象；现按真实主菜单 / 当前组菜单对象核对，仍拒绝残留临时窗口。
+
+本机 Qt 6.11.2 Release 标准构建、正常系统上下文 `test-project.sh` **27/27 CTest**、clang-format **18.1.8** lint、`git diff --check` 与 ObjC 块捕获门禁通过。主 / 高 DPI 冒烟 **497 / 430**、历史窗口各 **17**、历史动作各 **21**、历史入库 **35**、分组标准 / 高 DPI **23 / 16**，均 0 失败 / 0 跳过。首轮沙箱的原生在屏和 OCR 服务受限，另有子菜单顶层数量旧断言已修复；系统上下文复验完整通过。交付 [PR #44](https://github.com/leeyaonan/waibu_snap/pull/44)，双端 CI 与 Intel 交叉构建结果见 [PR 检查页](https://github.com/leeyaonan/waibu_snap/pull/44/checks)。人工待验收：双端真实中文 / 长分组名输入与右键菜单、分组列折叠入口、原生回收站成功 / 拒绝 / 网络卷、跨重启当前组、420px 窄窗与 Windows 11 高 DPI 分组设置及托盘子菜单。`build/macos` 未改动或启动；外部 WebP、历史设置页、全局热键、清理执行均不属于本批。
