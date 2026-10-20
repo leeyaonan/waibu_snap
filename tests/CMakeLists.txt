@@ -54,6 +54,21 @@ set_target_properties(hotkey_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME hotkey_settings COMMAND hotkey_settings_test)
 set_tests_properties(hotkey_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+qt_add_executable(history_types_test unit/history_types_test.cpp)
+target_link_libraries(history_types_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(history_types_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_types COMMAND history_types_test)
+
+qt_add_executable(history_cleanup_test unit/history_cleanup_test.cpp)
+target_link_libraries(history_cleanup_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(history_cleanup_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_cleanup COMMAND history_cleanup_test)
+
+qt_add_executable(history_store_test unit/history_store_test.cpp)
+target_link_libraries(history_store_test PRIVATE waibusnap_settings Qt6::Test waibusnap_options)
+set_target_properties(history_store_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_store COMMAND history_store_test)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME measurement_tool COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/unit/measurement_tool_test.py")

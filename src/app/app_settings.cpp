@@ -1,14 +1,17 @@
 #include "app/app_settings.h"
+#include "app/history_store.h"
 #include "app/hotkey_rules.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QUuid>
 #include <algorithm>
 namespace waibusnap
 {
@@ -22,6 +25,99 @@ AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
     if (filePath_.isEmpty())
         filePath_ = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
                         .filePath(QStringLiteral("settings.ini"));
+}
+HistoryPreferences AppSettings::loadHistoryPreferences(QString* notice) const
+{
+    HistoryPreferences result{HistoryStore::defaultRootDirectory(), {}, {}};
+    if (notice)
+        notice->clear();
+    QFile file(filePath_);
+    if (historyWriteFailed_ || !file.open(QIODevice::ReadOnly))
+    {
+        if (notice && (historyWriteFailed_ || QFileInfo::exists(filePath_)))
+            *notice = QStringLiteral("历史设置无法读取或上次写入失败，已回退默认值。");
+        return result;
+    }
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        if (notice)
+            *notice = QStringLiteral("历史设置文件损坏，已回退默认值。");
+        return result;
+    }
+    bool invalid = false;
+    const auto root = settings.value(QStringLiteral("history/rootDirectory"), QString());
+    if (root.metaType().id() != QMetaType::QString ||
+        (!root.toString().isEmpty() && !QDir::isAbsolutePath(root.toString())))
+        invalid = true;
+    else if (!root.toString().isEmpty())
+        result.rootDirectory = root.toString();
+    const auto id = settings.value(QStringLiteral("history/currentGroupId"), QString());
+    if (id.metaType().id() != QMetaType::QString ||
+        (!id.toString().isEmpty() &&
+         (QUuid(id.toString()).isNull() ||
+          QUuid(id.toString()).toString(QUuid::WithoutBraces) != id.toString())))
+        invalid = true;
+    else
+        result.currentGroupId = id.toString();
+    const QString policyKey = QStringLiteral("history/defaultCleanup");
+    if (settings.contains(policyKey))
+    {
+        const auto value = settings.value(policyKey);
+        const auto document = QJsonDocument::fromJson(value.toString().toUtf8());
+        if (value.metaType().id() != QMetaType::QString || !document.isObject() ||
+            !cleanupPolicyFromJson(document.object(), result.defaultCleanup))
+            invalid = true;
+    }
+    if (notice && invalid)
+        *notice = QStringLiteral("部分历史设置无效，相关字段已回退默认值；原文件未修复。");
+    return result;
+}
+QString AppSettings::saveHistoryPreferences(const HistoryPreferences& preferences) const
+{
+    QString error = cleanupPolicyError(preferences.defaultCleanup);
+    if (!error.isEmpty())
+        return error;
+    if (!preferences.rootDirectory.isEmpty() && !QDir::isAbsolutePath(preferences.rootDirectory))
+        return QStringLiteral("历史根目录必须为绝对路径。");
+    if (!preferences.currentGroupId.isEmpty() &&
+        (QUuid(preferences.currentGroupId).isNull() ||
+         QUuid(preferences.currentGroupId).toString(QUuid::WithoutBraces) !=
+             preferences.currentGroupId))
+        return QStringLiteral("当前历史分组 UUID 无效。");
+    historyWriteFailed_ = true;
+    error = QStringLiteral("历史设置写入失败，重启后可能无法保留，请重试保存。");
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()) || QFileInfo(filePath_).isDir())
+        return error;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    const QStringList keys{QStringLiteral("history/rootDirectory"),
+                           QStringLiteral("history/currentGroupId"),
+                           QStringLiteral("history/defaultCleanup")};
+    QVector<QVariant> previous;
+    for (const auto& key : keys)
+        previous.append(settings.value(key));
+    settings.setValue(keys[0], preferences.rootDirectory);
+    settings.setValue(keys[1], preferences.currentGroupId);
+    settings.setValue(
+        keys[2], QString::fromUtf8(QJsonDocument(cleanupPolicyToJson(preferences.defaultCleanup))
+                                       .toJson(QJsonDocument::Compact)));
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        // 不让失败写入留在进程共享缓存中，被下一次无关设置保存意外提交。
+        for (qsizetype i = 0; i < keys.size(); ++i)
+            if (previous[i].isValid())
+                settings.setValue(keys[i], previous[i]);
+            else
+                settings.remove(keys[i]);
+        return error;
+    }
+    historyWriteFailed_ = false;
+    return {};
 }
 LoadedHotkey AppSettings::loadHotkey() const
 {

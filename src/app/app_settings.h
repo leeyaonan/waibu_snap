@@ -1,5 +1,6 @@
 #pragma once
 #include "core/aspect_ratio.h"
+#include "core/history_types.h"
 #include "core/shape_mask.h"
 #include "interfaces/global_hotkey.h"
 #include "output/image_output.h"
@@ -12,10 +13,19 @@ struct LoadedHotkey
     QKeySequence sequence;
     QString explanation;
 };
+struct HistoryPreferences
+{
+    // 空路径表示使用 Pictures/WaibuSnap；读取时解析为默认绝对路径。
+    QString rootDirectory;
+    QString currentGroupId;
+    CleanupPolicy defaultCleanup;
+};
 class AppSettings
 {
   public:
     explicit AppSettings(QString filePath = {});
+    HistoryPreferences loadHistoryPreferences(QString* notice = nullptr) const;
+    QString saveHistoryPreferences(const HistoryPreferences& preferences) const;
     LoadedHotkey loadHotkey() const;
     SavePreferences loadSavePreferences() const;
     bool loadStickerCloseReminder() const;
@@ -34,6 +44,7 @@ class AppSettings
   private:
     QString filePath_;
     mutable bool stickerCloseReminderWriteFailed_ = false;
+    mutable bool historyWriteFailed_ = false;
 };
 struct HotkeyStartup
 {

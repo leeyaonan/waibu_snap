@@ -1,13 +1,14 @@
 add_subdirectory(platform)
 
 add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp core/aspect_ratio.cpp core/text_layout.cpp core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
+    core/history_types.cpp core/history_cleanup.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options)
 add_library(waibusnap_output STATIC output/image_output.cpp output/annotation_renderer.cpp)
 target_include_directories(waibusnap_output PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_output PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
-add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp)
+add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp app/history_store.cpp)
 target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp ui/selection_overlay.h
