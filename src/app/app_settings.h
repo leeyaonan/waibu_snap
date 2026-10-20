@@ -35,6 +35,7 @@ class AppSettings
     explicit AppSettings(QString filePath = {});
     HistoryPreferences loadHistoryPreferences(QString* notice = nullptr) const;
     QString saveHistoryPreferences(const HistoryPreferences& preferences) const;
+    QString saveHistoryCurrentGroupId(const QString& groupId) const;
     HistoryWindowState loadHistoryWindowState() const;
     QString saveHistoryWindowState(const HistoryWindowState& state) const;
     LoadedHotkey loadHotkey() const;

@@ -32,9 +32,8 @@ std::optional<HistoryGroup> HistoryManager::currentGroup() const
 }
 HistoryStatus HistoryManager::persistCurrentGroup(const QString& groupId)
 {
-    auto preferences = settings_.loadHistoryPreferences();
-    preferences.currentGroupId = groupId;
-    return status(settings_.saveHistoryPreferences(preferences));
+    const auto error = settings_.saveHistoryCurrentGroupId(groupId);
+    return {error.isEmpty(), error};
 }
 HistoryStatus HistoryManager::initialize()
 {
@@ -73,25 +72,139 @@ HistoryStatus HistoryManager::initialize()
 HistoryStatus HistoryManager::setCurrentGroup(const QString& groupId)
 {
     if (!ready_)
-        return status(QStringLiteral("历史库未就绪，无法切换当前分组。"));
+        return {false, QStringLiteral("历史库未就绪，无法切换当前分组。")};
     const auto scanned = store_->scan();
     if (!scanned.error.isEmpty())
-        return status(scanned.error);
-    groups_.clear();
+        return {false, scanned.error};
     bool found = false;
     for (const auto& snapshot : scanned.groups)
-    {
-        groups_.append(snapshot.group);
         found |= snapshot.group.id == groupId;
-    }
     if (!found)
-        return status(QStringLiteral("目标历史分组不存在，当前分组未改变。"));
+        return {false, QStringLiteral("目标历史分组不存在，当前分组未改变。")};
     const auto persisted = persistCurrentGroup(groupId);
     if (!persisted.success)
         return persisted;
     preferences_.currentGroupId = groupId;
+    snapshot_ = {scanned.groups, {}, scanned.error};
+    groups_.clear();
+    for (const auto& group : scanned.groups)
+        groups_.append(group.group);
     emit currentGroupChanged(groupId);
     return {true, {}};
+}
+CleanupPolicy HistoryManager::defaultCleanupPolicy() const
+{
+    return settings_.loadHistoryPreferences().defaultCleanup;
+}
+HistoryGroupResult HistoryManager::createGroup(const QString& name)
+{
+    if (!ready_)
+        return {{false, QStringLiteral("历史库未就绪，无法新建分组。")}, {}};
+    // 每次读取当前模板，不重建入库 Store 或会话去重表。
+    HistoryStore creator(rootDirectory(), defaultCleanupPolicy());
+    const auto result = creator.createGroup(name);
+    if (result.success)
+    {
+        refresh();
+        emit groupsChanged();
+    }
+    return result;
+}
+HistoryGroupResult HistoryManager::renameGroup(const QString& groupId, const QString& name)
+{
+    if (!ready_)
+        return {{false, QStringLiteral("历史库未就绪，无法改名。")}, {}};
+    const auto result = store_->renameGroup(groupId, name);
+    if (result.success)
+    {
+        refresh();
+        emit groupsChanged();
+    }
+    return result;
+}
+HistoryStatus HistoryManager::saveCleanupPolicy(const QString& groupId, const CleanupPolicy& policy,
+                                                bool makeCurrent)
+{
+    if (!ready_)
+        return {false, QStringLiteral("历史库未就绪，无法保存分组设置。")};
+    const auto error = cleanupPolicyError(policy);
+    if (!error.isEmpty())
+        return {false, error};
+    const QString previous = currentGroupId();
+    const bool switching = makeCurrent && previous != groupId;
+    // 先验证偏好可写；策略失败时恢复旧 UUID，成功前不发布内存状态或信号。
+    if (switching)
+    {
+        const auto persisted = persistCurrentGroup(groupId);
+        if (!persisted.success)
+            return persisted;
+    }
+    auto result = store_->saveCleanupPolicy(groupId, policy);
+    if (!result.success && switching)
+    {
+        const auto restored = persistCurrentGroup(previous);
+        if (!restored.success)
+            result.error += QStringLiteral("；恢复当前分组偏好失败：") + restored.error;
+    }
+    if (result.success)
+    {
+        if (switching)
+            preferences_.currentGroupId = groupId;
+        refresh();
+        emit groupsChanged();
+        if (switching)
+            emit currentGroupChanged(groupId);
+    }
+    return result;
+}
+HistoryStatus HistoryManager::deleteGroup(const QString& groupId, const HistoryTrash& trash)
+{
+    if (!ready_)
+        return {false, QStringLiteral("历史库未就绪，无法删除分组。")};
+    if (!trash)
+        return {false, QStringLiteral("回收站服务不可用，分组已保留。")};
+    const auto scanned = store_->scan();
+    if (!scanned.error.isEmpty())
+        return {false, scanned.error};
+    QString defaultId;
+    for (const auto& group : scanned.groups)
+        if (group.group.isDefault)
+            defaultId = group.group.id;
+    if (defaultId.isEmpty())
+        return {false, QStringLiteral("默认分组缺失，已拒绝删除。")};
+    const bool switching = currentGroupId() == groupId;
+    bool persisted = false;
+    const HistoryTrash move = [&](const QString& path)
+    {
+        // 根锁内已验证默认组和路径；偏好落盘失败时不调用回收站。
+        if (switching)
+        {
+            const auto saved = persistCurrentGroup(defaultId);
+            if (!saved.success)
+                return saved;
+            persisted = true;
+        }
+        return trash(path);
+    };
+    const auto result = store_->deleteGroup(groupId, move);
+    if (!result.success)
+    {
+        if (persisted)
+        {
+            const auto restored = persistCurrentGroup(groupId);
+            if (!restored.success)
+                return {false,
+                        result.error + QStringLiteral("；恢复当前分组偏好失败：") + restored.error};
+        }
+        return result;
+    }
+    if (switching)
+        preferences_.currentGroupId = defaultId;
+    refresh();
+    emit groupsChanged();
+    if (switching)
+        emit currentGroupChanged(defaultId);
+    return result;
 }
 HistorySession HistoryManager::beginSession() const
 {
@@ -112,6 +225,10 @@ HistorySnapshot HistoryManager::refresh()
         const auto scanned = store_->scan();
         snapshot_ = {scanned.groups, {}, scanned.error};
     }
+    groups_.clear();
+    for (const auto& group : snapshot_.groups)
+        if (!group.group.id.isEmpty())
+            groups_.append(group.group);
     return snapshot();
 }
 std::optional<HistoryItem> HistoryManager::findItem(const QString& itemId) const

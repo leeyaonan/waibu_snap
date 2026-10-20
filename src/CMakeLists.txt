@@ -17,6 +17,7 @@ add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp u
     ui/scroll_capture_windows.cpp ui/scroll_capture_windows.h
     ui/scroll_result_window.cpp ui/scroll_result_window.h
     ui/history_window.cpp ui/history_window.h
+    ui/group_settings_dialog.cpp ui/group_settings_dialog.h
     ui/text_recognition_task.cpp ui/text_recognition_task.h ui/ocr_dialog.cpp ui/ocr_dialog.h
     ui/clipboard_sticker_toast.cpp ui/clipboard_sticker_toast.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h

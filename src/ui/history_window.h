@@ -45,6 +45,10 @@ class HistoryWindow final : public QWidget
     explicit HistoryWindow(HistoryManager& manager, AppSettings settings,
                            HistoryWindowActions actions = {});
     void refresh();
+    bool dismissGroupDialogs();
+    void setGroupActionsEnabled(bool enabled);
+  signals:
+    void groupDialogOpenChanged(bool open);
 
   protected:
     void closeEvent(QCloseEvent* event) override;
@@ -53,6 +57,10 @@ class HistoryWindow final : public QWidget
 
   private:
     void rebuildGroups(const QString& view);
+    void editGroupName(const QString& groupId = {});
+    void showGroupMenu(const QPoint& point);
+    void openGroupSettings(const QString& groupId);
+    void deleteGroup(const QString& groupId);
     void selectView(const QString& view, bool useDefaultSort);
     void rebuildItems(const QString& selected);
     void showSelection();
@@ -92,5 +100,6 @@ class HistoryWindow final : public QWidget
     QLabel* status_;
     bool thumbnailsPending_ = false;
     bool narrow_ = false;
+    bool groupActionsEnabled_ = true;
 };
 }

@@ -82,6 +82,8 @@ class ApplicationController final : public QObject
     void startSmokeTest();
     void openSettings();
     void refreshStickerActions();
+    void rebuildCurrentGroupMenu();
+    void updateCurrentGroupMenu();
     void pinClipboardImage();
     ImageOutputResult pinHistoryImage(const QImage& image);
     QString changeHotkey(const QKeySequence& sequence);
@@ -94,6 +96,7 @@ class ApplicationController final : public QObject
     QAction* hideAllStickersAction_ = nullptr;
     QAction* restoreAllStickersAction_ = nullptr;
     QMenu menu_;
+    QMenu* currentGroupMenu_ = nullptr;
     QSystemTrayIcon tray_;
     std::unique_ptr<GlobalHotkey> hotkey_;
     AppSettings settings_;

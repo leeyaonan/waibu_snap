@@ -397,7 +397,7 @@ HistoryGroupResult HistoryStore::renameGroup(const QString& groupId, const QStri
     group.absolutePath = QDir(rootDirectory_).filePath(clean);
     return {{true, {}}, group};
 }
-HistoryStatus HistoryStore::deleteGroup(const QString& groupId)
+HistoryStatus HistoryStore::deleteGroup(const QString& groupId, const HistoryTrash& trash)
 {
     QString error = rootError(rootDirectory_);
     if (!error.isEmpty())
@@ -412,9 +412,10 @@ HistoryStatus HistoryStore::deleteGroup(const QString& groupId)
         return {false, error};
     if (snapshot->group.isDefault)
         return {false, QStringLiteral("默认分组不能删除，可以改名。")};
-    if (!trash_)
+    const auto& callback = trash ? trash : trash_;
+    if (!callback)
         return {false, QStringLiteral("未提供回收站服务，分组和图片已保留。")};
-    const auto result = trash_(snapshot->group.absolutePath);
+    const auto result = callback(snapshot->group.absolutePath);
     if (!result.success)
         return {false, QStringLiteral("分组移入回收站失败，原分组已保留：%1").arg(result.error)};
     if (QFileInfo::exists(snapshot->group.absolutePath))

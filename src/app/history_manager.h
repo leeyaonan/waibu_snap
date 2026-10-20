@@ -37,6 +37,12 @@ class HistoryManager final : public QObject
     std::optional<HistoryGroup> currentGroup() const;
     QVector<HistoryGroup> groups() const { return groups_; }
     HistoryStatus setCurrentGroup(const QString& groupId);
+    HistoryGroupResult createGroup(const QString& name);
+    HistoryGroupResult renameGroup(const QString& groupId, const QString& name);
+    HistoryStatus deleteGroup(const QString& groupId, const HistoryTrash& trash);
+    HistoryStatus saveCleanupPolicy(const QString& groupId, const CleanupPolicy& policy,
+                                    bool makeCurrent = false);
+    CleanupPolicy defaultCleanupPolicy() const;
     // 浏览刷新不修改入库错误、当前分组或会话去重表。
     HistorySnapshot refresh();
     HistorySnapshot snapshot() const;
@@ -51,6 +57,7 @@ class HistoryManager final : public QObject
   signals:
     void errorChanged(QString error);
     void currentGroupChanged(QString groupId);
+    void groupsChanged();
 
   private:
     HistoryStatus status(QString error = {});

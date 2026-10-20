@@ -270,3 +270,21 @@ add_test(NAME history_actions_high_dpi COMMAND history_actions_test
     -o "${CMAKE_CURRENT_BINARY_DIR}/history_actions-high-dpi-output.txt,txt")
 set_tests_properties(history_actions_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+qt_add_executable(history_groups_test integration/history_groups_test.cpp)
+target_link_libraries(history_groups_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(history_groups_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_groups COMMAND history_groups_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_groups-output.txt,txt")
+set_tests_properties(history_groups PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+# 分组列、命名、规则编辑和托盘同步的 2 倍 DPR 显式清单。
+add_test(NAME history_groups_high_dpi COMMAND history_groups_test
+    browsingAndExplicitCurrent namingDialogValidationAndRename settingsRulesSaveAndCancel
+    settingsAtLeastOneAndDisabledRules settingsRestoreCurrentTemplateAndBytesPrecision
+    settingsUsageProtectionAndNoCleanup settingsCurrentSyncAndNarrowLayout
+    deleteConfirmationCancelFailureAndSuccess trayCurrentMenuSyncGuardsAndRestart
+    controllerGroupDialogDisablesTray contextSettingsAndDefaultDeleteDisabled
+    controllerCleanupDuringGroupModal
+    -o "${CMAKE_CURRENT_BINARY_DIR}/history_groups-high-dpi-output.txt,txt")
+set_tests_properties(history_groups_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)

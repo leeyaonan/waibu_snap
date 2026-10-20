@@ -49,7 +49,7 @@ class HistoryStore
     HistoryScanResult scan() const;
     HistoryGroupResult createGroup(const QString& name);
     HistoryGroupResult renameGroup(const QString& groupId, const QString& name);
-    HistoryStatus deleteGroup(const QString& groupId);
+    HistoryStatus deleteGroup(const QString& groupId, const HistoryTrash& trash = {});
     HistoryStatus saveCleanupPolicy(const QString& groupId, const CleanupPolicy& policy);
     HistoryWriteResult writeManagedPng(const QString& groupId, const QImage& image,
                                        HistorySource source, const QString& existingFileName = {});
