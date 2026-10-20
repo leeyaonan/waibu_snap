@@ -94,6 +94,7 @@ struct Fixture
             if (group.group.id == id)
                 return group.group;
         qFatal("缺少临时分组。");
+        return {};
     }
     QString groupFile(const QString& id)
     {
