@@ -70,6 +70,11 @@ jobs:
           ./scripts/build-project.ps1
           ./scripts/test-project.ps1
           ./scripts/lint-code.ps1
+      - name: 输出各套测试的通过、失败与跳过数字
+        shell: bash
+        run: |
+          find build -name '*output.txt' -type f -exec \
+            grep -H -E '^(Totals:|FAIL!|SKIP)' {} +
       - name: 输出失败诊断
         if: failure()
         shell: bash
