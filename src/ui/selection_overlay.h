@@ -1,4 +1,5 @@
 #pragma once
+#include "app/history_store.h"
 #include "core/annotation.h"
 #include "core/aspect_ratio.h"
 #include "core/selection_geometry.h"
@@ -25,6 +26,9 @@ class AnnotationColorPalette;
 class OcrDialog;
 struct OverlayActions : ImageSaveActions
 {
+    QString historySessionId;
+    QString historyGroupId;
+    std::function<HistoryStatus(const QImage&, const QString& savedPath)> recordHistory;
     CaptureRatioSettings ratios{defaultCaptureRatios(), {}, AspectRatio{1, 1}};
     QVector<ShapeTemplateEntry> shapeTemplates;
     QString shapeTemplateDir;
@@ -150,7 +154,8 @@ class SelectionOverlay final : public QWidget
     void paintMagnifier(QPainter& painter);
     QPointF physicalPoint(QPointF position) const;
     void showStatus(const QString& text, bool temporary);
-    bool finishSave(const ImageFileResult& output);
+    bool finishSave(const ImageFileResult& output, const QImage& image);
+    void recordHistory(const QImage& image, const QString& savedPath = {});
     QRectF logicalSelection() const;
     SelectionEdges edgesAt(QPointF position) const;
     void updateCursor(QPointF position);

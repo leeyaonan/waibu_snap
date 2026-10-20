@@ -18,6 +18,8 @@ int main(int argc, char* argv[])
         {"metrics-file", QStringLiteral("会话 JSONL 文件（只记录时间和尺寸）"), "path"});
     parser.addOption(
         {"settings-file", QStringLiteral("设置 INI 文件（受控验证使用临时路径）"), "path"});
+    parser.addOption(
+        {"history-root", QStringLiteral("历史根目录覆盖（受控验证使用临时目录）"), "path"});
     parser.addOption({"test-mode", QStringLiteral("显式启用受控截图测试，空闲测量不得启用")});
     parser.addOption({"test-count", QStringLiteral("受控模式截图次数"), "count", "1"});
     parser.addOption({"test-stable-ms", QStringLiteral("新进程稳定等待毫秒"), "ms", "10000"});
@@ -30,6 +32,7 @@ int main(int argc, char* argv[])
     waibusnap::RunOptions options;
     options.metricsFile = parser.value("metrics-file");
     options.settingsFile = parser.value("settings-file");
+    options.historyRoot = parser.value("history-root");
     if (options.metricsFile.isEmpty())
         options.metricsFile =
             QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))

@@ -22,7 +22,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                              ClipboardActions clipboardActions,
                                              AutostartActions autostartActions)
     : application_(application), options_(std::move(options)), hotkey_(createGlobalHotkey()),
-      settings_(options_.settingsFile),
+      settings_(options_.settingsFile), history_(settings_, options_.historyRoot),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
       displays_(createDisplayTopology()), capture_(createCaptureProvider()),
       windows_(createWindowEnumerator()),
@@ -39,6 +39,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                 }()),
       clipboardActions_(std::move(clipboardActions)), autostartActions_(std::move(autostartActions))
 {
+    history_.initialize();
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
         const std::shared_ptr<Autostart> autostart = createAutostart();
@@ -243,6 +244,7 @@ void ApplicationController::trigger(const QString& source)
     }
     if (!retryDisplay_)
         scrollRestoreFocus_ = captureForegroundRestorer();
+    historySession_ = history_.beginSession();
     active_ = true;
     qInfo() << "截图会话开始：source=" << source;
     if (clipboardToast_)
@@ -311,6 +313,11 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     const auto localWindows =
         localWindowRects(listed.windows, result.frame.display.logicalGeometry);
     OverlayActions actions;
+    const auto session = historySession_;
+    actions.historySessionId = session.id;
+    actions.historyGroupId = session.groupId;
+    actions.recordHistory = [this, session](const QImage& image, const QString&)
+    { return history_.record(session, image, HistorySource::Overlay); };
     actions.ratios = settings_.loadCaptureRatios();
     actions.shapeTemplates = settings_.loadShapeTemplates(&actions.shapeTemplateNotice);
     actions.shapeTemplateDir = settings_.shapeTemplateDir();
@@ -473,6 +480,9 @@ void ApplicationController::finishScrollCapture()
     if (!scrollSession_ || !active_)
         return;
     QImage image = scrollSession_->takeResult();
+    const auto session = historySession_;
+    if (!image.isNull())
+        history_.record(session, image, HistorySource::Scroll);
     const auto stats = scrollSession_->stats();
     if (image.isNull() && stats.limitReached)
     {
@@ -490,6 +500,8 @@ void ApplicationController::finishScrollCapture()
     if (image.isNull() || quitting_ || !display)
         return;
     ScrollResultActions actions;
+    actions.historyUpdated = [this, session](const QImage& image)
+    { history_.record(session, image, HistorySource::Scroll); };
     actions.loadSavePreferences = [this] { return settings_.loadSavePreferences(); };
     actions.pinImage = [this](const QImage& original)
     {

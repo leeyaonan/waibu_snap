@@ -43,7 +43,7 @@ S01 马赛克新增用例：`annotation::eightTypesAndStyles` 守卫八类枚举
 
 `startup_smoke` 使用 `QT_QPA_PLATFORM=offscreen`，验证 QWidget / 菜单动作与生命周期；无头环境不显示系统托盘，也不注册真实热键或申请屏幕录制权限。复制测试注入 `OverlayActions::copyImage`，仅验证动作次数、物理像素 / DPR 及终态，不读写或断言系统剪贴板。面板测试注入 `chooseSavePath`，路径导出调用真实 PNG / JPEG 编码与原子提交，不能代替原生面板实机验收。
 
-所有设置用例使用 `QTemporaryDir` 下 INI；实际应用子进程显式传入 `--settings-file` 临时路径。`hotkey_settings` 使用热键替身验证共享协调顺序，窗口吸附用例注入局部逻辑窗口矩形，不能替代 Carbon 硬件按键或 CGWindowList 像素边界验收。高亮与吸附输出测试回读冻结帧的已知彩色像素，显示层不参与输出。`image_output` 使用 offscreen 的 QGuiApplication 提供字体排版环境；文本内容 / 换行和合成像素自动测试不能证明真实中文输入法候选或系统查看器显示已通过。
+所有设置用例使用 `QTemporaryDir` 下 INI；实际应用子进程显式传入 `--settings-file` 与 `--history-root` 临时路径。`hotkey_settings` 使用热键替身验证共享协调顺序，窗口吸附用例注入局部逻辑窗口矩形，不能替代 Carbon 硬件按键或 CGWindowList 像素边界验收。高亮与吸附输出测试回读冻结帧的已知彩色像素，显示层不参与输出。`image_output` 使用 offscreen 的 QGuiApplication 提供字体排版环境；文本内容 / 换行和合成像素自动测试不能证明真实中文输入法候选或系统查看器显示已通过。
 
 实际应用执行 `--smoke-test` 时检查驻留策略、菜单结构、临时窗口显示及关闭、事件循环持续运行，再触发「退出」动作；退出断言有进程超时与状态检查。`--smoke-test` 仅 `BUILD_TESTING=ON` 可用，不能把关闭最后窗口即退出当作托盘应用行为。普通截图不因松开而结束；NF01 受控注入仍可交互后自动取消（码 2）。
 
@@ -903,3 +903,22 @@ macOS 27.0.1 / arm64、Qt 6.11.2 Release，独立 `WAIBUSNAP_BUILD_DIR=build/ver
 唯一失败为既有 `platform_workarounds::nativeVisibilityAndRecovery`：原生 `orderOut` 后系统仍报告在屏（第 99 行）。未改动的既有 `build/verify-text-format` 测试程序同条件复验同样失败（8 通过 / 1 失败），与工作区已有 WindowServer 环境问题记录一致；本批没有修改平台代码或放宽断言。首轮沙箱运行缺失 WindowServer / OCR 服务的失败不作为最终系统测试结论。独立验证应用为 ad-hoc 签名，未运行该应用、未申请录屏权限、未改动正在运行的 `build/macos`。双端 CI 最终链接与结果在本批 PR 登记。
 
 人工待验收：后续装配后的真实 Pictures 权限与中文错误反馈、Windows 11 中文 / 空格路径与分组改名、真实系统回收站成功 / 失败。上述实际用户路径与系统副作用本批均未使用；历史界面、截图入库和自动清理执行按后续批次验证。
+
+
+## v006 批次 2：截图入库与当前分组（2026-10-20）
+
+`HistoryManager` 装配到应用，读取历史设置并初始化 Store；默认组兜底与当前 UUID 持久化，提供当前组 / 分组列表 / 显式切换 API。截图开始固定 session UUID 与分组，普通覆盖层四个成功输出点复用成品图入库；长图 `takeResult()` 后立即入库，裁剪更新同一条，重试创建新 session。失败仅日志和错误状态，不改原输出结果码 / saved 状态。不接历史窗口、托盘、设置页、星标 / 删除 UI、清理执行或新增外部扫描。
+
+新增独立 CTest `history_ingest`，**35 项通过、0 失败 / 0 跳过**（含初始化 / 收尾）；另在 `QT_SCALE_FACTOR=2` 下独立执行同样 **35 项通过**。覆盖：
+
+- 当前 UUID 缺失 / 不存在回退、默认清理模板、有效 UUID 写回与重启保留；根目录覆盖不改持久根偏好；根目录失败后恢复；分组切换写设置失败保留原当前组。
+- 复制 / 钉图 / 保存 / 导出各产生一条带标注历史；先保存再编辑并通过四种入口输出，始终同路径、同完成时间、内容更新；复制 / 钉图回调和入库回调持有相同像素缓冲。异形图透明角、JPEG 保存仍生成无损 PNG / alpha、磁盘全图像素 / 物理尺寸 / DPR=1。
+- 取消、面板取消、复制 / 钉图 / 保存 / 导出失败、OCR 仅复制文字零条；库锁写入失败不影响原输出、outcome 或 saved。更新失败保留历史原图，解锁后重试更新同一条。
+- 长图完成即记录，直接关闭结果窗仍保留；裁剪更新同条 / 不改变输出状态，采集开始后的分组切换不影响本次记录；重试分配新 session 并采用新当前组、旧裁剪记录保留。初始化失败时仍显示长图结果，裁剪 / 重试 / outcome 13 保持；取消和空结果不入库；结果窗复制 / 保存 / 钉图不调用裁剪更新回调。
+- 历史图片经 StickerManager 的回放入口钉图、剪贴板贴图、贴图保存 / 复制均不新增历史。回放 UI 尚未实现，本测试直接使用后续回放将调用的同一 `create` 入口。
+
+所有新测试使用 `QTemporaryDir` 根目录与临时 INI，复制 / 钉图 / 面板动作注入替身；不触碰真实 Pictures、系统回收站、系统剪贴板或原生保存面板。现有 `startup_smoke` 每个控制器显式注入独立临时历史根，真实应用子进程传 `--history-root`；`overlay_visibility_probe` 也持有临时历史目录。旧剪贴板生命周期断言从“目录完全为空”改为“仅有初始化生成的 settings.ini”，继续拒绝额外图片和测量日志。
+
+验证使用独立 `WAIBUSNAP_BUILD_DIR=build/verify-v006-history-ingest`，未改动或启动 `build/macos`。macOS 27.0.1 / arm64、Qt 6.11.2 Release：标准 `build-project.sh`、正常系统上下文 `test-project.sh` **21/21 CTest**、clang-format **18.1.8** 的 `lint-code.sh` 与 `git diff --check` 全通过；主 / 高 DPI 冒烟保持 **497 / 430**，真实 OCR 与原生在屏测试通过。首轮沙箱缺少 WindowServer / OCR 服务的失败不作为最终结论。Windows 预期 19 项 CTest，最终双端 CI 结果在 PR 登记。
+
+人工待验收：macOS 真实 Pictures 首次权限 / 不可写目录的日志反馈、连续普通 / 长图输出的可见手感与大 PNG 同步写入耗时、Windows 11 中文 / 空格路径与高 DPI 普通截图落盘。长图 Windows 入口仍按既有边界禁用；历史浏览 / 回放、分组管理 UI 和清理策略执行留待后续批次。PNG / 索引两文件事务边界沿用批次 1：图片已发布但索引失败会保留 PNG 并明确报错；Manager 记住已发布目标，重试拒绝追加孤立副本。

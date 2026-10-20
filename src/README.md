@@ -2,7 +2,7 @@
 
 | 目录 | 职责 | 初始化状态 |
 | --- | --- | --- |
-| `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、全部隐藏 / 恢复、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验；`app_settings` 读取 / 保存截图比例与快捷回退 |
+| `app/` | 应用装配、启动、退出 | 托盘生命周期、受控测试入口；`sticker_manager` 管理独立贴图、保存状态、全部隐藏 / 恢复、屏幕找回与退出销毁；`app_settings` 的 INI 存储与注册 / 落盘协调，`hotkey_rules` 的无平台校验；`app_settings` 读取 / 保存截图比例与快捷回退；`history_manager` 编排历史初始化、当前分组与会话去重入库 |
 | `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`overlay_window_behavior` 的冻结覆盖层窗口层级契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂；`autostart` 的只读状态、开关操作与工厂；`text_recognizer` 的离线识别契约 |
 | `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏；`overlay_window_behavior.mm` 首次显示时幂等设置 NSStatusWindowLevel；`autostart.mm` 通过 SMAppService 注册主应用登录项；`text_recognizer.mm` 使用 Vision |
 | `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行与覆盖层层级入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口；`text_recognizer.cpp` 使用 C++/WinRT OCR，`autostart` 使用 HKCU Run |
@@ -144,3 +144,8 @@ Windows 使用 SDK 自带 C++/WinRT 和 `windowsapp` 系统库，工作线程 MT
 `observeOverlayWindow` 的 RAII 观察器监听 Space / 唤醒 / 屏幕参数 / 本窗 occlusion，合并 100ms 后排入 GUI 循环，结束先注销、旧 token / 已销毁目标不响应。自愈恢复层级 25、orderFrontRegardless，普通覆盖层必要时激活；长图双窗不激活。系统面板 open、Qt 模态、退出确认保护与 lower/raise 的原生降级标记都阻止抬升。显示器拓扑真正改变仍沿用取消 / 长图保留结果的既有策略。
 
 贴图创建、恢复与显示重配只留诊断，当前不自动复位、关闭或轮询长驻窗口。collectionBehavior 保持 Qt 现值，候选 CanJoinAllSpaces / FullScreenAuxiliary 的独立结论见测试记录。
+
+
+v006 批次 2 中，`ApplicationController` 持有 `HistoryManager`，构造时加载历史偏好、初始化 Store、校验当前分组 UUID 并在缺失时回退默认组。初始化 / 写入错误只进入日志、错误状态和信号，不中止原截图流程。`RunOptions::historyRoot` / `--history-root` 提供根目录覆盖，测试同时使用临时 INI，避免访问真实 Pictures。
+
+`OverlayActions` 的 session / group UUID 在触发截图时固定；复制 / 钉图成功后、`complete()` 清空标注前入库，保存 / 导出成功设置 saved 后入库。每次只调用一次 `outputImage()`，输出与历史共享同一个成品图。Manager 按 session 映射既有记录文件名，后续输出原路径原子更新并保留完成时间；拒绝将已绑定会话重新绑定到另一组或另一来源。长图在 `takeResult()` 后、会话销毁前记录，结果窗只通过 `historyUpdated` 的裁剪回调更新该 session；重试的新触发生成新 UUID。`finish()`、StickerManager 与 StickerWindow 没有入库逻辑。

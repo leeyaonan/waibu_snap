@@ -12,6 +12,7 @@ struct ScrollResultActions : ImageSaveActions
     std::function<ImageOutputResult(const QImage&)> copyImage;
     std::function<ImageOutputResult(const QImage&)> pinImage;
     std::function<bool(QWidget*)> confirmDiscard;
+    std::function<void(const QImage&)> historyUpdated;
 };
 class ScrollResultWindow final : public QWidget
 {

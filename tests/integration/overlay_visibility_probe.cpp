@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QDebug>
 #include <QScreen>
+#include <QTemporaryDir>
 #include <QTimer>
 using namespace waibusnap;
 DisplayResult scrollProbeDisplay(int index);
@@ -57,7 +58,11 @@ int main(int argc, char** argv)
         return 2;
     }
     qInfo() << "真实采集目标：" << display.target.logicalGeometry;
+    QTemporaryDir history;
+    if (!history.isValid())
+        return 2;
     RunOptions options;
+    options.historyRoot = history.filePath(QStringLiteral("history"));
     options.testMode = count != 0;
     options.testCount = count;
     options.stableMs = 500;

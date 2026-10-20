@@ -228,3 +228,10 @@ if(APPLE)
 elseif(WIN32)
     target_sources(overlay_visibility_probe PRIVATE integration/scroll_probe_display_windows.cpp)
 endif()
+
+qt_add_executable(history_ingest_test integration/history_ingest_test.cpp)
+target_link_libraries(history_ingest_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(history_ingest_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_ingest COMMAND history_ingest_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_ingest-output.txt,txt")
+set_tests_properties(history_ingest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
