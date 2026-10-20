@@ -252,3 +252,21 @@ add_test(NAME history_window_high_dpi COMMAND history_window_test
     -o "${CMAKE_CURRENT_BINARY_DIR}/history_window-high-dpi-output.txt,txt")
 set_tests_properties(history_window_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+qt_add_executable(history_actions_test integration/history_actions_test.cpp)
+target_link_libraries(history_actions_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(history_actions_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_actions COMMAND history_actions_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_actions-output.txt,txt")
+set_tests_properties(history_actions PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+# 动作行、复选星标、钉图比例与级联在 2 倍 DPR 下显式复验。
+add_test(NAME history_actions_high_dpi COMMAND history_actions_test
+    starRoundTripAndViews externalStarAndDeleteDisabled starFailureKeepsStateAndSelection
+    copyOriginalAndFailure pinKeyboardLifecycle pinToolbarClosesOnSuccess
+    deleteSuccessAndRefresh deleteTrashFailure deleteIndexFailureBeforeTrash
+    deleteIndexCommitFailureRestoresImage rejectExternalForgedPathsAndStaleIdentity
+    missingImageAndSymlinkProtection revealSuccessFailureAndExternal emptyAndNarrowControls
+    actionsKeepIngestErrorAndSession pinGeometry controllerOutputsUseFakeServicesAndKeepOriginal
+    -o "${CMAKE_CURRENT_BINARY_DIR}/history_actions-high-dpi-output.txt,txt")
+set_tests_properties(history_actions_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)

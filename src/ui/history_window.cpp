@@ -107,8 +107,9 @@ void HistoryImageView::drawBackground(QPainter* painter, const QRectF&)
     painter->fillRect(viewport()->rect(), QBrush(tile));
     painter->restore();
 }
-HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings)
-    : manager_(manager), settings_(std::move(settings))
+HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
+                             HistoryWindowActions actions)
+    : manager_(manager), settings_(std::move(settings)), actions_(std::move(actions))
 {
     setObjectName(QStringLiteral("historyWindow"));
     setWindowTitle(QStringLiteral("截图历史"));
@@ -150,6 +151,34 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings)
     status_->setObjectName(QStringLiteral("historyStatus"));
     zoomBar->addWidget(status_);
     layout->addLayout(zoomBar);
+    auto* actionBar = new QHBoxLayout;
+    const auto actionButton =
+        [this, actionBar](const char* name, const QString& text, const QString& tip)
+    {
+        auto* button = new QToolButton(this);
+        button->setObjectName(QLatin1String(name));
+        button->setText(text);
+        button->setToolTip(tip);
+        actionBar->addWidget(button);
+        return button;
+    };
+    star_ = actionButton("historyStar", QStringLiteral("☆ 星标"), QStringLiteral("切换星标（S）"));
+    star_->setCheckable(true);
+    pin_ = actionButton("historyPin", QStringLiteral("钉住"),
+                        QStringLiteral("钉住并关闭（Enter）；Shift+Enter 钉住并留窗"));
+    copy_ = actionButton("historyCopy", QStringLiteral("复制"), QStringLiteral("复制原图"));
+    reveal_ = actionButton("historyReveal", QStringLiteral("在文件夹中显示"),
+                           QStringLiteral("在文件夹中显示当前图片"));
+    delete_ = actionButton("historyDelete", QStringLiteral("删除"),
+                           QStringLiteral("将当前受管图片移入系统回收站"));
+    actionBar->addStretch();
+    layout->addLayout(actionBar);
+    connect(star_, &QToolButton::clicked, this, &HistoryWindow::toggleStar);
+    connect(copy_, &QToolButton::clicked, this, [this] { outputImage(false); });
+    connect(pin_, &QToolButton::clicked, this, [this] { outputImage(true, true); });
+    connect(delete_, &QToolButton::clicked, this, &HistoryWindow::deleteSelection);
+    connect(reveal_, &QToolButton::clicked, this,
+            [this] { showActionResult(manager_.revealItem(selectedId(), actions_.reveal)); });
     notice_ = new QLabel(this);
     notice_->setObjectName(QStringLiteral("historyNotice"));
     notice_->setWordWrap(true);
@@ -211,6 +240,25 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings)
     connect(fit, &QPushButton::clicked, imageView_, &HistoryImageView::fitImage);
     connect(actual, &QPushButton::clicked, imageView_, &HistoryImageView::actualSize);
     connect(thumbnails_, &QListWidget::currentRowChanged, this, &HistoryWindow::showSelection);
+    connect(thumbnails_, &QListWidget::itemChanged, this,
+            [this](QListWidgetItem* entry)
+            {
+                const QString id = entry->data(Qt::UserRole).toString();
+                const auto item = manager_.findItem(id);
+                const bool starred = entry->checkState() == Qt::Checked;
+                if (!item || item->starred == starred)
+                    return;
+                thumbnails_->setCurrentItem(entry);
+                const auto result = manager_.setStarred(id, starred);
+                if (result.success)
+                    refresh();
+                else
+                {
+                    const QSignalBlocker block(thumbnails_);
+                    entry->setCheckState(item->starred ? Qt::Checked : Qt::Unchecked);
+                }
+                showActionResult(result);
+            });
     connect(thumbnails_->verticalScrollBar(), &QScrollBar::valueChanged, this,
             &HistoryWindow::scheduleThumbnails);
     connect(thumbnails_->horizontalScrollBar(), &QScrollBar::valueChanged, this,
@@ -319,6 +367,8 @@ void HistoryWindow::rebuildItems(const QString& selected)
         entry->setSizeHint({210, 92});
         entry->setData(Qt::UserRole, historyItemId(item));
         entry->setToolTip(item.fileName);
+        entry->setFlags(entry->flags() | Qt::ItemIsUserCheckable);
+        entry->setCheckState(item.starred ? Qt::Checked : Qt::Unchecked);
         if (historyItemId(item) == selected)
             selectedRow = thumbnails_->count() - 1;
         bytes += item.bytes;
@@ -333,6 +383,7 @@ void HistoryWindow::rebuildItems(const QString& selected)
 }
 void HistoryWindow::showSelection()
 {
+    updateActions();
     const auto* entry = thumbnails_->currentItem();
     if (!entry)
     {
@@ -352,6 +403,64 @@ void HistoryWindow::showSelection()
     imageView_->setVisible(result.success);
     empty_->setText(result.error);
     empty_->setVisible(!result.success);
+}
+QString HistoryWindow::selectedId() const
+{
+    const auto* entry = thumbnails_->currentItem();
+    return entry ? entry->data(Qt::UserRole).toString() : QString();
+}
+void HistoryWindow::updateActions()
+{
+    const auto item = manager_.findItem(selectedId());
+    star_->setEnabled(bool(item));
+    star_->setChecked(item && item->starred);
+    star_->setText(item && item->starred ? QStringLiteral("★ 星标") : QStringLiteral("☆ 星标"));
+    copy_->setEnabled(item && bool(actions_.copyImage));
+    pin_->setEnabled(item && bool(actions_.pinImage));
+    reveal_->setEnabled(item && bool(actions_.reveal));
+    delete_->setEnabled(item && item->managed && bool(actions_.trash));
+    delete_->setToolTip(item && !item->managed ? QStringLiteral("请在文件管理器中操作")
+                                               : QStringLiteral("将当前受管图片移入系统回收站"));
+}
+void HistoryWindow::showActionResult(const HistoryStatus& result)
+{
+    notice_->setText(result.success ? snapshot_.error : result.error);
+    notice_->setVisible(!notice_->text().isEmpty());
+    updateActions();
+}
+void HistoryWindow::toggleStar()
+{
+    const auto item = manager_.findItem(selectedId());
+    if (!item)
+        return;
+    const auto result = manager_.setStarred(historyItemId(*item), !item->starred);
+    if (result.success)
+        refresh();
+    showActionResult(result);
+}
+void HistoryWindow::outputImage(bool pin, bool closeAfter)
+{
+    if (selectedId().isEmpty())
+        return;
+    const auto loaded = manager_.loadImage(selectedId());
+    if (!loaded.success)
+    {
+        showActionResult(loaded);
+        return;
+    }
+    const auto& callback = pin ? actions_.pinImage : actions_.copyImage;
+    const auto result = callback ? callback(loaded.image)
+                                 : ImageOutputResult{false, QStringLiteral("图片输出服务不可用。")};
+    showActionResult({result.success, result.explanation});
+    if (result.success && pin && closeAfter)
+        close();
+}
+void HistoryWindow::deleteSelection()
+{
+    const auto result = manager_.deleteItem(selectedId(), actions_.trash);
+    if (result.success)
+        refresh();
+    showActionResult(result);
 }
 void HistoryWindow::refresh()
 {
@@ -449,6 +558,19 @@ bool HistoryWindow::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::KeyPress)
     {
         const auto* key = static_cast<QKeyEvent*>(event);
+        if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
+            (key->modifiers() == Qt::NoModifier || key->modifiers() == Qt::ShiftModifier))
+        {
+            if (!key->isAutoRepeat())
+                outputImage(true, key->modifiers() == Qt::NoModifier);
+            return true;
+        }
+        if (key->key() == Qt::Key_S && key->modifiers() == Qt::NoModifier)
+        {
+            if (!key->isAutoRepeat())
+                toggleStar();
+            return true;
+        }
         if (key->key() == Qt::Key_Escape)
         {
             close();

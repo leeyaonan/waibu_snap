@@ -54,6 +54,8 @@ class HistoryStore
     HistoryWriteResult writeManagedPng(const QString& groupId, const QImage& image,
                                        HistorySource source, const QString& existingFileName = {});
     HistoryStatus setStarred(const QString& groupId, const QString& fileName, bool starred);
+    HistoryStatus deleteManagedItem(const HistoryItem& item, const HistoryTrash& trash);
+    HistoryStatus validateItem(const HistoryItem& item) const;
     HistoryItemsResult itemsForGroup(const QString& groupId,
                                      HistorySort order = HistorySort::OldestFirst,
                                      const QString& selectedId = {}) const;

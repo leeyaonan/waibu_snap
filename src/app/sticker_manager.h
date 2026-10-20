@@ -11,7 +11,8 @@ class StickerManager final : public QObject
   public:
     explicit StickerManager(QObject* parent = nullptr, StickerActions actions = {});
     ~StickerManager() override;
-    ImageOutputResult create(const QImage& image, QPoint position, bool saved = false);
+    ImageOutputResult create(const QImage& image, QPoint position, bool saved = false,
+                             qreal initialScale = 1);
     void hideAll();
     void restoreAll();
     void closeAll();

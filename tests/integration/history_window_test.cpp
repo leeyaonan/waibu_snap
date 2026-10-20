@@ -206,7 +206,7 @@ class HistoryWindowTest final : public QObject
         QTest::keyClick(w, Qt::Key_Return);
         QTest::keyClick(w, Qt::Key_S);
         QVERIFY(w->isVisible());
-        QVERIFY(!f.store.scan().groups[0].items[0].starred);
+        QVERIFY(f.store.scan().groups[0].items[0].starred);
         QTest::keyClick(preview(w), Qt::Key_Escape);
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QVERIFY(f.window.isNull());

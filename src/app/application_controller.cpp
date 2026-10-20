@@ -20,7 +20,9 @@ namespace waibusnap
 ApplicationController::ApplicationController(QApplication& application, RunOptions options,
                                              StickerActions stickerActions,
                                              ClipboardActions clipboardActions,
-                                             AutostartActions autostartActions)
+                                             AutostartActions autostartActions,
+                                             HistoryWindowActions historyActions,
+                                             std::shared_ptr<FileManager> fileManager)
     : application_(application), options_(std::move(options)), hotkey_(createGlobalHotkey()),
       settings_(options_.settingsFile), history_(settings_, options_.historyRoot),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
@@ -37,9 +39,27 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                     { return settings_.saveStickerCloseReminder(enabled); };
                     return std::move(stickerActions);
                 }()),
-      clipboardActions_(std::move(clipboardActions)), autostartActions_(std::move(autostartActions))
+      clipboardActions_(std::move(clipboardActions)),
+      autostartActions_(std::move(autostartActions)), historyActions_(std::move(historyActions)),
+      fileManager_(fileManager ? std::move(fileManager) : createFileManager())
 {
     history_.initialize();
+    if (!historyActions_.copyImage)
+        historyActions_.copyImage = copyImageToClipboard;
+    if (!historyActions_.pinImage)
+        historyActions_.pinImage = [this](const QImage& image) { return pinHistoryImage(image); };
+    if (!historyActions_.reveal)
+        historyActions_.reveal = [this](const QString& path)
+        {
+            const auto result = fileManager_->revealInFolder(path);
+            return HistoryStatus{result.success, result.error};
+        };
+    if (!historyActions_.trash)
+        historyActions_.trash = [this](const QString& path)
+        {
+            const auto result = fileManager_->moveToTrash(path);
+            return HistoryStatus{result.success, result.error};
+        };
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
         const std::shared_ptr<Autostart> autostart = createAutostart();
@@ -240,12 +260,32 @@ void ApplicationController::openSettings()
     settingsOpen_ = false;
     refreshStickerActions();
 }
+ImageOutputResult ApplicationController::pinHistoryImage(const QImage& image)
+{
+    if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
+        return {false, QStringLiteral("截图、设置或退出期间无法钉住历史图片。")};
+    QScreen* screen = historyWindow_ ? historyWindow_->screen() : nullptr;
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return {false, QStringLiteral("未找到可用显示器，请重试。")};
+    const QRect available = screen->availableGeometry();
+    const qreal dpr = screen->devicePixelRatio();
+    const qreal scale = historyStickerScale(image.size(), available, dpr);
+    const auto size = stickerWindowSize(image.size(), scale, dpr);
+    const auto result = stickers_.create(
+        image, clipboardStickerPosition(available, size, historyStickerSequence_), true, scale);
+    if (result.success)
+        ++historyStickerSequence_;
+    refreshStickerActions();
+    return result;
+}
 void ApplicationController::openHistory()
 {
     if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
         return;
     if (!historyWindow_)
-        historyWindow_ = new HistoryWindow(history_, settings_);
+        historyWindow_ = new HistoryWindow(history_, settings_, historyActions_);
     else
         historyWindow_->refresh();
     historyWindow_->show();

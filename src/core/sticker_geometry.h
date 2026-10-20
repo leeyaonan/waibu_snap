@@ -7,6 +7,7 @@ namespace waibusnap
 {
 inline constexpr qreal minimumStickerScale = 0.25;
 inline constexpr qreal maximumStickerScale = 4;
+qreal historyStickerScale(QSize pixels, QRect available, qreal dpr);
 qreal clampedStickerScale(qreal scale);
 qreal steppedStickerScale(qreal scale, int steps);
 QSizeF stickerLogicalSize(QSize pixels, qreal scale, qreal dpr);

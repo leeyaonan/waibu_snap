@@ -5,6 +5,7 @@
 #include "app/sticker_manager.h"
 #include "interfaces/autostart.h"
 #include "interfaces/capture_provider.h"
+#include "interfaces/file_manager.h"
 #include "interfaces/global_hotkey.h"
 #include "interfaces/overlay_window_behavior.h"
 #include "interfaces/presentation_observer.h"
@@ -47,7 +48,9 @@ class ApplicationController final : public QObject
     explicit ApplicationController(QApplication& application, RunOptions options,
                                    StickerActions stickerActions = {},
                                    ClipboardActions clipboardActions = {},
-                                   AutostartActions autostartActions = {});
+                                   AutostartActions autostartActions = {},
+                                   HistoryWindowActions historyActions = {},
+                                   std::shared_ptr<FileManager> fileManager = {});
     ~ApplicationController() override;
     void start();
     void trigger(const QString& source);
@@ -80,6 +83,7 @@ class ApplicationController final : public QObject
     void openSettings();
     void refreshStickerActions();
     void pinClipboardImage();
+    ImageOutputResult pinHistoryImage(const QImage& image);
     QString changeHotkey(const QKeySequence& sequence);
     QApplication& application_;
     RunOptions options_;
@@ -103,6 +107,9 @@ class ApplicationController final : public QObject
     StickerManager stickers_;
     ClipboardActions clipboardActions_;
     AutostartActions autostartActions_;
+    HistoryWindowActions historyActions_;
+    std::shared_ptr<FileManager> fileManager_;
+    quint64 historyStickerSequence_ = 0;
     std::unique_ptr<ClipboardStickerToast> clipboardToast_;
     quint64 clipboardStickerSequence_ = 0;
     QPointer<SelectionOverlay> overlay_;

@@ -10,6 +10,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QWindow>
+#include <cmath>
 namespace waibusnap
 {
 StickerManager::StickerManager(QObject* parent, StickerActions actions)
@@ -60,12 +61,13 @@ void StickerManager::watchScreen(QScreen* screen)
     connect(screen, &QScreen::logicalDotsPerInchChanged, this,
             [this] { QTimer::singleShot(0, this, &StickerManager::recoverWindows); });
 }
-ImageOutputResult StickerManager::create(const QImage& image, QPoint position, bool saved)
+ImageOutputResult StickerManager::create(const QImage& image, QPoint position, bool saved,
+                                         qreal initialScale)
 {
-    if (closingAll_ || resolvingQuit_ || image.isNull() ||
-        stickerWindowSize(image.size(), 1, 1).isEmpty())
+    if (closingAll_ || resolvingQuit_ || image.isNull() || !std::isfinite(initialScale) ||
+        initialScale <= 0 || initialScale > 1 || stickerWindowSize(image.size(), 1, 1).isEmpty())
         return {false, QStringLiteral("贴图图像或窗口尺寸无效。")};
-    auto* window = new StickerWindow(image, position, saved, actions_);
+    auto* window = new StickerWindow(image, position, saved, actions_, initialScale);
     if (!configureStickerWindowBehavior(window->windowHandle()))
     {
         delete window;
