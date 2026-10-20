@@ -119,6 +119,68 @@ QString AppSettings::saveHistoryPreferences(const HistoryPreferences& preference
     historyWriteFailed_ = false;
     return {};
 }
+HistoryWindowState AppSettings::loadHistoryWindowState() const
+{
+    QFile file(filePath_);
+    if (historyWindowWriteFailed_ || !file.open(QIODevice::ReadOnly))
+        return {};
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return {};
+    HistoryWindowState result;
+    const QString prefix = QStringLiteral("history/window/");
+    const auto geometry = settings.value(prefix + QStringLiteral("geometry"));
+    const auto splitter = settings.value(prefix + QStringLiteral("splitterState"));
+    if (geometry.metaType().id() == QMetaType::QByteArray)
+        result.geometry = geometry.toByteArray();
+    if (splitter.metaType().id() == QMetaType::QByteArray)
+        result.splitterState = splitter.toByteArray();
+    const QString view = settings.value(prefix + QStringLiteral("lastView")).toString();
+    if (view == QStringLiteral("all") || view == QStringLiteral("starred") ||
+        (!QUuid(view).isNull() && QUuid(view).toString(QUuid::WithoutBraces) == view))
+        result.lastView = view;
+    result.lastSelection = settings.value(prefix + QStringLiteral("lastSelection")).toString();
+    const QString order = settings.value(prefix + QStringLiteral("sortOrder")).toString();
+    if (order == QStringLiteral("oldest") || order == QStringLiteral("newest"))
+        result.sortOrder = order;
+    return result;
+}
+QString AppSettings::saveHistoryWindowState(const HistoryWindowState& state) const
+{
+    historyWindowWriteFailed_ = true;
+    const QString error = QStringLiteral("历史窗口状态保存失败，下次将使用默认窗口状态。");
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()) || QFileInfo(filePath_).isDir())
+        return error;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    const QString prefix = QStringLiteral("history/window/");
+    const QStringList names{QStringLiteral("geometry"), QStringLiteral("splitterState"),
+                            QStringLiteral("lastView"), QStringLiteral("lastSelection"),
+                            QStringLiteral("sortOrder")};
+    const QVector<QVariant> values{state.geometry, state.splitterState, state.lastView,
+                                   state.lastSelection, state.sortOrder};
+    QVector<QVariant> previous;
+    for (qsizetype i = 0; i < names.size(); ++i)
+    {
+        previous.append(settings.value(prefix + names[i]));
+        settings.setValue(prefix + names[i], values[i]);
+    }
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        for (qsizetype i = 0; i < names.size(); ++i)
+            if (previous[i].isValid())
+                settings.setValue(prefix + names[i], previous[i]);
+            else
+                settings.remove(prefix + names[i]);
+        return error;
+    }
+    historyWindowWriteFailed_ = false;
+    return {};
+}
 LoadedHotkey AppSettings::loadHotkey() const
 {
     QSettings settings(filePath_, QSettings::IniFormat);

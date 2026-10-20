@@ -235,3 +235,20 @@ set_target_properties(history_ingest_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME history_ingest COMMAND history_ingest_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/history_ingest-output.txt,txt")
 set_tests_properties(history_ingest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+qt_add_executable(history_window_test integration/history_window_test.cpp)
+target_link_libraries(history_window_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(history_window_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_window COMMAND history_window_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_window-output.txt,txt")
+set_tests_properties(history_window PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+# 历史浏览 UI 的高 DPI 显式清单，独立于既有截图冒烟数字。
+add_test(NAME history_window_high_dpi COMMAND history_window_test
+    emptyHistory filtersCountsAndCurrentGroup sortingSelectionAndKeyboard lazyThumbnails
+    transparentCheckerboard longImageZoomScrollAndPan narrowLayoutAndCollapse
+    restoreStateAndSelection offscreenGeometryAndStaleSelection missingImageAndRefresh
+    refreshPreservesIngestState corruptedMetadataAndUnavailableRoot
+    settingsIsolationFailureAndDefaults controllerLazyLifecycleAndGuards controllerSettingsModalGuard
+    -o "${CMAKE_CURRENT_BINARY_DIR}/history_window-high-dpi-output.txt,txt")
+set_tests_properties(history_window_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)

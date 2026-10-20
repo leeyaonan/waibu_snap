@@ -12,6 +12,7 @@
 #include "interfaces/window_visibility.h"
 #include "session/session_metrics.h"
 #include "ui/clipboard_sticker_toast.h"
+#include "ui/history_window.h"
 #include "ui/scroll_capture_windows.h"
 #include "ui/scroll_result_window.h"
 #include "ui/selection_overlay.h"
@@ -51,6 +52,7 @@ class ApplicationController final : public QObject
     void start();
     void trigger(const QString& source);
     void quit();
+    void openHistory();
     QMenu* menu() { return &menu_; }
     bool active() const { return active_; }
     StickerManager& stickers() { return stickers_; }
@@ -83,6 +85,7 @@ class ApplicationController final : public QObject
     RunOptions options_;
     QAction* scrollAction_ = nullptr;
     QAction* settingsAction_ = nullptr;
+    QAction* openHistoryAction_ = nullptr;
     QAction* clipboardStickerAction_ = nullptr;
     QAction* hideAllStickersAction_ = nullptr;
     QAction* restoreAllStickersAction_ = nullptr;
@@ -103,6 +106,7 @@ class ApplicationController final : public QObject
     std::unique_ptr<ClipboardStickerToast> clipboardToast_;
     quint64 clipboardStickerSequence_ = 0;
     QPointer<SelectionOverlay> overlay_;
+    QPointer<HistoryWindow> historyWindow_;
     QPointer<ScrollCaptureSession> scrollSession_;
     QPointer<ScrollBorderWindow> scrollBorder_;
     QPointer<ScrollControlBar> scrollBar_;

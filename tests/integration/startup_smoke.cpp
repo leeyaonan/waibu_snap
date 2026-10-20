@@ -2702,15 +2702,24 @@ class StartupSmokeTest final : public QObject
         using namespace waibusnap;
         ApplicationController controller(*qApp, isolatedHistory());
         auto* menu = controller.menu();
-        QCOMPARE(menu->actions().size(), qsizetype(7));
-        QCOMPARE(menu->actions()[0]->text(), QStringLiteral("截图"));
-        QCOMPARE(menu->actions()[2]->text(), QStringLiteral("剪贴板贴图"));
-        QCOMPARE(menu->actions()[2]->objectName(), QStringLiteral("clipboardStickerAction"));
-        QVERIFY(menu->actions()[2]->isEnabled());
-        QCOMPARE(menu->actions()[3]->text(), QStringLiteral("设置…"));
-        QCOMPARE(menu->actions()[6]->text(), QStringLiteral("退出"));
-        auto* hide = menu->actions()[4];
-        auto* restore = menu->actions()[5];
+        const auto action = [menu](const char* name)
+        { return menu->findChild<QAction*>(QLatin1String(name)); };
+        QVERIFY(action("screenshotAction"));
+        QCOMPARE(action("screenshotAction")->text(), QStringLiteral("截图"));
+        QVERIFY(action("clipboardStickerAction"));
+        QCOMPARE(action("clipboardStickerAction")->text(), QStringLiteral("剪贴板贴图"));
+        QVERIFY(action("clipboardStickerAction")->isEnabled());
+        QVERIFY(action("settingsAction"));
+        QCOMPARE(action("settingsAction")->text(), QStringLiteral("设置…"));
+        QVERIFY(action("quitAction"));
+        QCOMPARE(action("quitAction")->text(), QStringLiteral("退出"));
+        QVERIFY(action("openHistoryAction"));
+        QCOMPARE(action("openHistoryAction")->text(), QStringLiteral("打开历史…"));
+        QVERIFY(action("openHistoryAction")->isEnabled());
+        auto* hide = action("hideAllStickersAction");
+        auto* restore = action("restoreAllStickersAction");
+        QVERIFY(hide);
+        QVERIFY(restore);
         QCOMPARE(hide->text(), QStringLiteral("隐藏全部贴图"));
         QCOMPARE(restore->text(), QStringLiteral("恢复全部贴图"));
         QCOMPARE(hide->objectName(), QStringLiteral("hideAllStickersAction"));
@@ -3054,7 +3063,9 @@ class StartupSmokeTest final : public QObject
             [&]
             {
                 sessionGuarded = controller.active() && !action->isEnabled() &&
-                                 !controller.menu()->actions()[3]->isEnabled();
+                                 !controller.menu()
+                                      ->findChild<QAction*>(QStringLiteral("settingsAction"))
+                                      ->isEnabled();
                 sessionGuarded &=
                     ApplicationControllerTestAccess::watchdog(controller).isActive() &&
                     ApplicationControllerTestAccess::watchdog(controller).interval() == 5000;
@@ -3076,7 +3087,8 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!controller.active());
         QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
         QVERIFY(action->isEnabled());
-        QVERIFY(controller.menu()->actions()[3]->isEnabled());
+        QVERIFY(
+            controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->isEnabled());
         QCOMPARE(controller.stickers().count(), 1);
     }
     void controllerSessionWatchdogRecovery_data()
@@ -3102,7 +3114,8 @@ class StartupSmokeTest final : public QObject
             delete overlay.data();
         ApplicationControllerTestAccess::observe(controller);
         const auto oldToken = ApplicationControllerTestAccess::token(controller);
-        QVERIFY(!controller.menu()->actions()[3]->isEnabled());
+        QVERIFY(
+            !controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->isEnabled());
         QVERIFY(!clipboardAction(controller)->isEnabled());
         QTest::ignoreMessage(
             QtWarningMsg, QRegularExpression(QStringLiteral("截图会话异常残留，已自动复位：.*")));
@@ -3113,7 +3126,8 @@ class StartupSmokeTest final : public QObject
         QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
         QVERIFY(ApplicationControllerTestAccess::observationCleared(controller));
         QVERIFY(ApplicationControllerTestAccess::token(controller) > oldToken);
-        QVERIFY(controller.menu()->actions()[3]->isEnabled());
+        QVERIFY(
+            controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->isEnabled());
         QVERIFY(clipboardAction(controller)->isEnabled());
         if (overlay)
             QTRY_VERIFY(!overlay);
@@ -3182,7 +3196,8 @@ class StartupSmokeTest final : public QObject
         ApplicationControllerTestAccess::watchdogCheck(controller);
         QVERIFY(!controller.active());
         QVERIFY(ApplicationControllerTestAccess::timersStopped(controller));
-        QVERIFY(controller.menu()->actions()[3]->isEnabled());
+        QVERIFY(
+            controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->isEnabled());
         QVERIFY(clipboardAction(controller)->isEnabled());
         QTRY_VERIFY(!overlay);
         QFile metrics(options.metricsFile);
@@ -3380,7 +3395,8 @@ class StartupSmokeTest final : public QObject
         QVERIFY(hidden);
         QVERIFY(locked);
         QVERIFY(!controller.active());
-        QVERIFY(controller.menu()->actions()[3]->isEnabled());
+        QVERIFY(
+            controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->isEnabled());
         QVERIFY(clipboardAction(controller)->isEnabled());
     }
     void controllerQuitDialogHidesAndRestoresOverlay_data()
@@ -4030,7 +4046,7 @@ class StartupSmokeTest final : public QObject
                 QCOMPARE(dialog->result(), int(QDialog::Accepted));
                 handled = true;
             });
-        controller.menu()->actions().at(3)->trigger();
+        controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->trigger();
         QVERIFY(handled);
         QVERIFY(AppSettings(options.settingsFile).loadStickerCloseReminder());
         QVERIFY(remaining && remaining->isVisible() && !remaining->isSaved());
@@ -7821,7 +7837,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 ++handled;
             });
-        controller.menu()->actions().at(3)->trigger();
+        controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->trigger();
         QCOMPARE(handled, 1);
         QCOMPARE(stub.requests, QVector<bool>{true});
         QVERIFY(stub.state.enabled);
@@ -7839,7 +7855,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 ++handled;
             });
-        controller.menu()->actions().at(3)->trigger();
+        controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->trigger();
         QCOMPARE(handled, 2);
         QCOMPARE(stub.requests, QVector<bool>{true});
         QCOMPARE(stub.queries, 3);
@@ -7985,7 +8001,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 handled = true;
             });
-        controller.menu()->actions().at(3)->trigger();
+        controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->trigger();
         QVERIFY(handled);
         QVERIFY(window->saveImage());
         QCOMPARE(panels, 1);
@@ -8018,7 +8034,7 @@ class StartupSmokeTest final : public QObject
                     Qt::LeftButton);
                 handled = true;
             });
-        controller.menu()->actions().at(3)->trigger();
+        controller.menu()->findChild<QAction*>(QStringLiteral("settingsAction"))->trigger();
         QVERIFY(handled);
         QVERIFY(!window->saveImage());
         QCOMPARE(panels, 2);
