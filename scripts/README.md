@@ -19,13 +19,33 @@
 
 ## 手动准备与版本锁定
 
-Qt 通过 [官方开源安装器](https://www.qt.io/download-qt-installer-oss)选择 **6.11.2**，只需桌面基础组件 qtbase（Core / Gui / Widgets / Test 及必需插件），不用 QML / WebEngine 或 GPL-only 模块。安装器可能同时展示其他组件，勿默认勾选。将 `QT_ROOT_DIR` 指向 kit 根目录。
+Qt 通过 [官方开源安装器](https://www.qt.io/download-qt-installer-oss)选择 **6.11.2**，需要桌面基础组件 qtbase（Core / Gui / Widgets / Test 及必需插件）和官方 **qtimageformats / Qt Image Formats**（WebP 插件），不用 QML / WebEngine 或 GPL-only 模块。安装器可能同时展示其他组件，勿默认勾选。将 `QT_ROOT_DIR` 指向 kit 根目录。
 
 - macOS：准备 Xcode 15+ / 命令行工具；CMake 3.24+ 与 Ninja 可由开发者自行通过官方安装包或 Homebrew 安装（例如 `brew install cmake ninja`，脚本不会执行该命令）。
 - Windows：准备 Visual Studio 2022 C++ 桌面开发、Windows SDK、[CMake](https://cmake.org/download/)和 [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)。CMake 与 pwsh 加入当前用户 PATH。优先使用 VS 2022；兼容 VS 2026 宿主加装 MSVC v143 14.44 x64（需要 CMake ≥ 4.2）。脚本按已安装宿主选生成器并固定 `-T v143`，无需另装 Ninja 或手动运行 vcvars。
 - 可选的本地格式工具：已有 Python 3 时，可自行创建 `.venv`，在其中运行 `python -m pip install clang-format==18.1.8`，激活后执行 lint 脚本。只在需要格式检查时安装，不是应用构建的前置条件。
 
-环境脚本用 qmake 检查 **6.11.2**，Windows 还检查 MSVC kit；CMake `EXACT` 再次检查版本并拒绝静态 Qt。CI action、Qt、aqtinstall、py7zr 与 clang-format 均有固定版本或提交；runner 镜像和系统 SDK 随 `*-latest` 更新，详细版本以每次 CI 日志为准，不声称完整可复现构建。
+环境脚本用 qmake 检查 **6.11.2** 与插件目录，要求 macOS 的 `imageformats/libqwebp.dylib` / Windows 的 `imageformats/qwebp.dll` 存在；缺失立即非零失败并输出补装命令，不自动安装。Windows 还检查 MSVC kit；CMake `EXACT` 再次检查版本并拒绝静态 Qt。CI action、Qt、aqtinstall、py7zr 与 clang-format 均有固定版本或提交；runner 镜像和系统 SDK 随 `*-latest` 更新，详细版本以每次 CI 日志为准，不声称完整可复现构建。
+
+### 已有 Qt 补装 WebP
+
+优先在 Qt MaintenanceTool 中为已有 **6.11.2** kit 勾选 **Qt Image Formats**。已准备 aqt 的环境可只补官方模块（不重装 qtbase）：
+
+```bash
+# macOS：Qt 安装根目录通常是 kit 路径的上两级，请按实际位置修改。
+aqt install-qt mac desktop 6.11.2 clang_64 --noarchives --modules qtimageformats -O "$HOME/Qt"
+QT_ROOT_DIR="$HOME/Qt/6.11.2/macos" bash scripts/prepare-environment.sh
+```
+
+```powershell
+# Windows：按实际 Qt 根目录修改；下载器使用下文登记的固定提交，兼容 Qt 6.11 仓库布局。
+python -m pip install 'git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b'
+aqt install-qt windows desktop 6.11.2 win64_msvc2022_64 --noarchives --modules qtimageformats -O 'C:/Qt'
+$env:QT_ROOT_DIR = 'C:/Qt/6.11.2/msvc2022_64'
+./scripts/prepare-environment.ps1
+```
+
+脚本检查插件文件是否安装；真实编解码能力由 `history_external` / `history_external_high_dpi` 的 QImageReader / QImageWriter 断言验证，加载失败属于环境阻塞，不能静默跳过。CI 安装 action 同时指定 `archives: qtbase` 与 `modules: qtimageformats`。应用保持开发机 Qt 动态插件加载方式，插件随分发包部署仍属于后续打包工作。
 
 ## macOS 27 授权归属
 
@@ -94,6 +114,7 @@ Qt Test 与测量工具计算单测需要 Python 3（仅标准库，CI 已提供
 | 项目 / 锁定 | 用途 | 许可 / 范围 |
 | --- | --- | --- |
 | Qt Core / Gui / Widgets 6.11.2 | 应用运行时，动态链接 | LGPLv3；来源 qtbase，不引入 GPL-only 模块 |
+| Qt Image Formats 6.11.2 | WebP 动态图片插件，不增加共享层链接库 | Qt 官方模块；Qt 与随附编解码器的许可声明随 SDK 保留，发行前核对 |
 | Qt Test 6.11.2 | 测试可执行文件 | LGPLv3；不进入应用目标，[官方说明](https://doc.qt.io/qt-6.11/qttest-index.html) |
 | CMake / CTest ≥ 3.24 | 工程配置、构建调度、测试 | BSD 3-Clause；开发工具 |
 | Ninja | macOS 构建后端 | Apache-2.0；开发工具，runner 提供 |
@@ -101,7 +122,7 @@ Qt Test 与测量工具计算单测需要 Python 3（仅标准库，CI 已提供
 | Python 3.14（CI） | 运行下载器与格式工具安装 | PSF；CI / 可选开发工具 |
 | PowerShell 7 | Windows 脚本宿主 | MIT；开发工具 |
 | clang-format 18.1.8 | 双端格式检查 | LLVM Apache-2.0 WITH LLVM-exception；PyPI 打包项目 MIT，[版本页](https://pypi.org/project/clang-format/18.1.8/) |
-| aqtinstall 固定提交 `8c3695d4…` | CI 从 Qt 下载站安装指定 qtbase | MIT；仅 CI，[源码](https://github.com/miurahr/aqtinstall) |
+| aqtinstall 固定提交 `8c3695d4…` | CI 从 Qt 下载站安装指定 qtbase 与 qtimageformats | MIT；仅 CI，[源码](https://github.com/miurahr/aqtinstall) |
 | py7zr 1.1.0 | CI 解压 Qt 归档 | LGPL-2.1-or-later；仅 CI，不进入应用 |
 | jurplel/install-qt-action（固定 SHA） | CI Qt 下载 / 缓存及环境设置 | MIT；仅 CI，[源码](https://github.com/jurplel/install-qt-action) |
 | actions/checkout、actions/setup-python（固定 SHA） | CI 源码与 Python 准备 | MIT；仅 CI |

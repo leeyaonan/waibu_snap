@@ -288,3 +288,26 @@ add_test(NAME history_groups_high_dpi COMMAND history_groups_test
     -o "${CMAKE_CURRENT_BINARY_DIR}/history_groups-high-dpi-output.txt,txt")
 set_tests_properties(history_groups_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+qt_add_executable(history_external_test integration/history_external_test.cpp)
+target_link_libraries(history_external_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+target_compile_definitions(history_external_test PRIVATE
+    WAIBUSNAP_WEBP_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/history/minimal.webp")
+set_target_properties(history_external_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_external COMMAND history_external_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_external-output.txt,txt")
+set_tests_properties(history_external PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+add_test(NAME history_external_high_dpi COMMAND history_external_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_external-high-dpi-output.txt,txt")
+set_tests_properties(history_external_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+# 插件缺失取证单独进程运行，不能污染正常 WebP 的真解码 / 编码验证。
+qt_add_executable(history_missing_webp_test integration/history_missing_webp_test.cpp)
+target_link_libraries(history_missing_webp_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+target_compile_definitions(history_missing_webp_test PRIVATE
+    WAIBUSNAP_WEBP_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/history/minimal.webp")
+set_target_properties(history_missing_webp_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_missing_webp COMMAND history_missing_webp_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_missing_webp-output.txt,txt")
+set_tests_properties(history_missing_webp PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)

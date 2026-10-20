@@ -38,4 +38,13 @@ $QtVersion = & $Qmake -query QT_VERSION
 if ($LASTEXITCODE -ne 0 -or $QtVersion.Trim() -ne '6.11.2') { throw "需要 Qt 6.11.2，实际为 $QtVersion。" }
 $QtSpec = & $Qmake -query QMAKE_XSPEC
 if ($LASTEXITCODE -ne 0 -or $QtSpec.Trim() -ne 'win32-msvc') { throw '必须使用 MSVC 版 Qt，不能使用 MinGW 版。' }
-Write-Host "环境检测通过：Qt $QtVersion，路径 $env:QT_ROOT_DIR"
+$QtPlugins = & $Qmake -query QT_INSTALL_PLUGINS
+if ($LASTEXITCODE -ne 0) { throw '读取 Qt 插件路径失败。' }
+$WebPPlugin = Join-Path $QtPlugins.Trim() 'imageformats/qwebp.dll'
+if (-not (Test-Path -PathType Leaf $WebPPlugin)) {
+    $QtOutput = Split-Path (Split-Path $env:QT_ROOT_DIR -Parent) -Parent
+    Write-Host '请在 Qt MaintenanceTool 中为 Qt 6.11.2 勾选 Qt Image Formats，或用已安装的 aqt 执行：'
+    Write-Host "aqt install-qt windows desktop 6.11.2 win64_msvc2022_64 --noarchives --modules qtimageformats -O '$($QtOutput.Replace("'", "''"))'"
+    throw "缺少 Qt WebP 插件：$WebPPlugin；需要官方 qtimageformats 模块。"
+}
+Write-Host "环境检测通过：Qt $QtVersion，路径 $env:QT_ROOT_DIR，WebP 插件已安装"

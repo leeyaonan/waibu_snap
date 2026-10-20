@@ -1,5 +1,6 @@
 #include "app/history_manager.h"
 #include <QDebug>
+#include <QFileInfo>
 #include <QImageReader>
 #include <QUuid>
 namespace waibusnap
@@ -280,6 +281,14 @@ HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds
                 const auto checked = store_->validateItem(item);
                 if (!checked.success)
                     return {checked, {}};
+                if (QFileInfo(item.fileName)
+                            .suffix()
+                            .compare(QLatin1String("webp"), Qt::CaseInsensitive) == 0 &&
+                    !QImageReader::supportedImageFormats().contains("webp"))
+                    return {
+                        {false, QStringLiteral("缺少 Qt WebP 图片插件（qtimageformats），请安装 "
+                                               "Qt 6.11.2 的 Qt Image Formats 后重试。")},
+                        {}};
                 QImageReader reader(item.absolutePath);
                 reader.setAutoTransform(true);
                 if (bounds.isValid() && reader.size().isValid())
