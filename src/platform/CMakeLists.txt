@@ -21,10 +21,10 @@ if(APPLE)
         target_link_libraries(waibusnap_platform PRIVATE "${${framework}_FRAMEWORK}")
     endforeach()
 elseif(WIN32)
-    target_sources(waibusnap_platform PRIVATE windows/file_manager.cpp windows/scroll_injector.cpp windows/platform_info.cpp windows/capture_services.cpp
+    target_sources(waibusnap_platform PRIVATE windows/global_hotkey.cpp windows/file_manager.cpp windows/scroll_injector.cpp windows/platform_info.cpp windows/capture_services.cpp
         windows/platform_workarounds.cpp windows/sticker_window_behavior.cpp windows/tray_icon.cpp
         windows/window_visibility.cpp windows/overlay_window_behavior.cpp windows/autostart.cpp windows/text_recognizer.cpp)
-    target_link_libraries(waibusnap_platform PRIVATE Advapi32 windowsapp Shell32 Ole32)
+    target_link_libraries(waibusnap_platform PRIVATE Advapi32 windowsapp Shell32 Ole32 User32)
 endif()
 
 if(APPLE)
