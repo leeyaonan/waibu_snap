@@ -495,7 +495,7 @@ void SettingsDialog::buildHistoryPage(QWidget* page)
     auto* privacy = new QLabel(
         QStringLiteral("历史会把截图副本保存在本机磁盘；任何能读取该目录的进程、同步工具或恶意软件"
                        "都可能获取其中的密码、聊天、证件、财务等敏感信息。仅在可信设备上开启，"
-                       "并定期清理；关闭后已有文件仍会保留。"),
+                       "并定期清理；关闭后已有文件仍会保留。开关在点击保存后生效。"),
         page);
     privacy->setObjectName(QStringLiteral("historyPrivacyNotice"));
     privacy->setWordWrap(true);

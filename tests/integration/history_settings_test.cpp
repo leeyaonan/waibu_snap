@@ -247,6 +247,13 @@ class HistorySettingsTest final : public QObject
         QVERIFY(QFileInfo::exists(root));
         QVERIFY(AppSettings(settingsPath).loadHistoryPreferences().enabled);
         QVERIFY(open->isEnabled());
+        auto* historyMenu = child<QMenu>(controller.menu(), "historyMenu");
+        auto* currentMenu = child<QMenu>(controller.menu(), "currentGroupMenu");
+        QVERIFY(historyMenu->isEnabled());
+        QVERIFY(historyMenu->menuAction()->isEnabled());
+        QVERIFY(currentMenu->isEnabled());
+        QVERIFY(currentMenu->menuAction()->isEnabled());
+        QVERIFY(currentMenu->title().contains(QStringLiteral("默认分组")));
         QTimer::singleShot(0, qApp,
                            []
                            {
@@ -261,6 +268,11 @@ class HistorySettingsTest final : public QObject
         child<QAction>(controller.menu(), "settingsAction")->trigger();
         QVERIFY(!AppSettings(settingsPath).loadHistoryPreferences().enabled);
         QVERIFY(!open->isEnabled());
+        QVERIFY(!historyMenu->isEnabled());
+        QVERIFY(!historyMenu->menuAction()->isEnabled());
+        QVERIFY(!currentMenu->isEnabled());
+        QVERIFY(!currentMenu->menuAction()->isEnabled());
+        QVERIFY(currentMenu->title().contains(QStringLiteral("未启用")));
         QVERIFY(QFileInfo::exists(root));
     }
     void privacyOptInRequiresAcknowledgement()

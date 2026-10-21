@@ -446,6 +446,8 @@ void ApplicationController::openSettings()
             historyEnabled_ = false;
             if (historyWindow_)
                 historyWindow_->close();
+            // 关闭后同步清空 / 置灰当前分组菜单，不能等下一次菜单重建。
+            rebuildCurrentGroupMenu();
             refreshStickerActions();
             return QString();
         }
@@ -454,6 +456,9 @@ void ApplicationController::openSettings()
         if (result.success)
         {
             historyEnabled_ = true;
+            // 开启时 groupsChanged 在 historyEnabled_ 仍为 false 时已经发出；这里必须
+            // 重新建组并刷新标题，才能立即显示默认分组的当前状态。
+            rebuildCurrentGroupMenu();
             if (historyWindow_)
                 historyWindow_->refresh();
             if (!oldRoot.isEmpty() && oldRoot != history_.rootDirectory() && historyWindow_)

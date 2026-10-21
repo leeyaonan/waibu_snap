@@ -1042,3 +1042,4 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 - 关闭时截图与长图的 recordHistory 回调为成功空操作；`history_ingest` 新增关闭控制器完成复制后历史目录不存在的回归。
 - 设置「历史」页新增启用开关和隐私提示；首次开启保存时弹出 `historyPrivacyWarning`，必须勾选 `historyPrivacyAcknowledge` 才能点击 `historyPrivacyEnable`，`historyPrivacyKeepOff` 取消并保持关闭。`history_settings` 覆盖默认关闭、取消不保存、确认后开启、控制器从关闭到开启 / 再关闭且已有目录保留。
 - `history_store` 设置 roundtrip 增加 enabled 键；`history_settings` 标准 **29 项**、高 DPI **25 项**，主 / 高 DPI 冒烟 **503 / 436**。分组页在历史关闭时禁用并提示；隐私提示文案强调本机目录可被其他进程读取、不上传网络、关闭不删除旧文件。
+- 开关保存后立即同步托盘：开启后重建当前分组菜单并显示默认分组标题，历史 / 当前分组可用；关闭后两个子菜单、menuAction 和打开历史动作全部禁用，标题显示“历史未启用”。`history_settings` 的 `controllerPrivacyOptInAndEnable` 覆盖开启 / 再关闭的菜单状态与默认分组标题。
