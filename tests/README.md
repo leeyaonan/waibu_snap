@@ -1022,6 +1022,6 @@ Windows 专属 CTest `windows_hotkey` 替换 `windows_hotkey_pending`。测试�
 
 高 DPI 显式清单：`windowSelectionNoticeAndUsageRefresh`、`missingSelectionFallsBackAndErrorNotice`、`lockedScanKeepsWindowSelection`。断言选中保护、清理后选择保留 / 丢失回退、中文错误 notice、窄窗口可见性、分组 / 历史设置占用刷新与永久删除说明。托盘设置既有用例追加空报告隐藏 / 保护超限状态可见断言，测试模式不发系统通知。可选 `WAIBUSNAP_CLEANUP_EVIDENCE_DIR` 向指定目录输出历史 / 分组 / 设置界面 PNG；不设置时不产生证据文件。
 
-本机使用独立 `build/verify-v006-history-cleanup`，未改动或启动 `build/macos`。标准 build-project.sh、正常系统服务上下文 test-project.sh **35/35 CTest**、clang-format **18.1.8** lint 与差异检查通过；主 / 高 DPI 冒烟 **500 / 433**，清理执行 **21 / 5**、历史设置 **26 / 22**，均无失败 / 跳过。原生在屏与真实 OCR 均通过。根锁失败丢失选择先以回归用例实证（2 / 1 / 0），修复后通过；首轮沙箱系统服务缺失失败、状态菜单旧数量断言和 fixture 空 currentGroup 解引用均已修正 / 复验。标准与 DPR=2 界面渲染图已目视检查，双端 CI 链接见本批 PR。
+本机使用独立 `build/verify-v006-history-cleanup`，未改动或启动 `build/macos`。标准 build-project.sh、正常系统服务上下文 test-project.sh **35/35 CTest**、clang-format **18.1.8** lint 与差异检查通过；主 / 高 DPI 冒烟 **500 / 433**，清理执行 **22 / 5**、历史设置 **26 / 22**，均无失败 / 跳过。原生在屏与真实 OCR 均通过。根锁失败丢失选择先以回归用例实证（2 / 1 / 0），修复后通过；首轮沙箱系统服务缺失失败、状态菜单旧数量断言和 fixture 空 currentGroup 解引用均已修正 / 复验。时钟回拨导致刚入库图被当成旧图清理先实证（2 / 1 / 0），改为新记录时间标记按组递增后专项 3/3 通过。DPR=2 分组说明 / 占用裁切先用高度断言实证（2 / 1 / 0），修复标签垂直最小高度后专项 3/3 通过；标准与 DPR=2 界面渲染图已目视检查，双端 CI 链接见本批 PR。
 
 人工待验收：双端真实历史目录的权限 / 文件占用错误提示与重试、系统通知及菜单长文本、关闭窗口后保护释放、真实 30 天 / 100 张 / 100 MB 策略与跨重启一致性、大库同步扫描 / 清理时延、混合 DPI / 窄窗与 Windows junction 防护。Windows 截图采集、显示器定位与窗口枚举仍属已有平台缺口；全局热键真实按键、外部 WebP 插件部署、Finder / Explorer / 原生剪贴板及真实钉图的既有人工项延续，不将本批 CTest 视作实机验收。

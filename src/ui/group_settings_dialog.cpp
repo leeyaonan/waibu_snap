@@ -101,6 +101,7 @@ GroupSettingsDialog::GroupSettingsDialog(HistoryManager& manager, QString groupI
         this);
     explanation->setObjectName(QStringLiteral("groupCleanupExplanation"));
     explanation->setWordWrap(true);
+    explanation->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     layout->addWidget(explanation);
     auto* restore = new QPushButton(QStringLiteral("恢复全局默认"), this);
     restore->setObjectName(QStringLiteral("groupRestoreDefaults"));
@@ -108,6 +109,7 @@ GroupSettingsDialog::GroupSettingsDialog(HistoryManager& manager, QString groupI
     usage_ = new QLabel(this);
     usage_->setObjectName(QStringLiteral("groupUsage"));
     usage_->setWordWrap(true);
+    usage_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     layout->addWidget(usage_);
     current_ = new QCheckBox(QStringLiteral("设为当前分组（保存后生效）"), this);
     current_->setObjectName(QStringLiteral("groupMakeCurrent"));
@@ -118,6 +120,7 @@ GroupSettingsDialog::GroupSettingsDialog(HistoryManager& manager, QString groupI
     error_ = new QLabel(this);
     error_->setObjectName(QStringLiteral("groupSettingsError"));
     error_->setWordWrap(true);
+    error_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     layout->addWidget(error_);
     auto* buttons = new QDialogButtonBox(this);
     save_ = buttons->addButton(QStringLiteral("保存"), QDialogButtonBox::AcceptRole);

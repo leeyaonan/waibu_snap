@@ -518,6 +518,14 @@ class HistoryCleanupExecutionTest final : public QObject
         window.resize(640, 760);
         QCoreApplication::processEvents();
         QVERIFY(child<QLabel>(&window, "historyNotice")->isVisible());
+        auto* usage = child<QLabel>(&group, "groupUsage");
+        auto* explanation = child<QLabel>(&group, "groupCleanupExplanation");
+        QVERIFY2(usage->height() >= usage->fontMetrics().lineSpacing() * 3,
+                 qPrintable(QStringLiteral("占用标签高度 %1，小于三行文字 %2")
+                                .arg(usage->height())
+                                .arg(usage->fontMetrics().lineSpacing() * 3)));
+        QVERIFY2(explanation->height() >= explanation->heightForWidth(explanation->width()),
+                 "自动清理说明应完整可见");
         const auto evidence = qEnvironmentVariable("WAIBUSNAP_CLEANUP_EVIDENCE_DIR");
         if (!evidence.isEmpty())
         {
