@@ -53,8 +53,9 @@ class HistoryManager final : public QObject
     std::optional<HistoryGroup> currentGroup() const;
     QVector<HistoryGroup> groups() const { return groups_; }
     HistoryStatus setCurrentGroup(const QString& groupId);
-    HistoryGroupResult createGroup(const QString& name);
+    HistoryGroupResult createGroup(const QString& name, const QString& directory = {});
     HistoryGroupResult renameGroup(const QString& groupId, const QString& name);
+    HistoryGroupResult changeGroupDirectory(const QString& groupId, const QString& directory);
     HistoryStatus deleteGroup(const QString& groupId, const HistoryTrash& trash);
     HistoryStatus saveCleanupPolicy(const QString& groupId, const CleanupPolicy& policy,
                                     bool makeCurrent = false);

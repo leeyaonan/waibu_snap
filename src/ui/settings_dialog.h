@@ -14,7 +14,9 @@ class QCheckBox;
 class QLineEdit;
 class QKeySequenceEdit;
 class QLabel;
+class QPushButton;
 class QSpinBox;
+class QTreeWidget;
 namespace waibusnap
 {
 struct SaveSettingsActions
@@ -39,9 +41,17 @@ struct HistorySettingsActions
                                            QKeySequence(Qt::Key_F9)};
     GroupUsage usage;
     QString usageNotice;
+    QVector<HistoryGroup> groups;
+    QString currentGroupId;
     std::function<QString(const HistoryPreferences&)> savePreferences;
     std::function<QString(HotkeyAction, const QKeySequence&)> saveHotkey;
     std::function<QString(QWidget*, const QString&)> chooseDirectory;
+    std::function<void(QWidget*)> createGroup;
+    std::function<void(QWidget*, const QString&)> renameGroup;
+    std::function<void(QWidget*, const QString&)> changeGroupDirectory;
+    std::function<void(QWidget*, const QString&)> openGroupSettings;
+    std::function<void(QWidget*, const QString&)> setCurrentGroup;
+    std::function<void(QWidget*, const QString&)> deleteGroup;
 };
 class SettingsDialog final : public QDialog
 {
@@ -55,6 +65,7 @@ class SettingsDialog final : public QDialog
                             HistorySettingsActions historySettings = {});
 
     void updateHistoryUsage(GroupUsage usage, const QString& notice = {});
+    void updateHistoryGroups(const QVector<HistoryGroup>& groups, const QString& currentGroupId);
 
   protected:
     bool event(QEvent* event) override;
@@ -63,6 +74,10 @@ class SettingsDialog final : public QDialog
   private:
     void save();
     void buildHistoryPage(QWidget* page);
+    void buildGroupsPage(QWidget* page);
+    void rebuildGroupList();
+    QString selectedGroupId() const;
+    void updateGroupButtons();
     HistoryPreferences collectHistoryPreferences() const;
     void rebuildRatioList();
     void rebuildShapeTemplateList();
@@ -102,5 +117,14 @@ class SettingsDialog final : public QDialog
     QSpinBox* historyCount_ = nullptr;
     QDoubleSpinBox* historyMiB_ = nullptr;
     double originalHistoryMiB_ = 100;
+    QVector<HistoryGroup> historyGroups_;
+    QString historyCurrentGroupId_;
+    QTreeWidget* historyGroupList_ = nullptr;
+    QLabel* historyGroupNotice_ = nullptr;
+    QPushButton* historyGroupRename_ = nullptr;
+    QPushButton* historyGroupDirectory_ = nullptr;
+    QPushButton* historyGroupSettings_ = nullptr;
+    QPushButton* historyGroupCurrent_ = nullptr;
+    QPushButton* historyGroupDelete_ = nullptr;
 };
 }

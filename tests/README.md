@@ -1027,3 +1027,11 @@ Windows 专属 CTest `windows_hotkey` 替换 `windows_hotkey_pending`。测试�
 人工待验收：双端真实历史目录的权限 / 文件占用错误提示与重试、系统通知及菜单长文本、关闭窗口后保护释放、真实 30 天 / 100 张 / 100 MB 策略与跨重启一致性、大库同步扫描 / 清理时延、混合 DPI / 窄窗与 Windows junction 防护。Windows 截图采集、显示器定位与窗口枚举仍属已有平台缺口；全局热键真实按键、外部 WebP 插件部署、Finder / Explorer / 原生剪贴板及真实钉图的既有人工项延续，不将本批 CTest 视作实机验收。
 
 Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标签高度=40px）；断言改用 QLabel 在当前宽度的完整排版高度，不放宽文字裁切检测。macOS 与 Windows 最终数字以 PR 最新 head 的双端运行记录为准。
+
+## v006 批次 9：分组独立目录与设置内管理（2026-10-21）
+
+- `HistoryStore` 新增 `.waibusnap/groups.json` 目录登记，支持任意绝对分组目录；旧根目录子分组自动补登记，外置目录暂时不可用时跳过但保留登记。`group.json` 新增显示名 `name`；改名只改显示名，不移动文件夹。
+- 新增 `createGroup(name, directory)` 与 `changeGroupDirectory(groupId, directory)`：目标必须为空或不存在，拒绝根目录 / 元数据目录 / 其他分组目录互相嵌套、符号链接和 junction；更改目录优先同卷 rename，跨卷复制后删除旧目录，失败保留原目录。
+- 设置新增「分组」页：分组树显示显示名和目录，提供新建、改名、更改目录、分组设置、设为当前、删除；历史页仍为第 5 页。托盘当前分组子菜单底部新增「新建分组…」，历史窗口分组列和右键菜单复用同一组对话框。
+- `history_store` 新增独立目录创建、重启扫描、改名路径不变、移动目录、重启扫描和非空目录拒绝覆盖用户文件；原 19 项通过。`history_groups` 新增托盘新建快捷入口；`history_settings` 新增分组页列表、当前标记、目录显示、六个按钮回调和分组数提示，并在标准 / 高 DPI 下运行。
+- 设置 smoke 页数从 5 扩为 6，历史页索引保持 4；`settingsTabsReachability` 的 Ctrl+Tab 从最后页回到首页，分组页控件可达；`settingsTabsDraftAndPersistence` 增加分组页保存 / 取消 / Esc 行。测试仍只使用临时根、临时 INI 和 fake 回调，不访问真实 Pictures、回收站或剪贴板。

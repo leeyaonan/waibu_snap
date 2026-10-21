@@ -5,6 +5,7 @@
 #include "interfaces/overlay_window_behavior.h"
 #include "interfaces/tray_icon.h"
 #include "session/monotonic_clock.h"
+#include "ui/group_settings_dialog.h"
 #include "ui/settings_dialog.h"
 #include <QAction>
 #include <QClipboard>
@@ -253,6 +254,20 @@ void ApplicationController::rebuildCurrentGroupMenu()
         action->setData(group.id);
         action->setCheckable(true);
     }
+    currentGroupMenu_->addSeparator();
+    auto* create = currentGroupMenu_->addAction(QStringLiteral("新建分组…"), this,
+                                                [this]
+                                                {
+                                                    if (active_ || settingsOpen_ ||
+                                                        resolvingQuit_ || quitting_)
+                                                        return;
+                                                    settingsOpen_ = true;
+                                                    refreshStickerActions();
+                                                    createHistoryGroupDialog(history_, nullptr);
+                                                    settingsOpen_ = false;
+                                                    refreshStickerActions();
+                                                });
+    create->setObjectName(QStringLiteral("newGroupAction"));
     updateCurrentGroupMenu();
 }
 void ApplicationController::updateCurrentGroupMenu()
@@ -360,6 +375,29 @@ void ApplicationController::openSettings()
         historySettings.hotkeys[i] = historyHotkeys_[i]->currentSequence();
     historySettings.usage =
         history_.totalUsage(historyWindow_ ? historyWindow_->selectedItemId() : QString());
+    historySettings.groups = history_.groups();
+    historySettings.currentGroupId = history_.currentGroupId();
+    historySettings.createGroup = [this](QWidget* parent)
+    { createHistoryGroupDialog(history_, parent); };
+    historySettings.renameGroup = [this](QWidget* parent, const QString& id)
+    { renameHistoryGroupDialog(history_, id, parent); };
+    historySettings.changeGroupDirectory = [this](QWidget* parent, const QString& id)
+    { changeHistoryGroupDirectoryDialog(history_, id, parent); };
+    historySettings.openGroupSettings = [this](QWidget* parent, const QString& id)
+    {
+        GroupSettingsDialog dialog(history_, id, historyActions_.trash,
+                                   historyWindow_ ? historyWindow_->selectedItemId() : QString(),
+                                   parent);
+        dialog.exec();
+    };
+    historySettings.setCurrentGroup = [this](QWidget* parent, const QString& id)
+    {
+        const auto result = history_.setCurrentGroup(id);
+        if (!result.success && parent)
+            QMessageBox::warning(parent, QStringLiteral("设为当前分组失败"), result.error);
+    };
+    historySettings.deleteGroup = [this](QWidget* parent, const QString& id)
+    { confirmHistoryGroupDeletion(history_, id, historyActions_.trash, parent); };
     historySettings.usageNotice = history_.snapshot().error;
     if (!history_.lastCleanup().message().isEmpty())
         historySettings.usageNotice += QStringLiteral("\n") + history_.lastCleanup().message();
@@ -404,9 +442,13 @@ void ApplicationController::openSettings()
          [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); }},
         autostartActions_, std::move(historySettings));
     connect(&history_, &HistoryManager::groupsChanged, &dialog,
-            [this, &dialog] {
+            [this, &dialog]
+            {
                 dialog.updateHistoryUsage(history_.totalUsage(), history_.lastCleanup().message());
+                dialog.updateHistoryGroups(history_.groups(), history_.currentGroupId());
             });
+    connect(&history_, &HistoryManager::currentGroupChanged, &dialog, [this, &dialog]
+            { dialog.updateHistoryGroups(history_.groups(), history_.currentGroupId()); });
     dialog.exec();
     settingsOpen_ = false;
     refreshStickerActions();

@@ -1,9 +1,12 @@
 #include "app/history_store.h"
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageWriter>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QLockFile>
 #include <QRegularExpression>
@@ -13,11 +16,14 @@
 #include <QTemporaryFile>
 #include <QTimeZone>
 #include <QUuid>
+#include <algorithm>
 #include <cmath>
 namespace waibusnap
 {
 namespace
 {
+QString readJson(const QString& path, QJsonObject& object);
+QString writeJson(const QString& path, const QJsonObject& object);
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 QString metadataPath(const QString& groupPath, const QString& file)
 {
@@ -25,6 +31,84 @@ QString metadataPath(const QString& groupPath, const QString& file)
 }
 QString groupFile(const QString& path) { return metadataPath(path, QStringLiteral("group.json")); }
 QString itemsFile(const QString& path) { return metadataPath(path, QStringLiteral("items.json")); }
+QString registryFile(const QString& root)
+{
+    return metadataPath(root, QStringLiteral("groups.json"));
+}
+QString readRegistry(const QString& root, QStringList& paths)
+{
+    const QString path = registryFile(root);
+    if (!QFileInfo::exists(path) && !QFileInfo(path).isSymLink())
+        return {};
+    QJsonObject json;
+    const QString error = readJson(path, json);
+    if (!error.isEmpty())
+        return QStringLiteral("历史分组登记损坏：%1").arg(error);
+    if (!json.value(QStringLiteral("groups")).isArray())
+        return QStringLiteral("历史分组登记缺少目录列表：%1").arg(path);
+    const auto entries = json.value(QStringLiteral("groups")).toArray();
+    for (const auto& entry : entries)
+    {
+        const QString directory = entry.toString();
+        if (directory.isEmpty() || !QDir::isAbsolutePath(directory))
+            return QStringLiteral("历史分组登记包含无效目录：%1").arg(path);
+        const QString clean = QDir::cleanPath(directory);
+        if (!paths.contains(clean))
+            paths.append(clean);
+    }
+    return {};
+}
+QString writeRegistry(const QString& root, const QStringList& paths)
+{
+    const QString metadata = metadataPath(root, QString());
+    const QFileInfo info(metadata);
+    if (info.isSymLink() || info.isJunction())
+        return QStringLiteral("历史元数据目录不能是符号链接：%1").arg(metadata);
+    if (!QDir(root).mkpath(QStringLiteral(".waibusnap")))
+        return QStringLiteral("无法创建历史分组登记目录：%1").arg(metadata);
+    QJsonArray entries;
+    for (const auto& path : paths)
+        entries.append(QDir::cleanPath(path));
+    return writeJson(registryFile(root),
+                     {{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("groups"), entries}});
+}
+bool pathIsInside(const QString& path, const QString& directory)
+{
+    const QString child = QDir::cleanPath(path);
+    const QString parent = QDir::cleanPath(directory);
+    return child == parent || child.startsWith(parent + QLatin1Char('/'));
+}
+bool copyDirectoryContents(const QString& from, const QString& to, QString& error)
+{
+    QDirIterator iterator(from,
+                          QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+    while (iterator.hasNext())
+    {
+        const QString source = iterator.next();
+        const QFileInfo info(source);
+        const QString relative = QDir(from).relativeFilePath(source);
+        const QString target = QDir(to).filePath(relative);
+        if (info.isSymLink() || info.isJunction())
+        {
+            error = QStringLiteral("分组目录包含符号链接，已拒绝迁移：%1").arg(source);
+            return false;
+        }
+        if (info.isDir())
+        {
+            if (!QDir().mkpath(target))
+            {
+                error = QStringLiteral("无法创建分组迁移目录：%1").arg(target);
+                return false;
+            }
+        }
+        else if (!QFile::copy(source, target))
+        {
+            error = QStringLiteral("无法复制分组文件：%1").arg(source);
+            return false;
+        }
+    }
+    return true;
+}
 bool validUuid(const QString& id)
 {
     return !QUuid(id).isNull() && QUuid(id).toString(QUuid::WithoutBraces) == id;
@@ -94,6 +178,7 @@ QJsonObject groupJson(const HistoryGroup& group)
 {
     return {{QStringLiteral("schemaVersion"), 1},
             {QStringLiteral("id"), group.id},
+            {QStringLiteral("name"), group.name},
             {QStringLiteral("default"), group.isDefault},
             {QStringLiteral("createdAt"), group.createdAtMs},
             {QStringLiteral("cleanup"), cleanupPolicyToJson(group.cleanup)}};
@@ -115,6 +200,13 @@ QString readGroup(const QFileInfo& directory, HistoryGroup& group)
     group.id = json.value(QStringLiteral("id")).toString();
     group.isDefault = json.value(QStringLiteral("default")).toBool();
     group.createdAtMs = json.value(QStringLiteral("createdAt")).toInteger();
+    const QString storedName = json.value(QStringLiteral("name")).toString();
+    if (!storedName.isEmpty())
+        group.name = historyGroupNameError(storedName).isEmpty()
+                         ? normalizedHistoryGroupName(storedName)
+                         : QString();
+    if (group.name.isEmpty())
+        return QStringLiteral("分组名称无效：%1；该组清理已暂停。").arg(directory.fileName());
     return {};
 }
 QString readIndex(const QString& groupPath, QJsonObject& index)
@@ -217,26 +309,49 @@ HistoryScanResult HistoryStore::scanUnlocked() const
     result.error = rootError(rootDirectory_);
     if (!result.error.isEmpty())
         return result;
-    QSet<QString> ids;
-    bool hasDefault = false;
-    // 按文件夹名固定顺序修复复制目录，保证“后出现”可重复测试。
+    QStringList paths;
+    const QString registryError = readRegistry(rootDirectory_, paths);
+    if (!registryError.isEmpty())
+    {
+        result.error = registryError;
+        return result;
+    }
+    // 兼容未登记的历史目录：顶层带 marker 的分组仍会被发现，并在初始化时补登记。
     for (const auto& info :
          QDir(rootDirectory_)
              .entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDir::Name))
+        if (!info.fileName().startsWith(QLatin1Char('.')) &&
+            QFileInfo::exists(groupFile(info.absoluteFilePath())))
+            paths.append(QDir::cleanPath(info.absoluteFilePath()));
+    // 按绝对路径固定顺序，保证复制 UUID 修复与旧版目录扫描结果可重复。
+    std::sort(paths.begin(), paths.end(), [](const QString& a, const QString& b) { return a < b; });
+    QSet<QString> seen;
+    QSet<QString> ids;
+    bool hasDefault = false;
+    for (const auto& path : paths)
     {
-        if (info.fileName().startsWith(QLatin1Char('.')) ||
-            !QFileInfo::exists(groupFile(info.absoluteFilePath())))
+        const QString clean = QDir::cleanPath(path);
+        if (seen.contains(clean))
             continue;
+        seen.insert(clean);
+        const QFileInfo directory(clean);
         HistoryGroupSnapshot snapshot;
-        const QString meta = QDir(info.absoluteFilePath()).filePath(QStringLiteral(".waibusnap"));
-        if (QFileInfo(meta).isSymLink())
+        if (!QDir::isAbsolutePath(clean) || clean == QDir::cleanPath(rootDirectory_) ||
+            !directory.isDir() || directory.isSymLink() || directory.isJunction())
         {
-            snapshot.group.name = info.fileName();
-            snapshot.group.absolutePath = info.absoluteFilePath();
+            // 外置目录可能暂时未挂载；保留登记，等目录恢复后下次扫描重新出现。
+            qWarning().noquote() << "历史分组目录暂不可用，已跳过：" << clean;
+            continue;
+        }
+        const QString meta = QDir(clean).filePath(QStringLiteral(".waibusnap"));
+        if (QFileInfo(meta).isSymLink() || QFileInfo(meta).isJunction())
+        {
+            snapshot.group.name = directory.fileName();
+            snapshot.group.absolutePath = clean;
             snapshot.error = QStringLiteral("分组元数据目录不能是符号链接：%1").arg(meta);
         }
         else
-            snapshot.error = readGroup(info, snapshot.group);
+            snapshot.error = readGroup(directory, snapshot.group);
         if (snapshot.error.isEmpty())
         {
             if (ids.contains(snapshot.group.id))
@@ -245,8 +360,7 @@ HistoryScanResult HistoryStore::scanUnlocked() const
                 // 复制默认组也只能保留一个默认身份。
                 if (snapshot.group.isDefault && hasDefault)
                     snapshot.group.isDefault = false;
-                snapshot.error =
-                    writeJson(groupFile(info.absoluteFilePath()), groupJson(snapshot.group));
+                snapshot.error = writeJson(groupFile(clean), groupJson(snapshot.group));
             }
             else if (snapshot.group.isDefault && hasDefault)
                 snapshot.error = QStringLiteral("发现多个默认分组，已暂停该组操作，请检查元数据。");
@@ -255,9 +369,9 @@ HistoryScanResult HistoryStore::scanUnlocked() const
         }
         QJsonObject index;
         if (snapshot.error.isEmpty())
-            snapshot.error = readIndex(info.absoluteFilePath(), index);
-        for (const auto& file : QDir(info.absoluteFilePath())
-                                    .entryInfoList(QDir::Files | QDir::NoSymLinks, QDir::Name))
+            snapshot.error = readIndex(clean, index);
+        for (const auto& file :
+             QDir(clean).entryInfoList(QDir::Files | QDir::NoSymLinks, QDir::Name))
         {
             if (!imageFileName(file.fileName()))
                 continue;
@@ -317,6 +431,11 @@ HistoryScanResult HistoryStore::initialize()
     QString error = rootError(rootDirectory_);
     if (!error.isEmpty())
         return {{}, error};
+    const QString metadata = QDir(rootDirectory_).filePath(QStringLiteral(".waibusnap"));
+    if (!QDir(rootDirectory_).mkpath(QStringLiteral(".waibusnap")))
+        return {{}, QStringLiteral("无法创建历史元数据目录：%1").arg(metadata)};
+    if (QFileInfo(metadata).isSymLink() || QFileInfo(metadata).isJunction())
+        return {{}, QStringLiteral("历史元数据目录不能是符号链接：%1").arg(metadata)};
     QLockFile lock(QDir(rootDirectory_).filePath(QStringLiteral(".waibusnap.lock")));
     error = lockError(lock);
     if (!error.isEmpty())
@@ -324,43 +443,94 @@ HistoryScanResult HistoryStore::initialize()
     auto result = scanUnlocked();
     if (!result.error.isEmpty())
         return result;
+    bool hasDefault = false;
+    QStringList names = rootNames(rootDirectory_);
     for (const auto& snapshot : result.groups)
-        if (snapshot.group.isDefault)
-            return result;
-    QString name = QStringLiteral("默认分组");
-    const auto names = rootNames(rootDirectory_);
-    for (int suffix = 2; !historyGroupNameError(name, names).isEmpty(); ++suffix)
-        name = QStringLiteral("默认分组-%1").arg(suffix);
-    const auto created = createGroupUnlocked(name, true);
-    if (!created.success)
     {
-        result.error = created.error;
+        hasDefault |= snapshot.group.isDefault;
+        names.append(snapshot.group.name);
+    }
+    if (!hasDefault)
+    {
+        QString name = QStringLiteral("默认分组");
+        for (int suffix = 2; !historyGroupNameError(name, names).isEmpty(); ++suffix)
+            name = QStringLiteral("默认分组-%1").arg(suffix);
+        const auto created =
+            createGroupUnlocked(name, true, QDir(rootDirectory_).filePath(name), names);
+        if (!created.success)
+        {
+            result.error = created.error;
+            return result;
+        }
+    }
+    result = scanUnlocked();
+    if (!result.error.isEmpty())
+        return result;
+    QStringList paths;
+    const QString registryError = readRegistry(rootDirectory_, paths);
+    if (!registryError.isEmpty())
+        return {{}, registryError};
+    for (const auto& snapshot : result.groups)
+    {
+        const QString path = QDir::cleanPath(snapshot.group.absolutePath);
+        if (!paths.contains(path))
+            paths.append(path);
+    }
+    error = writeRegistry(rootDirectory_, paths);
+    if (!error.isEmpty())
+    {
+        result.error = error;
         return result;
     }
-    return scanUnlocked();
+    return result;
 }
-HistoryGroupResult HistoryStore::createGroupUnlocked(const QString& name, bool isDefault)
+HistoryGroupResult HistoryStore::createGroupUnlocked(const QString& name, bool isDefault,
+                                                     const QString& directory,
+                                                     const QStringList& existingNames)
 {
-    QString error = historyGroupNameError(name, rootNames(rootDirectory_));
+    QString error = historyGroupNameError(name, existingNames);
     if (error.isEmpty())
         error = cleanupPolicyError(defaultCleanup_);
     if (!error.isEmpty())
         return {{false, error}, {}};
-    HistoryGroup group{newId(),   normalizedHistoryGroupName(name),    {},
-                       isDefault, QDateTime::currentMSecsSinceEpoch(), defaultCleanup_};
-    group.absolutePath = QDir(rootDirectory_).filePath(group.name);
-    // mkdir 不接管既有目录，包括名字竞争；只在新目录中建立 marker。
-    if (!QDir(rootDirectory_).mkdir(group.name))
-        return {{false, QStringLiteral("无法创建分组目录，目录可能已存在：%1").arg(group.name)},
+    const QString cleanName = normalizedHistoryGroupName(name);
+    const QString target =
+        directory.isEmpty() ? QDir(rootDirectory_).filePath(cleanName) : QDir::cleanPath(directory);
+    const QString root = QDir::cleanPath(rootDirectory_);
+    if (!QDir::isAbsolutePath(target) || target == root ||
+        pathIsInside(target, QDir(root).filePath(QStringLiteral(".waibusnap"))) ||
+        pathIsInside(root, target))
+        return {{false, QStringLiteral("分组目录必须是独立的绝对目录，不能包含或占用历史根目录。")},
                 {}};
-    if (!QDir(group.absolutePath).mkdir(QStringLiteral(".waibusnap")))
-        return {{false, QStringLiteral("无法创建分组元数据目录，空目录已保留。")}, {}};
-    error = saveIndex(group.absolutePath, {});
+    const QFileInfo targetInfo(target);
+    if (targetInfo.exists())
+    {
+        if (!targetInfo.isDir() || targetInfo.isSymLink() || targetInfo.isJunction())
+            return {{false, QStringLiteral("分组目录已存在，但不是普通目录：%1").arg(target)}, {}};
+        if (!QDir(target)
+                 .entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot)
+                 .isEmpty())
+            return {{false, QStringLiteral("分组目录必须为空：%1").arg(target)}, {}};
+    }
+    else
+    {
+        if (!QDir().mkpath(QFileInfo(target).absolutePath()))
+            return {{false, QStringLiteral("无法创建分组目录的上级目录：%1").arg(target)}, {}};
+        if (!QDir().mkdir(target))
+            return {{false, QStringLiteral("无法创建分组目录：%1").arg(target)}, {}};
+    }
+    if (!QDir(target).mkdir(QStringLiteral(".waibusnap")))
+        return {{false, QStringLiteral("无法创建分组元数据目录，空目录已保留：%1").arg(target)},
+                {}};
+    HistoryGroup group{
+        newId(),        cleanName, target, isDefault, QDateTime::currentMSecsSinceEpoch(),
+        defaultCleanup_};
+    error = saveIndex(target, {});
     if (error.isEmpty())
-        error = writeJson(groupFile(group.absolutePath), groupJson(group));
+        error = writeJson(groupFile(target), groupJson(group));
     return {{error.isEmpty(), error}, group};
 }
-HistoryGroupResult HistoryStore::createGroup(const QString& name)
+HistoryGroupResult HistoryStore::createGroup(const QString& name, const QString& directory)
 {
     QString error = rootError(rootDirectory_);
     if (!error.isEmpty())
@@ -369,7 +539,40 @@ HistoryGroupResult HistoryStore::createGroup(const QString& name)
     error = lockError(lock);
     if (!error.isEmpty())
         return {{false, error}, {}};
-    return createGroupUnlocked(name, false);
+    const auto scanned = scanUnlocked();
+    if (!scanned.error.isEmpty())
+        return {{false, scanned.error}, {}};
+    QStringList names = rootNames(rootDirectory_);
+    for (const auto& snapshot : scanned.groups)
+        names.append(snapshot.group.name);
+    const QString target = directory.isEmpty()
+                               ? QDir(rootDirectory_).filePath(normalizedHistoryGroupName(name))
+                               : QDir::cleanPath(directory);
+    for (const auto& snapshot : scanned.groups)
+        if (pathIsInside(target, snapshot.group.absolutePath) ||
+            pathIsInside(snapshot.group.absolutePath, target))
+            return {{false, QStringLiteral("分组目录不能与已有分组目录互相嵌套：%1").arg(target)},
+                    {}};
+    const auto created = createGroupUnlocked(name, false, directory, names);
+    if (!created.success)
+        return created;
+    QStringList paths;
+    const QString registryError = readRegistry(rootDirectory_, paths);
+    if (!registryError.isEmpty())
+        return {{false, registryError}, created.group};
+    for (const auto& snapshot : scanned.groups)
+    {
+        const QString path = QDir::cleanPath(snapshot.group.absolutePath);
+        if (!paths.contains(path))
+            paths.append(path);
+    }
+    const QString createdPath = QDir::cleanPath(created.group.absolutePath);
+    if (!paths.contains(createdPath))
+        paths.append(createdPath);
+    error = writeRegistry(rootDirectory_, paths);
+    if (!error.isEmpty())
+        return {{false, error}, created.group};
+    return created;
 }
 HistoryGroupResult HistoryStore::renameGroup(const QString& groupId, const QString& name)
 {
@@ -385,17 +588,108 @@ HistoryGroupResult HistoryStore::renameGroup(const QString& groupId, const QStri
     if (!snapshot)
         return {{false, error}, {}};
     HistoryGroup group = snapshot->group;
-    error = historyGroupNameError(name, rootNames(rootDirectory_, group.name));
+    QStringList names = rootNames(rootDirectory_);
+    for (const auto& current : scanned.groups)
+        if (current.group.id != groupId)
+            names.append(current.group.name);
+    error = historyGroupNameError(name, names);
     if (!error.isEmpty())
         return {{false, error}, {}};
     const QString clean = normalizedHistoryGroupName(name);
     if (clean == group.name)
         return {{true, {}}, group};
-    if (!QDir(rootDirectory_).rename(group.name, clean))
-        return {{false, QStringLiteral("分组改名失败，原目录和 UUID 已保留。")}, {}};
     group.name = clean;
-    group.absolutePath = QDir(rootDirectory_).filePath(clean);
-    return {{true, {}}, group};
+    error = writeJson(groupFile(group.absolutePath), groupJson(group));
+    return {{error.isEmpty(), error}, group};
+}
+HistoryGroupResult HistoryStore::changeGroupDirectory(const QString& groupId,
+                                                      const QString& directory)
+{
+    QString error = rootError(rootDirectory_);
+    if (!error.isEmpty())
+        return {{false, error}, {}};
+    QLockFile lock(QDir(rootDirectory_).filePath(QStringLiteral(".waibusnap.lock")));
+    error = lockError(lock);
+    if (!error.isEmpty())
+        return {{false, error}, {}};
+    const auto scanned = scanUnlocked();
+    const auto* snapshot = findGroup(scanned, groupId, error);
+    if (!snapshot)
+        return {{false, error}, {}};
+    const QString oldPath = QDir::cleanPath(snapshot->group.absolutePath);
+    const QString target = QDir::cleanPath(directory);
+    const QString root = QDir::cleanPath(rootDirectory_);
+    if (!QDir::isAbsolutePath(target) || target == oldPath)
+        return {{target == oldPath,
+                 target == oldPath ? QString() : QStringLiteral("分组目录必须为绝对路径。")},
+                snapshot->group};
+    if (target == root || pathIsInside(target, QDir(root).filePath(QStringLiteral(".waibusnap"))) ||
+        pathIsInside(root, target))
+        return {{false, QStringLiteral("不能把分组移动到包含历史根目录或元数据目录的位置。")},
+                snapshot->group};
+    if (pathIsInside(target, oldPath) || pathIsInside(oldPath, target))
+        return {{false, QStringLiteral("新旧分组目录不能互相嵌套。")}, snapshot->group};
+    for (const auto& current : scanned.groups)
+        if (current.group.id != groupId && (pathIsInside(target, current.group.absolutePath) ||
+                                            pathIsInside(current.group.absolutePath, target)))
+            return {{false, QStringLiteral("目标目录与已有分组目录互相嵌套。")}, snapshot->group};
+    const QFileInfo targetInfo(target);
+    if (targetInfo.exists())
+    {
+        if (!targetInfo.isDir() || targetInfo.isSymLink() || targetInfo.isJunction())
+            return {{false, QStringLiteral("目标目录不是普通空目录：%1").arg(target)},
+                    snapshot->group};
+        if (!QDir(target)
+                 .entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot)
+                 .isEmpty())
+            return {{false, QStringLiteral("目标目录必须为空：%1").arg(target)}, snapshot->group};
+        if (!QDir().rmdir(target))
+            return {{false, QStringLiteral("无法准备目标空目录：%1").arg(target)}, snapshot->group};
+    }
+    else if (!QDir().mkpath(QFileInfo(target).absolutePath()))
+        return {{false, QStringLiteral("无法创建目标目录的上级目录：%1").arg(target)},
+                snapshot->group};
+    bool moved = QDir().rename(oldPath, target);
+    if (!moved)
+    {
+        if (!QDir().mkpath(target))
+            return {{false, QStringLiteral("无法创建新的分组目录：%1").arg(target)},
+                    snapshot->group};
+        QString copyError;
+        if (!copyDirectoryContents(oldPath, target, copyError))
+        {
+            QDir(target).removeRecursively();
+            return {{false, copyError}, snapshot->group};
+        }
+        if (!QDir(oldPath).removeRecursively())
+            return {{false, QStringLiteral("分组已复制到新目录，但旧目录删除失败，请手动确认：%1")
+                                .arg(oldPath)},
+                    snapshot->group};
+        moved = true;
+    }
+    HistoryGroup movedGroup = snapshot->group;
+    movedGroup.absolutePath = target;
+    QStringList paths;
+    const QString registryError = readRegistry(rootDirectory_, paths);
+    if (!registryError.isEmpty())
+        return {{false, registryError}, snapshot->group};
+    bool replaced = false;
+    for (auto& path : paths)
+        if (QDir::cleanPath(path) == oldPath)
+        {
+            path = target;
+            replaced = true;
+        }
+    if (!replaced)
+        paths.append(target);
+    for (const auto& current : scanned.groups)
+        if (current.group.id != groupId &&
+            !paths.contains(QDir::cleanPath(current.group.absolutePath)))
+            paths.append(current.group.absolutePath);
+    error = writeRegistry(rootDirectory_, paths);
+    if (!error.isEmpty())
+        return {{false, error}, movedGroup};
+    return {{true, {}}, movedGroup};
 }
 HistoryStatus HistoryStore::deleteGroup(const QString& groupId, const HistoryTrash& trash)
 {
@@ -420,7 +714,17 @@ HistoryStatus HistoryStore::deleteGroup(const QString& groupId, const HistoryTra
         return {false, QStringLiteral("分组移入回收站失败，原分组已保留：%1").arg(result.error)};
     if (QFileInfo::exists(snapshot->group.absolutePath))
         return {false, QStringLiteral("回收站服务返回成功但原分组仍存在，请重试。")};
-    return {true, {}};
+    QStringList paths;
+    const QString registryError = readRegistry(rootDirectory_, paths);
+    if (!registryError.isEmpty())
+        return {false, registryError};
+    paths.removeAll(QDir::cleanPath(snapshot->group.absolutePath));
+    for (const auto& current : scanned.groups)
+        if (current.group.id != groupId &&
+            !paths.contains(QDir::cleanPath(current.group.absolutePath)))
+            paths.append(current.group.absolutePath);
+    error = writeRegistry(rootDirectory_, paths);
+    return {error.isEmpty(), error};
 }
 HistoryStatus HistoryStore::saveCleanupPolicy(const QString& groupId, const CleanupPolicy& policy)
 {
@@ -590,18 +894,16 @@ HistoryStatus HistoryStore::setStarred(const QString& groupId, const QString& fi
 }
 HistoryStatus HistoryStore::validateItem(const HistoryItem& item) const
 {
-    const QFileInfo root(rootDirectory_);
     const QFileInfo file(item.absolutePath);
     const QFileInfo group(file.absolutePath());
     const QFileInfo metadata(QDir(group.absoluteFilePath()).filePath(QStringLiteral(".waibusnap")));
     const QString expected = QDir(group.absoluteFilePath()).filePath(item.fileName);
-    if (!rootError(rootDirectory_).isEmpty() || !imageFileName(item.fileName) ||
-        item.absolutePath != expected || !file.isFile() || file.isSymLink() || root.isJunction() ||
-        !group.isDir() || group.isSymLink() || group.isJunction() ||
-        group.canonicalFilePath() != QDir(root.canonicalFilePath()).filePath(group.fileName()) ||
-        QFileInfo(group.absolutePath()).canonicalFilePath() != root.canonicalFilePath() ||
-        file.canonicalFilePath() != QDir(group.canonicalFilePath()).filePath(item.fileName) ||
-        metadata.isSymLink() || metadata.isJunction())
+    if (!rootError(rootDirectory_).isEmpty() || !QDir::isAbsolutePath(group.absoluteFilePath()) ||
+        !imageFileName(item.fileName) || item.absolutePath != expected || !file.isFile() ||
+        file.isSymLink() || !group.isDir() || group.isSymLink() || group.isJunction() ||
+        metadata.isSymLink() || metadata.isJunction() ||
+        !QFileInfo(groupFile(group.absoluteFilePath())).isFile() ||
+        file.canonicalFilePath() != QDir(group.canonicalFilePath()).filePath(item.fileName))
         return {false, QStringLiteral("图片已丢失、路径越界或包含符号链接，请刷新历史。")};
     return {true, {}};
 }

@@ -3,8 +3,11 @@
 #include <QDateTime>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -238,5 +241,158 @@ void GroupSettingsDialog::updateUsage()
                     .arg(protection.protectedCount)
                     .arg(protection.protectedBytes / 1048576.0, 0, 'f', 2));
         }
+}
+namespace
+{
+struct GroupEditFields
+{
+    QLineEdit* name = nullptr;
+    QLineEdit* directory = nullptr;
+    QLabel* error = nullptr;
+    QDialogButtonBox* buttons = nullptr;
+};
+GroupEditFields buildGroupEditDialog(QDialog& dialog, bool withName, bool chooseDirectory,
+                                     const QString& name = {}, const QString& directory = {})
+{
+    dialog.setObjectName(QStringLiteral("historyGroupNameDialog"));
+    dialog.setMinimumWidth(460);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout;
+    GroupEditFields fields;
+    if (withName)
+    {
+        fields.name = new QLineEdit(name, &dialog);
+        fields.name->setObjectName(QStringLiteral("historyGroupName"));
+        fields.name->selectAll();
+        form->addRow(QStringLiteral("分组名称"), fields.name);
+    }
+    fields.directory = new QLineEdit(directory, &dialog);
+    fields.directory->setObjectName(QStringLiteral("historyGroupDirectory"));
+    fields.directory->setReadOnly(true);
+    fields.directory->setToolTip(directory);
+    fields.directory->setPlaceholderText(QStringLiteral("留空使用历史根目录下的默认文件夹"));
+    auto* directoryRow = new QWidget(&dialog);
+    auto* directoryLayout = new QHBoxLayout(directoryRow);
+    directoryLayout->setContentsMargins(0, 0, 0, 0);
+    directoryLayout->addWidget(fields.directory, 1);
+    auto* choose = new QPushButton(QStringLiteral("选择…"), directoryRow);
+    choose->setObjectName(QStringLiteral("historyGroupChooseDirectory"));
+    choose->setEnabled(chooseDirectory);
+    directoryLayout->addWidget(choose);
+    form->addRow(QStringLiteral("分组目录"), directoryRow);
+    layout->addLayout(form);
+    auto* help = new QLabel(QStringLiteral("分组目录是独立文件夹；新建时目录必须为空或不存在。"
+                                           "更改目录会把该组全部图片和元数据移动到新目录。"),
+                            &dialog);
+    help->setWordWrap(true);
+    layout->addWidget(help);
+    fields.error = new QLabel(&dialog);
+    fields.error->setObjectName(QStringLiteral("historyGroupNameError"));
+    fields.error->setWordWrap(true);
+    layout->addWidget(fields.error);
+    fields.buttons = new QDialogButtonBox(&dialog);
+    fields.buttons->addButton(QStringLiteral("确定"), QDialogButtonBox::AcceptRole)
+        ->setObjectName(QStringLiteral("historyGroupNameSave"));
+    fields.buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+    layout->addWidget(fields.buttons);
+    QObject::connect(choose, &QPushButton::clicked, &dialog,
+                     [&dialog, fields]
+                     {
+                         const QString selected = QFileDialog::getExistingDirectory(
+                             &dialog, QStringLiteral("选择分组目录"), fields.directory->text());
+                         if (!selected.isEmpty())
+                         {
+                             fields.directory->setText(QDir(selected).absolutePath());
+                             fields.directory->setToolTip(fields.directory->text());
+                         }
+                     });
+    return fields;
+}
+}
+std::optional<HistoryGroupResult> createHistoryGroupDialog(HistoryManager& manager, QWidget* parent,
+                                                           const QString& directory)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("新建分组"));
+    const auto fields = buildGroupEditDialog(dialog, true, true, {}, directory);
+    std::optional<HistoryGroupResult> result;
+    QObject::connect(fields.buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(fields.buttons, &QDialogButtonBox::accepted, &dialog,
+                     [&manager, &dialog, fields, &result]
+                     {
+                         const auto created =
+                             manager.createGroup(fields.name ? fields.name->text() : QString(),
+                                                 fields.directory->text());
+                         if (!created.success)
+                         {
+                             fields.error->setText(created.error);
+                             return;
+                         }
+                         result = created;
+                         dialog.accept();
+                     });
+    return dialog.exec() == QDialog::Accepted ? result : std::nullopt;
+}
+std::optional<HistoryStatus> renameHistoryGroupDialog(HistoryManager& manager,
+                                                      const QString& groupId, QWidget* parent)
+{
+    QString currentName;
+    QString currentDirectory;
+    for (const auto& group : manager.groups())
+        if (group.id == groupId)
+        {
+            currentName = group.name;
+            currentDirectory = group.absolutePath;
+        }
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("分组改名"));
+    const auto fields = buildGroupEditDialog(dialog, true, false, currentName, currentDirectory);
+    std::optional<HistoryStatus> result;
+    QObject::connect(fields.buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(fields.buttons, &QDialogButtonBox::accepted, &dialog,
+                     [&manager, &dialog, groupId, fields, &result]
+                     {
+                         const auto renamed = manager.renameGroup(groupId, fields.name->text());
+                         if (!renamed.success)
+                         {
+                             fields.error->setText(renamed.error);
+                             return;
+                         }
+                         result = HistoryStatus{true, {}};
+                         dialog.accept();
+                     });
+    if (dialog.exec() != QDialog::Accepted)
+        return std::nullopt;
+    return result;
+}
+std::optional<HistoryGroupResult>
+changeHistoryGroupDirectoryDialog(HistoryManager& manager, const QString& groupId, QWidget* parent)
+{
+    QString currentDirectory;
+    for (const auto& group : manager.groups())
+        if (group.id == groupId)
+            currentDirectory = group.absolutePath;
+    if (currentDirectory.isEmpty())
+        return HistoryGroupResult{
+            HistoryStatus{false, QStringLiteral("分组已不存在，请刷新历史。")}, {}};
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("更改分组目录"));
+    const auto fields = buildGroupEditDialog(dialog, false, true, {}, currentDirectory);
+    std::optional<HistoryGroupResult> result;
+    QObject::connect(fields.buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(fields.buttons, &QDialogButtonBox::accepted, &dialog,
+                     [&manager, &dialog, groupId, fields, &result]
+                     {
+                         const auto moved =
+                             manager.changeGroupDirectory(groupId, fields.directory->text());
+                         if (!moved.success)
+                         {
+                             fields.error->setText(moved.error);
+                             return;
+                         }
+                         result = moved;
+                         dialog.accept();
+                     });
+    return dialog.exec() == QDialog::Accepted ? result : std::nullopt;
 }
 }

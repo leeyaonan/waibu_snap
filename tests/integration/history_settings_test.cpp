@@ -18,6 +18,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QTreeWidget>
 #include <algorithm>
 using namespace waibusnap;
 namespace waibusnap
@@ -118,6 +119,8 @@ struct Fixture
         result.preferences = settings.loadHistoryPreferences();
         result.preferences.rootDirectory = manager.rootDirectory();
         result.usage = manager.totalUsage();
+        result.groups = manager.groups();
+        result.currentGroupId = manager.currentGroupId();
         result.savePreferences = [this](const HistoryPreferences& p)
         { return manager.savePreferences(p).error; };
         result.chooseDirectory = [this](QWidget*, const QString&)
@@ -171,8 +174,9 @@ class HistorySettingsTest final : public QObject
             startup(), f.actions());
         historyPage(dialog);
         auto* tabs = child<QTabWidget>(&dialog, "settingsTabs");
-        QCOMPARE(tabs->count(), 5);
+        QCOMPARE(tabs->count(), 6);
         QCOMPARE(tabs->widget(4)->objectName(), QStringLiteral("settingsHistoryPage"));
+        QCOMPARE(tabs->widget(5)->objectName(), QStringLiteral("settingsGroupsPage"));
         QVERIFY(child<QLineEdit>(&dialog, "historyRootDirectory")->isReadOnly());
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxAgeDays")->value(), 30);
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxCount")->value(), 100);
@@ -191,6 +195,71 @@ class HistorySettingsTest final : public QObject
             QVERIFY(
                 dialog.rect().contains(QRect(control->mapTo(&dialog, QPoint()), control->size())));
         }
+    }
+    void groupsPageShowsAllGroupsAndIndependentDirectories()
+    {
+        Fixture f;
+        const QString directory = f.temp.filePath(QStringLiteral("独立 分组目录"));
+        const auto created = f.manager.createGroup(QStringLiteral("独立组"), directory);
+        QVERIFY2(created.success, qPrintable(created.error));
+        QCOMPARE(created.group.absolutePath, QDir(directory).absolutePath());
+        auto actions = f.actions();
+        int createdCalls = 0, renamedCalls = 0, directoryCalls = 0, settingsCalls = 0,
+            currentCalls = 0, deleteCalls = 0;
+        actions.createGroup = [&](QWidget*) { ++createdCalls; };
+        actions.renameGroup = [&](QWidget*, const QString&) { ++renamedCalls; };
+        actions.changeGroupDirectory = [&](QWidget*, const QString&) { ++directoryCalls; };
+        actions.openGroupSettings = [&](QWidget*, const QString&) { ++settingsCalls; };
+        actions.setCurrentGroup = [&](QWidget*, const QString&) { ++currentCalls; };
+        actions.deleteGroup = [&](QWidget*, const QString&) { ++deleteCalls; };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const auto&) { return QString(); }, {}, nullptr, {},
+            startup(), actions);
+        dialog.show();
+        child<QTabWidget>(&dialog, "settingsTabs")->setCurrentIndex(5);
+        QApplication::processEvents();
+        auto* list = child<QTreeWidget>(&dialog, "settingsGroupList");
+        QCOMPARE(list->topLevelItemCount(), 2);
+        bool foundDefault = false;
+        bool foundCustom = false;
+        for (int row = 0; row < list->topLevelItemCount(); ++row)
+        {
+            const auto* item = list->topLevelItem(row);
+            if (item->data(0, Qt::UserRole).toString() == f.manager.currentGroupId())
+            {
+                foundDefault = true;
+                QVERIFY(item->text(0).startsWith(QStringLiteral("● ")));
+            }
+            if (item->data(0, Qt::UserRole).toString() == created.group.id)
+            {
+                foundCustom = true;
+                QCOMPARE(item->text(1), QDir::toNativeSeparators(directory));
+            }
+        }
+        QVERIFY(foundDefault);
+        QVERIFY(foundCustom);
+        QVERIFY(child<QLabel>(&dialog, "settingsGroupNotice")
+                    ->text()
+                    .contains(QStringLiteral("2 个分组")));
+        QVERIFY(child<QWidget>(&dialog, "settingsGroupList")->isVisible());
+        QVERIFY(child<QWidget>(&dialog, "settingsGroupNew")->isVisible());
+        QVERIFY(child<QWidget>(&dialog, "settingsGroupDelete")->isVisible());
+        child<QPushButton>(&dialog, "settingsGroupNew")->click();
+        QCOMPARE(createdCalls, 1);
+        for (int row = 0; row < list->topLevelItemCount(); ++row)
+            if (list->topLevelItem(row)->data(0, Qt::UserRole).toString() == created.group.id)
+                list->setCurrentItem(list->topLevelItem(row));
+        QApplication::processEvents();
+        child<QPushButton>(&dialog, "settingsGroupRename")->click();
+        child<QPushButton>(&dialog, "settingsGroupDirectory")->click();
+        child<QPushButton>(&dialog, "settingsGroupSettings")->click();
+        child<QPushButton>(&dialog, "settingsGroupSetCurrent")->click();
+        child<QPushButton>(&dialog, "settingsGroupDelete")->click();
+        QCOMPARE(renamedCalls, 1);
+        QCOMPARE(directoryCalls, 1);
+        QCOMPARE(settingsCalls, 1);
+        QCOMPARE(currentCalls, 1);
+        QCOMPARE(deleteCalls, 1);
     }
     void directoryChooseClearCancelAndEscape_data()
     {
