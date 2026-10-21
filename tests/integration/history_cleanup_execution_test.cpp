@@ -520,10 +520,13 @@ class HistoryCleanupExecutionTest final : public QObject
         QVERIFY(child<QLabel>(&window, "historyNotice")->isVisible());
         auto* usage = child<QLabel>(&group, "groupUsage");
         auto* explanation = child<QLabel>(&group, "groupCleanupExplanation");
-        QVERIFY2(usage->height() >= usage->fontMetrics().lineSpacing() * 3,
-                 qPrintable(QStringLiteral("占用标签高度 %1，小于三行文字 %2")
+        // 各平台首行字高与后续行距不同，按 QLabel 当前宽度的文本排版测量，避免 3×行距高估。
+        const int requiredUsageHeight = usage->heightForWidth(usage->width());
+        QVERIFY(requiredUsageHeight > 0);
+        QVERIFY2(usage->height() >= requiredUsageHeight,
+                 qPrintable(QStringLiteral("占用标签高度 %1，小于完整文字高度 %2")
                                 .arg(usage->height())
-                                .arg(usage->fontMetrics().lineSpacing() * 3)));
+                                .arg(requiredUsageHeight)));
         QVERIFY2(explanation->height() >= explanation->heightForWidth(explanation->width()),
                  "自动清理说明应完整可见");
         const auto evidence = qEnvironmentVariable("WAIBUSNAP_CLEANUP_EVIDENCE_DIR");
