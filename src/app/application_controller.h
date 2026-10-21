@@ -87,6 +87,7 @@ class ApplicationController final : public QObject
     void startSmokeTest();
     void openSettings();
     void refreshStickerActions();
+    void setHistoryMenusInstalled(bool installed);
     void rebuildCurrentGroupMenu();
     void updateCurrentGroupMenu();
     void pinClipboardImage();
@@ -102,6 +103,9 @@ class ApplicationController final : public QObject
     QAction* historyPreviousAction_ = nullptr;
     QAction* historyNextAction_ = nullptr;
     QMenu* historyMenu_ = nullptr;
+    QAction* historyDisabledAction_ = nullptr;
+    QAction* currentGroupDisabledAction_ = nullptr;
+    bool historyMenusInstalled_ = true;
     QAction* clipboardStickerAction_ = nullptr;
     QAction* hideAllStickersAction_ = nullptr;
     QAction* restoreAllStickersAction_ = nullptr;

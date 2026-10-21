@@ -276,6 +276,14 @@ class HistorySettingsTest final : public QObject
         QVERIFY(!historyMenu->menuAction()->isEnabled());
         QVERIFY(!currentMenu->isEnabled());
         QVERIFY(!currentMenu->menuAction()->isEnabled());
+        auto* historyDisabled = child<QAction>(controller.menu(), "historyDisabledAction");
+        auto* groupDisabled = child<QAction>(controller.menu(), "currentGroupDisabledAction");
+        QVERIFY(controller.menu()->actions().contains(historyDisabled));
+        QVERIFY(controller.menu()->actions().contains(groupDisabled));
+        QVERIFY(!historyDisabled->isEnabled());
+        QVERIFY(!groupDisabled->isEnabled());
+        QVERIFY(!controller.menu()->actions().contains(historyMenu->menuAction()));
+        QVERIFY(!controller.menu()->actions().contains(currentMenu->menuAction()));
         for (auto* action : historyMenu->actions())
             if (!action->isSeparator())
                 QVERIFY(!action->isEnabled());
@@ -309,6 +317,10 @@ class HistorySettingsTest final : public QObject
         QVERIFY(historyMenu->isEnabled());
         QVERIFY(currentMenu->isEnabled());
         QVERIFY(currentMenu->title().contains(QStringLiteral("默认分组")));
+        QVERIFY(controller.menu()->actions().contains(historyMenu->menuAction()));
+        QVERIFY(controller.menu()->actions().contains(currentMenu->menuAction()));
+        QVERIFY(!controller.menu()->actions().contains(historyDisabled));
+        QVERIFY(!controller.menu()->actions().contains(groupDisabled));
     }
     void privacyOptInRequiresAcknowledgement()
     {
