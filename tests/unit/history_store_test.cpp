@@ -150,6 +150,11 @@ class HistoryStoreTest final : public QObject
         QVERIFY(external.isValid());
         HistoryStore store(temporary.path());
         QVERIFY(store.initialize().error.isEmpty());
+        const QString registry = QDir(QDir(temporary.path()).filePath(QStringLiteral(".waibusnap")))
+                                     .filePath(QStringLiteral("groups.json"));
+        QVERIFY(QFileInfo::exists(registry));
+        QVERIFY(readBytes(registry).contains("\"默认分组\""));
+        QVERIFY(!readBytes(registry).contains(temporary.path().toUtf8()));
         const QString directory = external.filePath(QStringLiteral("独立分组"));
         const auto created = store.createGroup(QStringLiteral("独立分组"), directory);
         QVERIFY2(created.success, qPrintable(created.error));
