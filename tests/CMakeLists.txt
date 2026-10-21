@@ -319,7 +319,8 @@ add_test(NAME history_settings COMMAND history_settings_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/history_settings-output.txt,txt")
 set_tests_properties(history_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 add_test(NAME history_settings_high_dpi COMMAND history_settings_test
-    pageControlsAndUsage directoryChooseClearCancelAndEscape rootSwitchAndNoMigration
+    pageControlsAndUsage groupsPageShowsAllGroupsAndIndependentDirectories
+    directoryChooseClearCancelAndEscape rootSwitchAndNoMigration
     rootFailureKeepsOldAndRetry templateOnlyAffectsNewGroupsAndAtLeastOne bytePrecisionAndProtection
     dialogDuplicateInvalidAndSingleFailure trayMenusEmptyAndGuards
     navigationAllGroupsCurrentSelectionAndReuse navigationFirstStep navigationOpenGroupAndSort
