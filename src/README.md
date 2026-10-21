@@ -146,6 +146,6 @@ Windows 使用 SDK 自带 C++/WinRT 和 `windowsapp` 系统库，工作线程 MT
 贴图创建、恢复与显示重配只留诊断，当前不自动复位、关闭或轮询长驻窗口。collectionBehavior 保持 Qt 现值，候选 CanJoinAllSpaces / FullScreenAuxiliary 的独立结论见测试记录。
 
 
-v006 批次 2 中，`ApplicationController` 持有 `HistoryManager`，构造时加载历史偏好、初始化 Store、校验当前分组 UUID 并在缺失时回退默认组。初始化 / 写入错误只进入日志、错误状态和信号，不中止原截图流程。`RunOptions::historyRoot` / `--history-root` 提供根目录覆盖，测试同时使用临时 INI，避免访问真实 Pictures。
+v006 批次 2 / 10 中，`ApplicationController` 持有 `HistoryManager`，构造时加载历史偏好；只有 `history/enabled` 显式开启（或受控 `--history-root` 测试覆盖）时才初始化 Store、校验当前分组 UUID 并在缺失时回退默认组。默认关闭时不创建历史目录、不扫描、不保存截图；截图的 recordHistory 在关闭时为空操作。初始化 / 写入错误只进入日志、错误状态和信号，不中止原截图流程。`RunOptions::historyRoot` / `--history-root` 提供根目录覆盖，测试同时使用临时 INI，避免访问真实 Pictures。
 
 `OverlayActions` 的 session / group UUID 在触发截图时固定；复制 / 钉图成功后、`complete()` 清空标注前入库，保存 / 导出成功设置 saved 后入库。每次只调用一次 `outputImage()`，输出与历史共享同一个成品图。Manager 按 session 映射既有记录文件名，后续输出原路径原子更新并保留完成时间；拒绝将已绑定会话重新绑定到另一组或另一来源。长图在 `takeResult()` 后、会话销毁前记录，结果窗只通过 `historyUpdated` 的裁剪回调更新该 session；重试的新触发生成新 UUID。`finish()`、StickerManager 与 StickerWindow 没有入库逻辑。

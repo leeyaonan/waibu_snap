@@ -63,7 +63,15 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                       result.error.isEmpty() ? QSystemTrayIcon::Information
                                                              : QSystemTrayIcon::Warning);
             });
-    history_.initialize();
+    const auto historyPreferences = settings_.loadHistoryPreferences();
+    historyEnabled_ = options_.historyEnabledOverride.value_or(historyPreferences.enabled ||
+                                                               !options_.historyRoot.isEmpty());
+    if (historyEnabled_)
+    {
+        const auto initialized = history_.initialize();
+        if (!initialized.success)
+            qWarning().noquote() << "截图历史初始化失败：" << initialized.error;
+    }
     if (!historyActions_.copyImage)
         historyActions_.copyImage = copyImageToClipboard;
     if (!historyActions_.pinImage)
@@ -177,7 +185,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     connect(&menu_, &QMenu::aboutToShow, this,
             [this]
             {
-                if (!active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_)
+                if (historyEnabled_ && !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_)
                     history_.refresh();
                 refreshStickerActions();
             });
@@ -204,17 +212,19 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
 ApplicationController::~ApplicationController() { cleanup(); }
 void ApplicationController::refreshStickerActions()
 {
-    const bool historyEnabled = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
-    historyMenu_->setEnabled(historyEnabled);
-    openHistoryAction_->setEnabled(historyEnabled);
+    const bool interactive = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
+    const bool historyAvailable = interactive && historyEnabled_ && history_.ready();
+    historyMenu_->setEnabled(historyAvailable);
+    openHistoryAction_->setEnabled(historyAvailable);
     bool hasItems = false;
-    for (const auto& group : history_.snapshot().groups)
-        hasItems |= !group.items.isEmpty();
-    historyPreviousAction_->setEnabled(historyEnabled && hasItems);
-    historyNextAction_->setEnabled(historyEnabled && hasItems);
-    currentGroupMenu_->setEnabled(historyEnabled && history_.ready());
+    if (historyEnabled_)
+        for (const auto& group : history_.snapshot().groups)
+            hasItems |= !group.items.isEmpty();
+    historyPreviousAction_->setEnabled(historyAvailable && hasItems);
+    historyNextAction_->setEnabled(historyAvailable && hasItems);
+    currentGroupMenu_->setEnabled(historyAvailable);
     if (historyWindow_)
-        historyWindow_->setGroupActionsEnabled(historyEnabled);
+        historyWindow_->setGroupActionsEnabled(interactive);
     clipboardStickerAction_->setEnabled(!active_ && !resolvingQuit_ && !quitting_);
     bool visible = false, hidden = false;
     for (const auto& window : stickers_.windows())
@@ -272,6 +282,11 @@ void ApplicationController::rebuildCurrentGroupMenu()
 }
 void ApplicationController::updateCurrentGroupMenu()
 {
+    if (!historyEnabled_)
+    {
+        currentGroupMenu_->setTitle(QStringLiteral("当前分组：历史未启用"));
+        return;
+    }
     const auto group = history_.currentGroup();
     currentGroupMenu_->setTitle(
         QStringLiteral("当前分组：%1").arg(group ? group->name : QStringLiteral("不可用")));
@@ -370,37 +385,51 @@ void ApplicationController::openSettings()
     const auto templates = settings_.loadShapeTemplates(&shapeNotice);
     HistorySettingsActions historySettings;
     historySettings.preferences = settings_.loadHistoryPreferences();
-    historySettings.preferences.rootDirectory = history_.rootDirectory();
+    historySettings.enabled = historyEnabled_;
+    if (historyEnabled_ && history_.ready())
+        historySettings.preferences.rootDirectory = history_.rootDirectory();
     for (size_t i = 0; i < historyHotkeys_.size(); ++i)
         historySettings.hotkeys[i] = historyHotkeys_[i]->currentSequence();
-    historySettings.usage =
-        history_.totalUsage(historyWindow_ ? historyWindow_->selectedItemId() : QString());
-    historySettings.groups = history_.groups();
-    historySettings.currentGroupId = history_.currentGroupId();
-    historySettings.createGroup = [this](QWidget* parent)
-    { createHistoryGroupDialog(history_, parent); };
-    historySettings.renameGroup = [this](QWidget* parent, const QString& id)
-    { renameHistoryGroupDialog(history_, id, parent); };
-    historySettings.changeGroupDirectory = [this](QWidget* parent, const QString& id)
-    { changeHistoryGroupDirectoryDialog(history_, id, parent); };
-    historySettings.openGroupSettings = [this](QWidget* parent, const QString& id)
+    if (historyEnabled_ && history_.ready())
     {
-        GroupSettingsDialog dialog(history_, id, historyActions_.trash,
-                                   historyWindow_ ? historyWindow_->selectedItemId() : QString(),
-                                   parent);
-        dialog.exec();
-    };
-    historySettings.setCurrentGroup = [this](QWidget* parent, const QString& id)
+        historySettings.usage =
+            history_.totalUsage(historyWindow_ ? historyWindow_->selectedItemId() : QString());
+        historySettings.groups = history_.groups();
+        historySettings.currentGroupId = history_.currentGroupId();
+    }
+    if (historyEnabled_ && history_.ready())
     {
-        const auto result = history_.setCurrentGroup(id);
-        if (!result.success && parent)
-            QMessageBox::warning(parent, QStringLiteral("设为当前分组失败"), result.error);
-    };
-    historySettings.deleteGroup = [this](QWidget* parent, const QString& id)
-    { confirmHistoryGroupDeletion(history_, id, historyActions_.trash, parent); };
-    historySettings.usageNotice = history_.snapshot().error;
-    if (!history_.lastCleanup().message().isEmpty())
-        historySettings.usageNotice += QStringLiteral("\n") + history_.lastCleanup().message();
+        historySettings.createGroup = [this](QWidget* parent)
+        { createHistoryGroupDialog(history_, parent); };
+        historySettings.renameGroup = [this](QWidget* parent, const QString& id)
+        { renameHistoryGroupDialog(history_, id, parent); };
+        historySettings.changeGroupDirectory = [this](QWidget* parent, const QString& id)
+        { changeHistoryGroupDirectoryDialog(history_, id, parent); };
+        historySettings.openGroupSettings = [this](QWidget* parent, const QString& id)
+        {
+            GroupSettingsDialog dialog(
+                history_, id, historyActions_.trash,
+                historyWindow_ ? historyWindow_->selectedItemId() : QString(), parent);
+            dialog.exec();
+        };
+        historySettings.setCurrentGroup = [this](QWidget* parent, const QString& id)
+        {
+            const auto result = history_.setCurrentGroup(id);
+            if (!result.success && parent)
+                QMessageBox::warning(parent, QStringLiteral("设为当前分组失败"), result.error);
+        };
+        historySettings.deleteGroup = [this](QWidget* parent, const QString& id)
+        { confirmHistoryGroupDeletion(history_, id, historyActions_.trash, parent); };
+        historySettings.usageNotice = history_.snapshot().error;
+        if (!history_.lastCleanup().message().isEmpty())
+            historySettings.usageNotice += QStringLiteral("\n") + history_.lastCleanup().message();
+    }
+    else
+    {
+        historySettings.usageNotice =
+            QStringLiteral("截图历史默认关闭。开启前不会创建或读取历史目录；已有历史文件仍保留，"
+                           "关闭后也不会自动删除。");
+    }
     for (const auto& key : historyHotkeys_)
         if (!key->enabled() && !key->explanation().isEmpty() &&
             !historySettings.usageNotice.contains(key->explanation()))
@@ -409,16 +438,28 @@ void ApplicationController::openSettings()
     { return changeHotkey(sequence, action); };
     historySettings.savePreferences = [this](const HistoryPreferences& preferences)
     {
+        if (!preferences.enabled)
+        {
+            const auto error = settings_.saveHistoryPreferences(preferences);
+            if (!error.isEmpty())
+                return error;
+            historyEnabled_ = false;
+            if (historyWindow_)
+                historyWindow_->close();
+            refreshStickerActions();
+            return QString();
+        }
         const auto oldRoot = history_.rootDirectory();
         const auto result = history_.savePreferences(preferences);
-        if (result.success && oldRoot != history_.rootDirectory())
+        if (result.success)
         {
-            if (historyWindow_)
-                historyWindow_->navigate(0, true);
+            historyEnabled_ = true;
             if (historyWindow_)
                 historyWindow_->refresh();
+            if (!oldRoot.isEmpty() && oldRoot != history_.rootDirectory() && historyWindow_)
+                historyWindow_->navigate(0, true);
+            refreshStickerActions();
         }
-        refreshStickerActions();
         return result.error;
     };
     SettingsDialog dialog(
@@ -477,6 +518,11 @@ void ApplicationController::navigateHistory(int step)
 {
     if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
         return;
+    if (!historyEnabled_ || !history_.ready())
+    {
+        openHistory();
+        return;
+    }
     const bool opening = !historyWindow_ || !historyWindow_->isVisible();
     openHistory();
     if (historyWindow_)
@@ -487,6 +533,17 @@ void ApplicationController::openHistory()
 {
     if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
         return;
+    if (!historyEnabled_ || !history_.ready())
+    {
+        const QString message =
+            QStringLiteral("截图历史未启用。请在「设置 → 历史」中阅读隐私提示并手动开启。");
+        if (!options_.testMode && !options_.smokeTest)
+            tray_.showMessage(QStringLiteral("截图历史未启用"), message,
+                              QSystemTrayIcon::Information);
+        else
+            qWarning().noquote() << message;
+        return;
+    }
     if (!historyWindow_)
     {
         historyWindow_ = new HistoryWindow(history_, settings_, historyActions_);
@@ -517,7 +574,8 @@ void ApplicationController::trigger(const QString& source)
     }
     if (!retryDisplay_)
         scrollRestoreFocus_ = captureForegroundRestorer();
-    historySession_ = history_.beginSession();
+    historySession_ =
+        historyEnabled_ && history_.ready() ? history_.beginSession() : HistorySession{};
     active_ = true;
     qInfo() << "截图会话开始：source=" << source;
     if (clipboardToast_)
@@ -589,8 +647,13 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     const auto session = historySession_;
     actions.historySessionId = session.id;
     actions.historyGroupId = session.groupId;
-    actions.recordHistory = [this, session](const QImage& image, const QString&)
-    { return history_.record(session, image, HistorySource::Overlay); };
+    actions.recordHistory = [this, session](const QImage& image, const QString&) -> HistoryStatus
+    {
+        if (!historyEnabled_ || session.id.isEmpty())
+            return {true, {}};
+        const auto result = history_.record(session, image, HistorySource::Overlay);
+        return {result.success, result.error};
+    };
     actions.ratios = settings_.loadCaptureRatios();
     actions.shapeTemplates = settings_.loadShapeTemplates(&actions.shapeTemplateNotice);
     actions.shapeTemplateDir = settings_.shapeTemplateDir();
@@ -754,7 +817,7 @@ void ApplicationController::finishScrollCapture()
         return;
     QImage image = scrollSession_->takeResult();
     const auto session = historySession_;
-    if (!image.isNull())
+    if (!image.isNull() && historyEnabled_ && !session.id.isEmpty())
         history_.record(session, image, HistorySource::Scroll);
     const auto stats = scrollSession_->stats();
     if (image.isNull() && stats.limitReached)
@@ -774,7 +837,10 @@ void ApplicationController::finishScrollCapture()
         return;
     ScrollResultActions actions;
     actions.historyUpdated = [this, session](const QImage& image)
-    { history_.record(session, image, HistorySource::Scroll); };
+    {
+        if (historyEnabled_ && !session.id.isEmpty())
+            history_.record(session, image, HistorySource::Scroll);
+    };
     actions.loadSavePreferences = [this] { return settings_.loadSavePreferences(); };
     actions.pinImage = [this](const QImage& original)
     {

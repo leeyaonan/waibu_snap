@@ -22,6 +22,7 @@
 #include <QPointer>
 #include <QSystemTrayIcon>
 #include <QTimer>
+#include <optional>
 #include <vector>
 namespace waibusnap
 {
@@ -34,6 +35,8 @@ struct RunOptions
     QString metricsFile;
     QString settingsFile;
     QString historyRoot;
+    // 仅受控测试使用；不写回用户历史开关。
+    std::optional<bool> historyEnabledOverride;
     bool testMode = false;
     bool smokeTest = false;
     int testCount = 1;
@@ -108,6 +111,7 @@ class ApplicationController final : public QObject
     std::unique_ptr<GlobalHotkey> hotkey_;
     AppSettings settings_;
     HistoryManager history_;
+    bool historyEnabled_ = false;
     HistorySession historySession_;
     HotkeySettings hotkeySettings_;
     std::array<std::unique_ptr<HotkeySettings>, 3> historyHotkeys_;

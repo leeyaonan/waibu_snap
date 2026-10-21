@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLockFile>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -118,6 +119,8 @@ struct Fixture
         HistorySettingsActions result;
         result.preferences = settings.loadHistoryPreferences();
         result.preferences.rootDirectory = manager.rootDirectory();
+        result.preferences.enabled = true;
+        result.enabled = true;
         result.usage = manager.totalUsage();
         result.groups = manager.groups();
         result.currentGroupId = manager.currentGroupId();
@@ -195,6 +198,121 @@ class HistorySettingsTest final : public QObject
             QVERIFY(
                 dialog.rect().contains(QRect(control->mapTo(&dialog, QPoint()), control->size())));
         }
+    }
+    void controllerPrivacyOptInAndEnable()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString settingsPath = temp.filePath(QStringLiteral("privacy.ini"));
+        const QString root = temp.filePath(QStringLiteral("隐私 历史"));
+        AppSettings settings(settingsPath);
+        auto preferences = settings.loadHistoryPreferences();
+        preferences.enabled = false;
+        preferences.rootDirectory = root;
+        QVERIFY(settings.saveHistoryPreferences(preferences).isEmpty());
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = settingsPath;
+        ApplicationController controller(*qApp, options, {}, {}, startup(), {}, {},
+                                         std::make_unique<FakeHotkey>());
+        auto& manager = ApplicationControllerTestAccess::history(controller);
+        QVERIFY(!manager.ready());
+        QVERIFY(!QFileInfo::exists(root));
+        auto* open = child<QAction>(controller.menu(), "openHistoryAction");
+        QVERIFY(!open->isEnabled());
+        controller.openHistory();
+        QVERIFY(!ApplicationControllerTestAccess::window(controller));
+        QTimer::singleShot(
+            0, qApp,
+            []
+            {
+                auto* dialog = qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                auto* enabled = child<QCheckBox>(dialog, "historyEnabledCheck");
+                QVERIFY(!enabled->isChecked());
+                enabled->setChecked(true);
+                QTimer::singleShot(
+                    0, dialog,
+                    []
+                    {
+                        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                        QVERIFY(box);
+                        child<QCheckBox>(box, "historyPrivacyAcknowledge")->setChecked(true);
+                        child<QPushButton>(box, "historyPrivacyEnable")->click();
+                    });
+                child<QPushButton>(dialog, "saveSettingsButton")->click();
+            });
+        child<QAction>(controller.menu(), "settingsAction")->trigger();
+        QVERIFY(manager.ready());
+        QVERIFY(QFileInfo::exists(root));
+        QVERIFY(AppSettings(settingsPath).loadHistoryPreferences().enabled);
+        QVERIFY(open->isEnabled());
+        QTimer::singleShot(0, qApp,
+                           []
+                           {
+                               auto* dialog =
+                                   qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                               QVERIFY(dialog);
+                               auto* enabled = child<QCheckBox>(dialog, "historyEnabledCheck");
+                               QVERIFY(enabled->isChecked());
+                               enabled->setChecked(false);
+                               child<QPushButton>(dialog, "saveSettingsButton")->click();
+                           });
+        child<QAction>(controller.menu(), "settingsAction")->trigger();
+        QVERIFY(!AppSettings(settingsPath).loadHistoryPreferences().enabled);
+        QVERIFY(!open->isEnabled());
+        QVERIFY(QFileInfo::exists(root));
+    }
+    void privacyOptInRequiresAcknowledgement()
+    {
+        Fixture f;
+        auto actions = f.actions();
+        actions.enabled = false;
+        actions.preferences.enabled = false;
+        bool saved = false;
+        bool savedEnabled = false;
+        actions.savePreferences = [&](const HistoryPreferences& preferences)
+        {
+            saved = true;
+            savedEnabled = preferences.enabled;
+            return QString();
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const auto&) { return QString(); }, {}, nullptr, {},
+            startup(), actions);
+        dialog.show();
+        historyPage(dialog);
+        auto* enabled = child<QCheckBox>(&dialog, "historyEnabledCheck");
+        QVERIFY(!enabled->isChecked());
+        enabled->setChecked(true);
+        QTimer::singleShot(0, &dialog,
+                           []
+                           {
+                               auto* box =
+                                   qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                               QVERIFY(box);
+                               QCOMPARE(box->objectName(), QStringLiteral("historyPrivacyWarning"));
+                               child<QPushButton>(box, "historyPrivacyKeepOff")->click();
+                           });
+        save(dialog);
+        QVERIFY(dialog.isVisible());
+        QVERIFY(!enabled->isChecked());
+        QVERIFY(!saved);
+        QVERIFY(child<QLabel>(&dialog, "settingsStatus")->text().contains(QStringLiteral("隐私")));
+        enabled->setChecked(true);
+        QTimer::singleShot(0, &dialog,
+                           []
+                           {
+                               auto* box =
+                                   qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                               QVERIFY(box);
+                               child<QCheckBox>(box, "historyPrivacyAcknowledge")->setChecked(true);
+                               child<QPushButton>(box, "historyPrivacyEnable")->click();
+                           });
+        save(dialog);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(saved);
+        QVERIFY(savedEnabled);
     }
     void groupsPageShowsAllGroupsAndIndependentDirectories()
     {

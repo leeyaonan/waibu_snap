@@ -491,6 +491,7 @@ class HistoryStoreTest final : public QObject
         const auto defaults = settings.loadHistoryPreferences();
         QCOMPARE(defaults.rootDirectory, HistoryStore::defaultRootDirectory());
         QVERIFY(defaults.currentGroupId.isEmpty());
+        QVERIFY(!defaults.enabled);
         QCOMPARE(defaults.defaultCleanup.maxCount, 100);
         QVERIFY(!QFile::exists(path));
         QVERIFY(settings.saveHotkey(QKeySequence(Qt::Key_F3)).isEmpty());
@@ -507,6 +508,7 @@ class HistoryStoreTest final : public QObject
         HistoryPreferences preferences{temporary.filePath(QStringLiteral("图片 库")),
                                        QUuid::createUuid().toString(QUuid::WithoutBraces),
                                        {}};
+        preferences.enabled = true;
         preferences.defaultCleanup.maxAgeDays = 90;
         preferences.defaultCleanup.countEnabled = false;
         preferences.defaultCleanup.maxBytes = 200 * 1024 * 1024;
@@ -518,14 +520,16 @@ class HistoryStoreTest final : public QObject
         QCOMPARE(loaded.currentGroupId, preferences.currentGroupId);
         QCOMPARE(cleanupPolicyToJson(loaded.defaultCleanup),
                  cleanupPolicyToJson(preferences.defaultCleanup));
+        QCOMPARE(loaded.enabled, true);
         {
             QSettings ini(path, QSettings::IniFormat);
-            QCOMPARE(ini.allKeys().size(), oldKeys.size() + 3);
+            QCOMPARE(ini.allKeys().size(), oldKeys.size() + 4);
             for (auto it = oldKeys.begin(); it != oldKeys.end(); ++it)
                 QCOMPARE(ini.value(it.key()), it.value());
         }
         preferences.rootDirectory.clear();
         preferences.currentGroupId.clear();
+        preferences.enabled = false;
         preferences.defaultCleanup.enabled = false;
         preferences.defaultCleanup.ageEnabled = preferences.defaultCleanup.countEnabled =
             preferences.defaultCleanup.bytesEnabled = false;

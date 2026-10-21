@@ -320,6 +320,7 @@ add_test(NAME history_settings COMMAND history_settings_test -o
 set_tests_properties(history_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 add_test(NAME history_settings_high_dpi COMMAND history_settings_test
     pageControlsAndUsage groupsPageShowsAllGroupsAndIndependentDirectories
+    privacyOptInRequiresAcknowledgement controllerPrivacyOptInAndEnable
     directoryChooseClearCancelAndEscape rootSwitchAndNoMigration
     rootFailureKeepsOldAndRetry templateOnlyAffectsNewGroupsAndAtLeastOne bytePrecisionAndProtection
     dialogDuplicateInvalidAndSingleFailure trayMenusEmptyAndGuards
