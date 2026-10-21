@@ -607,7 +607,7 @@ void SettingsDialog::buildGroupsPage(QWidget* page)
     auto* layout = new QVBoxLayout(page);
     auto* help = new QLabel(
         QStringLiteral("每个分组是独立文件夹。可以在这里新建、改名、更改目录、设置清理策略或删除；"
-                       "默认分组允许改名和换目录，但不能删除。"),
+                       "改名只改显示名，不改目录；默认分组允许改名和换目录，但不能删除。"),
         page);
     help->setObjectName(QStringLiteral("settingsGroupsHelp"));
     help->setWordWrap(true);
