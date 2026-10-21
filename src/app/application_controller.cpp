@@ -165,6 +165,15 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
             &ApplicationController::rebuildCurrentGroupMenu);
     connect(&history_, &HistoryManager::currentGroupChanged, this,
             &ApplicationController::updateCurrentGroupMenu);
+    historyDisabledAction_ = new QAction(QStringLiteral("历史"), &menu_);
+    historyDisabledAction_->setObjectName(QStringLiteral("historyDisabledAction"));
+    historyDisabledAction_->setEnabled(false);
+    historyDisabledAction_->setToolTip(QStringLiteral("历史功能未启用；请在设置 → 历史中开启"));
+    currentGroupDisabledAction_ = new QAction(QStringLiteral("当前分组"), &menu_);
+    currentGroupDisabledAction_->setObjectName(QStringLiteral("currentGroupDisabledAction"));
+    currentGroupDisabledAction_->setEnabled(false);
+    currentGroupDisabledAction_->setToolTip(
+        QStringLiteral("历史功能未启用；请在设置 → 历史中开启"));
     rebuildCurrentGroupMenu();
     hideAllStickersAction_ = menu_.addAction(QStringLiteral("隐藏全部贴图"), this,
                                              [this]
@@ -210,8 +219,34 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
             });
 }
 ApplicationController::~ApplicationController() { cleanup(); }
+void ApplicationController::setHistoryMenusInstalled(bool installed)
+{
+    if (installed == historyMenusInstalled_)
+        return;
+    // 原生托盘对 disabled 子菜单的绘制差异较大；关闭历史时直接换成两个禁用的
+    // 普通动作，保证“历史”“当前分组”在菜单里明确呈现灰态。
+    if (!hideAllStickersAction_)
+        return;
+    if (installed)
+    {
+        menu_.removeAction(historyDisabledAction_);
+        menu_.removeAction(currentGroupDisabledAction_);
+        menu_.insertAction(hideAllStickersAction_, historyMenu_->menuAction());
+        menu_.insertAction(hideAllStickersAction_, currentGroupMenu_->menuAction());
+    }
+    else
+    {
+        menu_.removeAction(historyMenu_->menuAction());
+        menu_.removeAction(currentGroupMenu_->menuAction());
+        menu_.insertAction(hideAllStickersAction_, historyDisabledAction_);
+        menu_.insertAction(hideAllStickersAction_, currentGroupDisabledAction_);
+    }
+    historyMenusInstalled_ = installed;
+}
 void ApplicationController::refreshStickerActions()
 {
+    setHistoryMenusInstalled(historyEnabled_);
+
     const bool interactive = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
     const bool historyAvailable = interactive && historyEnabled_ && history_.ready();
     historyMenu_->setEnabled(historyAvailable);
