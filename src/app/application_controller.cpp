@@ -215,6 +215,7 @@ void ApplicationController::refreshStickerActions()
     const bool interactive = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
     const bool historyAvailable = interactive && historyEnabled_ && history_.ready();
     historyMenu_->setEnabled(historyAvailable);
+    historyMenu_->menuAction()->setEnabled(historyAvailable);
     openHistoryAction_->setEnabled(historyAvailable);
     bool hasItems = false;
     if (historyEnabled_)
@@ -223,6 +224,18 @@ void ApplicationController::refreshStickerActions()
     historyPreviousAction_->setEnabled(historyAvailable && hasItems);
     historyNextAction_->setEnabled(historyAvailable && hasItems);
     currentGroupMenu_->setEnabled(historyAvailable);
+    currentGroupMenu_->menuAction()->setEnabled(historyAvailable);
+    if (!historyEnabled_)
+    {
+        // 某些原生托盘实现不会只因为父菜单 disabled 就呈现灰态；关闭时把所有子项
+        // 一并禁用，确保“历史”和“当前分组”在视觉与键盘上都不可进入。
+        for (auto* action : historyMenu_->actions())
+            if (!action->isSeparator())
+                action->setEnabled(false);
+        for (auto* action : currentGroupMenu_->actions())
+            if (!action->isSeparator())
+                action->setEnabled(false);
+    }
     if (historyWindow_)
         historyWindow_->setGroupActionsEnabled(interactive);
     clipboardStickerAction_->setEnabled(!active_ && !resolvingQuit_ && !quitting_);

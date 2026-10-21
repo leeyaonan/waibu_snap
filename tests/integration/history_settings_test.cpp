@@ -276,6 +276,12 @@ class HistorySettingsTest final : public QObject
         QVERIFY(!historyMenu->menuAction()->isEnabled());
         QVERIFY(!currentMenu->isEnabled());
         QVERIFY(!currentMenu->menuAction()->isEnabled());
+        for (auto* action : historyMenu->actions())
+            if (!action->isSeparator())
+                QVERIFY(!action->isEnabled());
+        for (auto* action : currentMenu->actions())
+            if (!action->isSeparator())
+                QVERIFY(!action->isEnabled());
         QVERIFY(currentMenu->title().contains(QStringLiteral("未启用")));
         QVERIFY(QFileInfo::exists(root));
         QTimer::singleShot(
