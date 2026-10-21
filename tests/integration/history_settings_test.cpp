@@ -479,7 +479,10 @@ class HistorySettingsTest final : public QObject
                      .isEmpty());
         QCOMPARE(raw->attempts.size(), attempts);
         auto* historyMenu = child<QMenu>(c.menu(), "historyMenu");
-        QCOMPARE(historyMenu->actions().size(), 3);
+        QCOMPARE(historyMenu->actions().size(), 4);
+        auto* cleanup = child<QAction>(historyMenu, "historyCleanupStatus");
+        QVERIFY(!cleanup->isVisible());
+        QVERIFY(!cleanup->isEnabled());
         auto* previous = child<QAction>(c.menu(), "historyPreviousAction");
         auto* next = child<QAction>(c.menu(), "historyNextAction");
         auto* open = child<QAction>(c.menu(), "openHistoryAction");
@@ -488,6 +491,15 @@ class HistorySettingsTest final : public QObject
         QVERIFY(manager.record(manager.beginSession(), image(), HistorySource::Overlay).success);
         QVERIFY(QMetaObject::invokeMethod(c.menu(), "aboutToShow"));
         QVERIFY(previous->isEnabled() && next->isEnabled());
+        const auto item = manager.snapshot().groups[0].items[0];
+        QVERIFY(manager.setStarred(historyItemId(item), true).success);
+        CleanupPolicy policy;
+        policy.ageEnabled = policy.bytesEnabled = false;
+        policy.maxCount = 1;
+        QVERIFY(manager.saveCleanupPolicy(manager.currentGroupId(), policy).success);
+        QVERIFY(manager.record(manager.beginSession(), image(), HistorySource::Overlay).success);
+        QVERIFY(cleanup->isVisible());
+        QVERIFY(cleanup->text().contains(QStringLiteral("受保护")));
         for (int state = 1; state <= 4; ++state)
         {
             ApplicationControllerTestAccess::guard(c, state);

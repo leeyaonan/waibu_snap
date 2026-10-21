@@ -51,6 +51,17 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     for (size_t i = 0; i < historyHotkeys_.size(); ++i)
         historyHotkeys_[i] = std::make_unique<HotkeySettings>(settings_, *hotkey_, handlers[i],
                                                               hotkeyActions[i + 1]);
+    connect(&history_, &HistoryManager::cleanupFinished, this,
+            [this]
+            {
+                const auto result = history_.lastCleanup();
+                // 构造时托盘尚未显示，启动报告在 start() 发布。
+                if (!options_.testMode && !options_.smokeTest && tray_.isVisible() &&
+                    (result.deletedCount || result.protectedOverLimit))
+                    tray_.showMessage(QStringLiteral("截图历史自动清理"), result.message(),
+                                      result.error.isEmpty() ? QSystemTrayIcon::Information
+                                                             : QSystemTrayIcon::Warning);
+            });
     history_.initialize();
     if (!historyActions_.copyImage)
         historyActions_.copyImage = copyImageToClipboard;
@@ -126,6 +137,18 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     openHistoryAction_ = historyMenu_->addAction(QStringLiteral("打开历史…"), this,
                                                  &ApplicationController::openHistory);
     openHistoryAction_->setObjectName(QStringLiteral("openHistoryAction"));
+    auto* cleanupStatus = historyMenu_->addAction(QString());
+    cleanupStatus->setObjectName(QStringLiteral("historyCleanupStatus"));
+    cleanupStatus->setEnabled(false);
+    const auto updateCleanupStatus = [this, cleanupStatus]
+    {
+        const auto message = history_.lastCleanup().message();
+        cleanupStatus->setText(message);
+        cleanupStatus->setToolTip(message);
+        cleanupStatus->setVisible(!message.isEmpty());
+    };
+    connect(&history_, &HistoryManager::cleanupFinished, this, updateCleanupStatus);
+    updateCleanupStatus();
     currentGroupMenu_ = menu_.addMenu(QStringLiteral("当前分组"));
     currentGroupMenu_->setObjectName(QStringLiteral("currentGroupMenu"));
     currentGroupMenu_->menuAction()->setObjectName(QStringLiteral("currentGroupAction"));
@@ -291,6 +314,10 @@ void ApplicationController::start()
         qInfo().noquote() << historyHotkey->initialize().report;
     tray_.setToolTip(hotkeySettings_.tooltip());
     tray_.show();
+    const auto cleanup = history_.lastCleanup();
+    if (!options_.testMode && (cleanup.deletedCount || cleanup.protectedOverLimit))
+        tray_.showMessage(QStringLiteral("截图历史自动清理"), cleanup.message(),
+                          QSystemTrayIcon::Information);
     if (!startup.warning.isEmpty() && !options_.testMode)
         tray_.showMessage(hotkeySettings_.enabled() ? QStringLiteral("截图键已回退")
                                                     : QStringLiteral("快捷键未启用"),
@@ -334,6 +361,8 @@ void ApplicationController::openSettings()
     historySettings.usage =
         history_.totalUsage(historyWindow_ ? historyWindow_->selectedItemId() : QString());
     historySettings.usageNotice = history_.snapshot().error;
+    if (!history_.lastCleanup().message().isEmpty())
+        historySettings.usageNotice += QStringLiteral("\n") + history_.lastCleanup().message();
     for (const auto& key : historyHotkeys_)
         if (!key->enabled() && !key->explanation().isEmpty() &&
             !historySettings.usageNotice.contains(key->explanation()))
@@ -374,6 +403,10 @@ void ApplicationController::openSettings()
          settings_.loadStickerCloseReminder(),
          [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); }},
         autostartActions_, std::move(historySettings));
+    connect(&history_, &HistoryManager::groupsChanged, &dialog,
+            [this, &dialog] {
+                dialog.updateHistoryUsage(history_.totalUsage(), history_.lastCleanup().message());
+            });
     dialog.exec();
     settingsOpen_ = false;
     refreshStickerActions();

@@ -54,6 +54,8 @@ class SettingsDialog final : public QDialog
                             AutostartActions autostartActions = {},
                             HistorySettingsActions historySettings = {});
 
+    void updateHistoryUsage(GroupUsage usage, const QString& notice = {});
+
   protected:
     bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -82,6 +84,7 @@ class SettingsDialog final : public QDialog
     QDoubleSpinBox* ratioWidthInput_ = nullptr;
     QDoubleSpinBox* ratioHeightInput_ = nullptr;
     QKeySequenceEdit* editor_ = nullptr;
+    QLabel* historyUsage_ = nullptr;
     QLabel* status_ = nullptr;
     SaveHotkey saveHotkey_;
     QKeySequence originalSequence_;

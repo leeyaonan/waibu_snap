@@ -1012,3 +1012,18 @@ Windows 专属 CTest `windows_hotkey` 替换 `windows_hotkey_pending`。测试�
 回归取证：修复前新增专项 6 通过 / 5 失败 / 0 跳过；修复后含既有导航专项 12 通过 / 0 失败 / 0 跳过。本机 Qt 6.11.2 / arm64 Release 标准 build-project.sh、正常系统服务上下文 test-project.sh **33/33 CTest**、clang-format **18.1.8** lint、差异检查与 ObjC 块捕获门禁通过；主 / 高 DPI 冒烟 **500 / 433**，历史设置 / 导航 **26 / 22**，Carbon **4**，均 0 失败 / 0 跳过。最终双端 CI、Windows 专属结果与 head 见 [PR #47](https://github.com/leeyaonan/waibu_snap/pull/47) 的验证记录；独立目录 `build/verify-v006-windows-hotkeys`，没有改动或启动正在运行的 `build/macos`。
 
 人工待验收：Windows 10 / Windows 11 的真实 F1 / F7 / F8 / F9、Ctrl / Alt / Win 字母与数字、Fn 模式、长按无重复、系统 / 其他应用占用、逐项换键失败保留旧键、单项释放与退出后可被其他应用注册；真实键盘到 WM_HOTKEY 再到控制器的端到端行为。双端全局首步与持久选择 / 重启恢复、已开组内两种排序 / 边缘夹停、截图 / 设置 / 退出 guard 的真机手感。Windows 截图采集本身仍沿用既有未实现边界，本批只接通截图动作触发。
+
+
+## v006 批次 8：自动清理执行与回归收口（2026-10-21）
+
+来源愿景：v006；工作区设计第 19 节。新增 `history_cleanup_execution_test`，标准 / 高 DPI 两个 CTest，全部使用 QTemporaryDir 历史根与临时 INI。以真实 PNG / JSON 验证时长、张数、大小与 OR 清理；星标 / 最新 / 选中 / 超大 / 外部保护；各组策略独立；不在索引中的仿受管文件、伪路径、陈旧扫描、策略 / 星标改变与链接拒绝；删除后文件 / 索引 / 占用一致。
+
+故障注入仅通过测试友元替换 Store 私有永久删除操作，不暴露生产配置：首张成功、第二张失败后停止；索引 commit 失败恢复原图及保留原索引；损坏 JSON / 根锁失败时零删除，恢复后可重试。覆盖启动、入库、设置 / 取消星标、策略保存触发，以及清理错误不改变 Manager 入库成功和 SelectionOverlay 的复制 / 钉图 / 保存结果、saved 与 outcome。复制 / 钉图使用 fake 回调，未访问真实 Pictures、回收站或剪贴板。
+
+高 DPI 显式清单：`windowSelectionNoticeAndUsageRefresh`、`missingSelectionFallsBackAndErrorNotice`、`lockedScanKeepsWindowSelection`。断言选中保护、清理后选择保留 / 丢失回退、中文错误 notice、窄窗口可见性、分组 / 历史设置占用刷新与永久删除说明。托盘设置既有用例追加空报告隐藏 / 保护超限状态可见断言，测试模式不发系统通知。可选 `WAIBUSNAP_CLEANUP_EVIDENCE_DIR` 向指定目录输出历史 / 分组 / 设置界面 PNG；不设置时不产生证据文件。
+
+本机使用独立 `build/verify-v006-history-cleanup`，未改动或启动 `build/macos`。标准 build-project.sh、正常系统服务上下文 test-project.sh **35/35 CTest**、clang-format **18.1.8** lint 与差异检查通过；主 / 高 DPI 冒烟 **500 / 433**，清理执行 **22 / 5**、历史设置 **26 / 22**，均无失败 / 跳过。原生在屏与真实 OCR 均通过。根锁失败丢失选择先以回归用例实证（2 / 1 / 0），修复后通过；首轮沙箱系统服务缺失失败、状态菜单旧数量断言和 fixture 空 currentGroup 解引用均已修正 / 复验。时钟回拨导致刚入库图被当成旧图清理先实证（2 / 1 / 0），改为新记录时间标记按组递增后专项 3/3 通过。DPR=2 分组说明 / 占用裁切先用高度断言实证（2 / 1 / 0），修复标签垂直最小高度后专项 3/3 通过；标准与 DPR=2 界面渲染图已目视检查，双端 CI 链接见本批 PR。
+
+人工待验收：双端真实历史目录的权限 / 文件占用错误提示与重试、系统通知及菜单长文本、关闭窗口后保护释放、真实 30 天 / 100 张 / 100 MB 策略与跨重启一致性、大库同步扫描 / 清理时延、混合 DPI / 窄窗与 Windows junction 防护。Windows 截图采集、显示器定位与窗口枚举仍属已有平台缺口；全局热键真实按键、外部 WebP 插件部署、Finder / Explorer / 原生剪贴板及真实钉图的既有人工项延续，不将本批 CTest 视作实机验收。
+
+Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标签高度=40px）；断言改用 QLabel 在当前宽度的完整排版高度，不放宽文字裁切检测。macOS 与 Windows 最终数字以 PR 最新 head 的双端运行记录为准。

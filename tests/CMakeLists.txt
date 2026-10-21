@@ -342,3 +342,18 @@ elseif(WIN32)
     add_test(NAME windows_hotkey COMMAND windows_hotkey_test -o
         "${CMAKE_CURRENT_BINARY_DIR}/windows_hotkey-output.txt,txt")
 endif()
+
+qt_add_executable(history_cleanup_execution_test integration/history_cleanup_execution_test.cpp)
+target_link_libraries(history_cleanup_execution_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(history_cleanup_execution_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME history_cleanup_execution COMMAND history_cleanup_execution_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/history_cleanup_execution-output.txt,txt")
+set_tests_properties(history_cleanup_execution PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+# 清理 notice、选中保护与设置占用在 2 倍 DPR 下明确复验。
+add_test(NAME history_cleanup_execution_high_dpi COMMAND history_cleanup_execution_test
+    windowSelectionNoticeAndUsageRefresh missingSelectionFallsBackAndErrorNotice
+    lockedScanKeepsWindowSelection
+    -o "${CMAKE_CURRENT_BINARY_DIR}/history_cleanup_execution-high-dpi-output.txt,txt")
+set_tests_properties(history_cleanup_execution_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
