@@ -13,6 +13,7 @@
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
@@ -487,6 +488,18 @@ bool SettingsDialog::eventFilter(QObject* watched, QEvent* event)
 void SettingsDialog::buildHistoryPage(QWidget* page)
 {
     auto* layout = new QVBoxLayout(page);
+    historyEnabledCheck_ = new QCheckBox(QStringLiteral("启用截图历史（默认关闭）"), page);
+    historyEnabledCheck_->setObjectName(QStringLiteral("historyEnabledCheck"));
+    historyEnabledCheck_->setChecked(historySettings_.enabled);
+    layout->addWidget(historyEnabledCheck_);
+    auto* privacy = new QLabel(
+        QStringLiteral("历史会把截图副本保存在本机磁盘；任何能读取该目录的进程、同步工具或恶意软件"
+                       "都可能获取其中的密码、聊天、证件、财务等敏感信息。仅在可信设备上开启，"
+                       "并定期清理；关闭后已有文件仍会保留。"),
+        page);
+    privacy->setObjectName(QStringLiteral("historyPrivacyNotice"));
+    privacy->setWordWrap(true);
+    layout->addWidget(privacy);
     layout->addWidget(new QLabel(QStringLiteral("历史根目录（只切换，不迁移；旧目录保留）"), page));
     auto* row = new QHBoxLayout;
     historyDirectory_ = new QLineEdit(historySettings_.preferences.rootDirectory, page);
@@ -622,9 +635,9 @@ void SettingsDialog::buildGroupsPage(QWidget* page)
     historyGroupList_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     historyGroupList_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     layout->addWidget(historyGroupList_, 1);
-    auto* create = new QPushButton(QStringLiteral("新建分组…"), page);
-    create->setObjectName(QStringLiteral("settingsGroupNew"));
-    create->setEnabled(bool(historySettings_.createGroup));
+    historyGroupNew_ = new QPushButton(QStringLiteral("新建分组…"), page);
+    historyGroupNew_->setObjectName(QStringLiteral("settingsGroupNew"));
+    historyGroupNew_->setEnabled(bool(historySettings_.createGroup));
     historyGroupRename_ = new QPushButton(QStringLiteral("改名…"), page);
     historyGroupRename_->setObjectName(QStringLiteral("settingsGroupRename"));
     historyGroupDirectory_ = new QPushButton(QStringLiteral("更改目录…"), page);
@@ -636,7 +649,7 @@ void SettingsDialog::buildGroupsPage(QWidget* page)
     historyGroupDelete_ = new QPushButton(QStringLiteral("删除…"), page);
     historyGroupDelete_->setObjectName(QStringLiteral("settingsGroupDelete"));
     auto* firstRow = new QHBoxLayout;
-    firstRow->addWidget(create);
+    firstRow->addWidget(historyGroupNew_);
     firstRow->addWidget(historyGroupRename_);
     firstRow->addWidget(historyGroupDirectory_);
     firstRow->addStretch();
@@ -651,7 +664,7 @@ void SettingsDialog::buildGroupsPage(QWidget* page)
     historyGroupNotice_->setObjectName(QStringLiteral("settingsGroupNotice"));
     historyGroupNotice_->setWordWrap(true);
     layout->addWidget(historyGroupNotice_);
-    connect(create, &QPushButton::clicked, this,
+    connect(historyGroupNew_, &QPushButton::clicked, this,
             [this]
             {
                 if (historySettings_.createGroup)
@@ -701,6 +714,18 @@ void SettingsDialog::buildGroupsPage(QWidget* page)
                 if (!id.isEmpty() && historySettings_.openGroupSettings)
                     historySettings_.openGroupSettings(this, id);
             });
+    connect(historyEnabledCheck_, &QCheckBox::toggled, this,
+            [this]
+            {
+                updateGroupButtons();
+                historyGroupNotice_->setText(
+                    historyEnabledCheck_->isChecked()
+                        ? (historyGroups_.isEmpty()
+                               ? QStringLiteral("保存后载入分组。")
+                               : QStringLiteral("共 %1 个分组；双击可打开分组设置。")
+                                     .arg(historyGroups_.size()))
+                        : QStringLiteral("历史功能未启用；开启并保存后才能管理分组。"));
+            });
     updateHistoryGroups(historySettings_.groups, historySettings_.currentGroupId);
 }
 void SettingsDialog::rebuildGroupList()
@@ -736,9 +761,13 @@ void SettingsDialog::rebuildGroupList()
         }
     if (!historyGroupList_->currentItem() && historyGroupList_->topLevelItemCount())
         historyGroupList_->setCurrentItem(historyGroupList_->topLevelItem(0));
-    historyGroupNotice_->setText(
-        groups.isEmpty() ? QStringLiteral("尚未创建任何分组。")
-                         : QStringLiteral("共 %1 个分组；双击可打开分组设置。").arg(groups.size()));
+    if (!historyEnabledCheck_ || !historyEnabledCheck_->isChecked())
+        historyGroupNotice_->setText(QStringLiteral("历史功能未启用；开启并保存后才能管理分组。"));
+    else
+        historyGroupNotice_->setText(
+            groups.isEmpty()
+                ? QStringLiteral("保存后载入分组。")
+                : QStringLiteral("共 %1 个分组；双击可打开分组设置。").arg(groups.size()));
     updateGroupButtons();
 }
 QString SettingsDialog::selectedGroupId() const
@@ -753,14 +782,19 @@ void SettingsDialog::updateGroupButtons()
                                     [this](const HistoryGroup& current)
                                     { return current.id == selectedGroupId(); });
     const bool selected = group != historyGroups_.cend();
+    const bool enabled = historyEnabledCheck_ && historyEnabledCheck_->isChecked();
     const bool isCurrent = selected && group->id == historyCurrentGroupId_;
     const bool isDefault = selected && group->isDefault;
-    historyGroupRename_->setEnabled(selected && bool(historySettings_.renameGroup));
-    historyGroupDirectory_->setEnabled(selected && bool(historySettings_.changeGroupDirectory));
-    historyGroupSettings_->setEnabled(selected && bool(historySettings_.openGroupSettings));
-    historyGroupCurrent_->setEnabled(selected && !isCurrent &&
+    historyGroupNew_->setEnabled(enabled && bool(historySettings_.createGroup));
+    historyGroupRename_->setEnabled(enabled && selected && bool(historySettings_.renameGroup));
+    historyGroupDirectory_->setEnabled(enabled && selected &&
+                                       bool(historySettings_.changeGroupDirectory));
+    historyGroupSettings_->setEnabled(enabled && selected &&
+                                      bool(historySettings_.openGroupSettings));
+    historyGroupCurrent_->setEnabled(enabled && selected && !isCurrent &&
                                      bool(historySettings_.setCurrentGroup));
-    historyGroupDelete_->setEnabled(selected && !isDefault && bool(historySettings_.deleteGroup));
+    historyGroupDelete_->setEnabled(enabled && selected && !isDefault &&
+                                    bool(historySettings_.deleteGroup));
 }
 void SettingsDialog::updateHistoryGroups(const QVector<HistoryGroup>& groups,
                                          const QString& currentGroupId)
@@ -783,10 +817,39 @@ void SettingsDialog::updateHistoryUsage(GroupUsage u, const QString& notice)
             .arg(u.protectedBytes / 1048576.0, 0, 'f', 2) +
         (notice.isEmpty() ? QString() : QStringLiteral("\n") + notice));
 }
+bool SettingsDialog::confirmHistoryEnable()
+{
+    QMessageBox box(
+        QMessageBox::Warning, QStringLiteral("启用截图历史"),
+        QStringLiteral("启用后，WaibuSnap 会把截图副本保存到本机磁盘（默认在 Pictures/WaibuSnap，"
+                       "可在上方更改）。\n\n"
+                       "任何能读取该目录的进程、同步 / 备份软件或恶意程序，都可能获取其中的密码、"
+                       "聊天、证件、财务等敏感信息。历史功能不会上传网络，但不能替代系统权限或"
+                       "防恶意软件。\n\n"
+                       "建议只在可信设备上开启；不要保存敏感截图；定期清理历史；离开电脑时锁屏。"
+                       "如果不需要跨截图回看，建议保持关闭。\n\n"
+                       "关闭历史不会删除已有文件；如需彻底清除，请在文件管理器中删除历史目录。"),
+        QMessageBox::NoButton, this);
+    box.setObjectName(QStringLiteral("historyPrivacyWarning"));
+    auto* acknowledge = new QCheckBox(QStringLiteral("我已知晓并理解上述风险"), &box);
+    acknowledge->setObjectName(QStringLiteral("historyPrivacyAcknowledge"));
+    box.setCheckBox(acknowledge);
+    auto* enable = box.addButton(QStringLiteral("我已知晓，启用历史"), QMessageBox::AcceptRole);
+    enable->setObjectName(QStringLiteral("historyPrivacyEnable"));
+    enable->setEnabled(false);
+    auto* keep = box.addButton(QStringLiteral("保持关闭"), QMessageBox::RejectRole);
+    keep->setObjectName(QStringLiteral("historyPrivacyKeepOff"));
+    box.setDefaultButton(keep);
+    box.setEscapeButton(keep);
+    connect(acknowledge, &QCheckBox::toggled, enable, &QPushButton::setEnabled);
+    box.exec();
+    return box.clickedButton() == enable;
+}
 HistoryPreferences SettingsDialog::collectHistoryPreferences() const
 {
     auto result = historySettings_.preferences;
     result.rootDirectory = historyDirectory_->text();
+    result.enabled = historyEnabledCheck_->isChecked();
     auto& policy = result.defaultCleanup;
     policy.enabled = true;
     policy.ageEnabled = historyRules_[0]->isChecked();
@@ -801,6 +864,13 @@ HistoryPreferences SettingsDialog::collectHistoryPreferences() const
 }
 void SettingsDialog::save()
 {
+    if (historyEnabledCheck_->isChecked() && !historySettings_.enabled && !confirmHistoryEnable())
+    {
+        historyEnabledCheck_->setChecked(false);
+        status_->setText(QStringLiteral("未启用历史功能：需要阅读并确认隐私提示后才能开启。"));
+        status_->show();
+        return;
+    }
     const auto sequence = editor_->keySequence();
     const std::array<QKeySequence, 4> sequences = {sequence, historyEditors_[0]->keySequence(),
                                                    historyEditors_[1]->keySequence(),
@@ -835,7 +905,11 @@ void SettingsDialog::save()
     if (error.isEmpty() && saveSettings_.saveStickerCloseReminder)
         error = saveSettings_.saveStickerCloseReminder(stickerCloseReminderCheck_->isChecked());
     if (error.isEmpty() && historySettings_.savePreferences)
+    {
         error = historySettings_.savePreferences(historyPreferences);
+        if (error.isEmpty())
+            historySettings_.enabled = historyPreferences.enabled;
+    }
     if (!error.isEmpty())
     {
         status_->setText(error);

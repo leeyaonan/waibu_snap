@@ -37,6 +37,7 @@ struct SaveSettingsActions
 struct HistorySettingsActions
 {
     HistoryPreferences preferences;
+    bool enabled = false;
     std::array<QKeySequence, 3> hotkeys = {QKeySequence(Qt::Key_F7), QKeySequence(Qt::Key_F8),
                                            QKeySequence(Qt::Key_F9)};
     GroupUsage usage;
@@ -73,6 +74,7 @@ class SettingsDialog final : public QDialog
 
   private:
     void save();
+    bool confirmHistoryEnable();
     void buildHistoryPage(QWidget* page);
     void buildGroupsPage(QWidget* page);
     void rebuildGroupList();
@@ -111,6 +113,8 @@ class SettingsDialog final : public QDialog
     QCheckBox* stickerCloseReminderCheck_ = nullptr;
     HistorySettingsActions historySettings_;
     QLineEdit* historyDirectory_ = nullptr;
+    QCheckBox* historyEnabledCheck_ = nullptr;
+    QPushButton* historyGroupNew_ = nullptr;
     std::array<QKeySequenceEdit*, 3> historyEditors_{};
     std::array<QCheckBox*, 3> historyRules_{};
     QSpinBox* historyDays_ = nullptr;

@@ -1035,3 +1035,10 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 - 设置新增「分组」页：分组树显示显示名和目录，提供新建、改名、更改目录、分组设置、设为当前、删除；历史页仍为第 5 页。托盘当前分组子菜单底部新增「新建分组…」，历史窗口分组列和右键菜单复用同一组对话框。
 - `history_store` 新增独立目录创建、重启扫描、改名路径不变、移动目录、重启扫描和非空目录拒绝覆盖用户文件；原 19 项通过。`history_groups` 新增托盘新建快捷入口；`history_settings` 新增分组页列表、当前标记、目录显示、六个按钮回调和分组数提示，并在标准 / 高 DPI 下运行。
 - 设置 smoke 页数从 5 扩为 6，历史页索引保持 4；`settingsTabsReachability` 的 Ctrl+Tab 从最后页回到首页，分组页控件可达；`settingsTabsDraftAndPersistence` 增加分组页保存 / 取消 / Esc 行。测试仍只使用临时根、临时 INI 和 fake 回调，不访问真实 Pictures、回收站或剪贴板。
+
+## v006 批次 10：历史隐私开关（2026-10-21）
+
+- `HistoryPreferences.enabled` / `history/enabled` 默认 false；旧设置缺少该键也按关闭处理。`ApplicationController` 仅在开启或受控 `--history-root` 覆盖时初始化 HistoryManager；关闭时不创建历史目录、不扫描、当前分组 / 历史菜单禁用。
+- 关闭时截图与长图的 recordHistory 回调为成功空操作；`history_ingest` 新增关闭控制器完成复制后历史目录不存在的回归。
+- 设置「历史」页新增启用开关和隐私提示；首次开启保存时弹出 `historyPrivacyWarning`，必须勾选 `historyPrivacyAcknowledge` 才能点击 `historyPrivacyEnable`，`historyPrivacyKeepOff` 取消并保持关闭。`history_settings` 覆盖默认关闭、取消不保存、确认后开启、控制器从关闭到开启 / 再关闭且已有目录保留。
+- `history_store` 设置 roundtrip 增加 enabled 键；`history_settings` 标准 **29 项**、高 DPI **25 项**，主 / 高 DPI 冒烟 **503 / 436**。分组页在历史关闭时禁用并提示；隐私提示文案强调本机目录可被其他进程读取、不上传网络、关闭不删除旧文件。

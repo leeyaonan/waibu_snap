@@ -19,6 +19,8 @@ struct HistoryPreferences
     QString rootDirectory;
     QString currentGroupId;
     CleanupPolicy defaultCleanup;
+    // 隐私开关：历史截图保存默认关闭；只有显式开启后才初始化目录 / 扫描 / 入库。
+    bool enabled = false;
 };
 struct HistoryWindowState
 {

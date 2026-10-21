@@ -42,7 +42,7 @@ AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
 }
 HistoryPreferences AppSettings::loadHistoryPreferences(QString* notice) const
 {
-    HistoryPreferences result{HistoryStore::defaultRootDirectory(), {}, {}};
+    HistoryPreferences result{HistoryStore::defaultRootDirectory(), {}, {}, false};
     if (notice)
         notice->clear();
     QFile file(filePath_);
@@ -84,6 +84,11 @@ HistoryPreferences AppSettings::loadHistoryPreferences(QString* notice) const
             !cleanupPolicyFromJson(document.object(), result.defaultCleanup))
             invalid = true;
     }
+    const auto enabled = settings.value(QStringLiteral("history/enabled"), false);
+    if (enabled.metaType().id() != QMetaType::Bool)
+        invalid = true;
+    else
+        result.enabled = enabled.toBool();
     if (notice && invalid)
         *notice = QStringLiteral("部分历史设置无效，相关字段已回退默认值；原文件未修复。");
     return result;
@@ -108,9 +113,9 @@ QString AppSettings::saveHistoryPreferences(const HistoryPreferences& preference
     settings.sync();
     if (settings.status() != QSettings::NoError)
         return error;
-    const QStringList keys{QStringLiteral("history/rootDirectory"),
-                           QStringLiteral("history/currentGroupId"),
-                           QStringLiteral("history/defaultCleanup")};
+    const QStringList keys{
+        QStringLiteral("history/rootDirectory"), QStringLiteral("history/currentGroupId"),
+        QStringLiteral("history/defaultCleanup"), QStringLiteral("history/enabled")};
     QVector<QVariant> previous;
     for (const auto& key : keys)
         previous.append(settings.value(key));
@@ -119,6 +124,7 @@ QString AppSettings::saveHistoryPreferences(const HistoryPreferences& preference
     settings.setValue(
         keys[2], QString::fromUtf8(QJsonDocument(cleanupPolicyToJson(preferences.defaultCleanup))
                                        .toJson(QJsonDocument::Compact)));
+    settings.setValue(keys[3], preferences.enabled);
     settings.sync();
     if (settings.status() != QSettings::NoError)
     {

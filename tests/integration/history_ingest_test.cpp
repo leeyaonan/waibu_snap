@@ -301,6 +301,25 @@ class HistoryIngestTest final : public QObject
                      .success);
         QCOMPARE(items(run.historyRoot).size(), 1);
     }
+    void disabledControllerDoesNotWriteHistory()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        auto run = options(temp);
+        run.historyEnabledOverride = false;
+        ApplicationController controller(*qApp, run);
+        auto frames = std::make_shared<Frames>();
+        ApplicationControllerTestAccess::prepare(controller, frames,
+                                                 temp.filePath(QStringLiteral("output.png")));
+        controller.trigger(QStringLiteral("privacy-disabled"));
+        QTRY_VERIFY(ApplicationControllerTestAccess::overlay(controller));
+        auto* overlay = ApplicationControllerTestAccess::overlay(controller);
+        OverlayScrollTestAccess::select(*overlay);
+        button(*overlay, "copyButton")->click();
+        QCoreApplication::processEvents();
+        QVERIFY(!QFileInfo::exists(run.historyRoot));
+        QVERIFY(!ApplicationControllerTestAccess::history(controller).ready());
+    }
     void overlaySuccess_data()
     {
         QTest::addColumn<QString>("operation");
