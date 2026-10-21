@@ -451,10 +451,24 @@ void ApplicationController::openSettings()
             refreshStickerActions();
             return QString();
         }
+        const bool enabling = !historyEnabled_;
         const auto oldRoot = history_.rootDirectory();
         const auto result = history_.savePreferences(preferences);
         if (result.success)
         {
+            if (enabling)
+            {
+                // 启用后从默认分组开始，避免复用关闭前的自定义当前分组。
+                for (const auto& group : history_.groups())
+                    if (group.isDefault)
+                    {
+                        const auto selected = history_.setCurrentGroup(group.id);
+                        if (!selected.success)
+                            qWarning().noquote()
+                                << "历史开启后选择默认分组失败：" << selected.error;
+                        break;
+                    }
+            }
             historyEnabled_ = true;
             // 开启时 groupsChanged 在 historyEnabled_ 仍为 false 时已经发出；这里必须
             // 重新建组并刷新标题，才能立即显示默认分组的当前状态。

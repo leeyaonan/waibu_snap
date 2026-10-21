@@ -254,6 +254,10 @@ class HistorySettingsTest final : public QObject
         QVERIFY(currentMenu->isEnabled());
         QVERIFY(currentMenu->menuAction()->isEnabled());
         QVERIFY(currentMenu->title().contains(QStringLiteral("默认分组")));
+        const auto custom = manager.createGroup(QStringLiteral("关闭前自定义组"));
+        QVERIFY(custom.success);
+        QVERIFY(manager.setCurrentGroup(custom.group.id).success);
+        QVERIFY(currentMenu->title().contains(QStringLiteral("关闭前自定义组")));
         QTimer::singleShot(0, qApp,
                            []
                            {
@@ -274,6 +278,31 @@ class HistorySettingsTest final : public QObject
         QVERIFY(!currentMenu->menuAction()->isEnabled());
         QVERIFY(currentMenu->title().contains(QStringLiteral("未启用")));
         QVERIFY(QFileInfo::exists(root));
+        QTimer::singleShot(
+            0, qApp,
+            []
+            {
+                auto* dialog = qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                auto* enabled = child<QCheckBox>(dialog, "historyEnabledCheck");
+                QVERIFY(!enabled->isChecked());
+                enabled->setChecked(true);
+                QTimer::singleShot(
+                    0, dialog,
+                    []
+                    {
+                        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                        QVERIFY(box);
+                        child<QCheckBox>(box, "historyPrivacyAcknowledge")->setChecked(true);
+                        child<QPushButton>(box, "historyPrivacyEnable")->click();
+                    });
+                child<QPushButton>(dialog, "saveSettingsButton")->click();
+            });
+        child<QAction>(controller.menu(), "settingsAction")->trigger();
+        QVERIFY(manager.currentGroup() && manager.currentGroup()->isDefault);
+        QVERIFY(historyMenu->isEnabled());
+        QVERIFY(currentMenu->isEnabled());
+        QVERIFY(currentMenu->title().contains(QStringLiteral("默认分组")));
     }
     void privacyOptInRequiresAcknowledgement()
     {
