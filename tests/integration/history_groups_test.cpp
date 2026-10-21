@@ -311,6 +311,43 @@ class HistoryGroupsTest final : public QObject
                      .startsWith(QStringLiteral("● ")));
         QCOMPARE(child<QComboBox>(w, "historyGroupCombo")->currentData().toString(), group.id);
     }
+    void trayNewGroupShortcut()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        RunOptions options;
+        options.testMode = true;
+        options.historyRoot = temp.filePath(QStringLiteral("历史"));
+        options.settingsFile = temp.filePath(QStringLiteral("settings.ini"));
+        ApplicationController controller(*qApp, options);
+        auto& manager = ApplicationControllerTestAccess::history(controller);
+        auto* menu = child<QMenu>(controller.menu(), "currentGroupMenu");
+        auto* action = child<QAction>(menu, "newGroupAction");
+        QVERIFY(menu->actions().last() == action);
+        const QString directory = temp.filePath(QStringLiteral("托盘 独立目录"));
+        QTimer::singleShot(
+            0, qApp,
+            [directory]
+            {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                QCOMPARE(dialog->objectName(), QStringLiteral("historyGroupNameDialog"));
+                child<QLineEdit>(dialog, "historyGroupName")->setText(QStringLiteral("托盘新建"));
+                child<QLineEdit>(dialog, "historyGroupDirectory")->setText(directory);
+                child<QPushButton>(dialog, "historyGroupNameSave")->click();
+            });
+        action->trigger();
+        QCOMPARE(manager.groups().size(), 2);
+        bool found = false;
+        for (const auto& group : manager.groups())
+            if (group.name == QStringLiteral("托盘新建"))
+            {
+                found = true;
+                QCOMPARE(group.absolutePath, QDir(directory).absolutePath());
+            }
+        QVERIFY(found);
+        QVERIFY(child<QAction>(menu, "newGroupAction")->isEnabled());
+    }
     void namingDialogValidationAndRename()
     {
         Fixture f;

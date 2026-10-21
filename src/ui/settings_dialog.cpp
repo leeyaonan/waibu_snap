@@ -8,6 +8,7 @@
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
@@ -18,6 +19,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTabWidget>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -60,6 +62,7 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     auto* capturePage = addPage(QStringLiteral("截图"), QStringLiteral("settingsCapturePage"));
     auto* stickerPage = addPage(QStringLiteral("贴图"), QStringLiteral("settingsStickerPage"));
     buildHistoryPage(addPage(QStringLiteral("历史"), QStringLiteral("settingsHistoryPage")));
+    buildGroupsPage(addPage(QStringLiteral("分组"), QStringLiteral("settingsGroupsPage")));
     auto* stickerLayout = new QVBoxLayout(stickerPage);
     stickerCloseReminderCheck_ = new QCheckBox(QStringLiteral("关闭未保存贴图前提醒"), stickerPage);
     stickerCloseReminderCheck_->setObjectName(QStringLiteral("stickerCloseReminderCheck"));
@@ -598,6 +601,173 @@ void SettingsDialog::buildHistoryPage(QWidget* page)
     updateHistoryUsage(historySettings_.usage, historySettings_.usageNotice);
     layout->addWidget(usage);
     layout->addStretch();
+}
+void SettingsDialog::buildGroupsPage(QWidget* page)
+{
+    auto* layout = new QVBoxLayout(page);
+    auto* help = new QLabel(
+        QStringLiteral("每个分组是独立文件夹。可以在这里新建、改名、更改目录、设置清理策略或删除；"
+                       "改名只改显示名，不改目录；默认分组允许改名和换目录，但不能删除。"),
+        page);
+    help->setObjectName(QStringLiteral("settingsGroupsHelp"));
+    help->setWordWrap(true);
+    layout->addWidget(help);
+    historyGroupList_ = new QTreeWidget(page);
+    historyGroupList_->setObjectName(QStringLiteral("settingsGroupList"));
+    historyGroupList_->setColumnCount(2);
+    historyGroupList_->setHeaderLabels({QStringLiteral("分组"), QStringLiteral("目录")});
+    historyGroupList_->setRootIsDecorated(false);
+    historyGroupList_->setAlternatingRowColors(true);
+    historyGroupList_->setSelectionMode(QAbstractItemView::SingleSelection);
+    historyGroupList_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    historyGroupList_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    layout->addWidget(historyGroupList_, 1);
+    auto* create = new QPushButton(QStringLiteral("新建分组…"), page);
+    create->setObjectName(QStringLiteral("settingsGroupNew"));
+    create->setEnabled(bool(historySettings_.createGroup));
+    historyGroupRename_ = new QPushButton(QStringLiteral("改名…"), page);
+    historyGroupRename_->setObjectName(QStringLiteral("settingsGroupRename"));
+    historyGroupDirectory_ = new QPushButton(QStringLiteral("更改目录…"), page);
+    historyGroupDirectory_->setObjectName(QStringLiteral("settingsGroupDirectory"));
+    historyGroupSettings_ = new QPushButton(QStringLiteral("分组设置…"), page);
+    historyGroupSettings_->setObjectName(QStringLiteral("settingsGroupSettings"));
+    historyGroupCurrent_ = new QPushButton(QStringLiteral("设为当前"), page);
+    historyGroupCurrent_->setObjectName(QStringLiteral("settingsGroupSetCurrent"));
+    historyGroupDelete_ = new QPushButton(QStringLiteral("删除…"), page);
+    historyGroupDelete_->setObjectName(QStringLiteral("settingsGroupDelete"));
+    auto* firstRow = new QHBoxLayout;
+    firstRow->addWidget(create);
+    firstRow->addWidget(historyGroupRename_);
+    firstRow->addWidget(historyGroupDirectory_);
+    firstRow->addStretch();
+    layout->addLayout(firstRow);
+    auto* secondRow = new QHBoxLayout;
+    secondRow->addWidget(historyGroupSettings_);
+    secondRow->addWidget(historyGroupCurrent_);
+    secondRow->addWidget(historyGroupDelete_);
+    secondRow->addStretch();
+    layout->addLayout(secondRow);
+    historyGroupNotice_ = new QLabel(page);
+    historyGroupNotice_->setObjectName(QStringLiteral("settingsGroupNotice"));
+    historyGroupNotice_->setWordWrap(true);
+    layout->addWidget(historyGroupNotice_);
+    connect(create, &QPushButton::clicked, this,
+            [this]
+            {
+                if (historySettings_.createGroup)
+                    historySettings_.createGroup(this);
+            });
+    connect(historyGroupRename_, &QPushButton::clicked, this,
+            [this]
+            {
+                const QString id = selectedGroupId();
+                if (!id.isEmpty() && historySettings_.renameGroup)
+                    historySettings_.renameGroup(this, id);
+            });
+    connect(historyGroupDirectory_, &QPushButton::clicked, this,
+            [this]
+            {
+                const QString id = selectedGroupId();
+                if (!id.isEmpty() && historySettings_.changeGroupDirectory)
+                    historySettings_.changeGroupDirectory(this, id);
+            });
+    connect(historyGroupSettings_, &QPushButton::clicked, this,
+            [this]
+            {
+                const QString id = selectedGroupId();
+                if (!id.isEmpty() && historySettings_.openGroupSettings)
+                    historySettings_.openGroupSettings(this, id);
+            });
+    connect(historyGroupCurrent_, &QPushButton::clicked, this,
+            [this]
+            {
+                const QString id = selectedGroupId();
+                if (!id.isEmpty() && historySettings_.setCurrentGroup)
+                    historySettings_.setCurrentGroup(this, id);
+            });
+    connect(historyGroupDelete_, &QPushButton::clicked, this,
+            [this]
+            {
+                const QString id = selectedGroupId();
+                if (!id.isEmpty() && historySettings_.deleteGroup)
+                    historySettings_.deleteGroup(this, id);
+            });
+    connect(historyGroupList_, &QTreeWidget::itemSelectionChanged, this,
+            &SettingsDialog::updateGroupButtons);
+    connect(historyGroupList_, &QTreeWidget::itemDoubleClicked, this,
+            [this]
+            {
+                const QString id = selectedGroupId();
+                if (!id.isEmpty() && historySettings_.openGroupSettings)
+                    historySettings_.openGroupSettings(this, id);
+            });
+    updateHistoryGroups(historySettings_.groups, historySettings_.currentGroupId);
+}
+void SettingsDialog::rebuildGroupList()
+{
+    if (!historyGroupList_)
+        return;
+    const QString selected = selectedGroupId();
+    const QSignalBlocker block(historyGroupList_);
+    historyGroupList_->clear();
+    auto groups = historyGroups_;
+    std::stable_sort(groups.begin(), groups.end(),
+                     [](const auto& a, const auto& b)
+                     {
+                         if (a.isDefault != b.isDefault)
+                             return a.isDefault;
+                         return a.name.localeAwareCompare(b.name) < 0;
+                     });
+    for (const auto& group : groups)
+    {
+        auto* item = new QTreeWidgetItem(historyGroupList_);
+        item->setText(0, (group.id == historyCurrentGroupId_ ? QStringLiteral("● ") : QString()) +
+                             group.name);
+        item->setText(1, QDir::toNativeSeparators(group.absolutePath));
+        item->setToolTip(0, group.name);
+        item->setToolTip(1, group.absolutePath);
+        item->setData(0, Qt::UserRole, group.id);
+    }
+    for (int row = 0; row < historyGroupList_->topLevelItemCount(); ++row)
+        if (historyGroupList_->topLevelItem(row)->data(0, Qt::UserRole).toString() == selected)
+        {
+            historyGroupList_->setCurrentItem(historyGroupList_->topLevelItem(row));
+            break;
+        }
+    if (!historyGroupList_->currentItem() && historyGroupList_->topLevelItemCount())
+        historyGroupList_->setCurrentItem(historyGroupList_->topLevelItem(0));
+    historyGroupNotice_->setText(
+        groups.isEmpty() ? QStringLiteral("尚未创建任何分组。")
+                         : QStringLiteral("共 %1 个分组；双击可打开分组设置。").arg(groups.size()));
+    updateGroupButtons();
+}
+QString SettingsDialog::selectedGroupId() const
+{
+    return historyGroupList_ && historyGroupList_->currentItem()
+               ? historyGroupList_->currentItem()->data(0, Qt::UserRole).toString()
+               : QString();
+}
+void SettingsDialog::updateGroupButtons()
+{
+    const auto group = std::find_if(historyGroups_.cbegin(), historyGroups_.cend(),
+                                    [this](const HistoryGroup& current)
+                                    { return current.id == selectedGroupId(); });
+    const bool selected = group != historyGroups_.cend();
+    const bool isCurrent = selected && group->id == historyCurrentGroupId_;
+    const bool isDefault = selected && group->isDefault;
+    historyGroupRename_->setEnabled(selected && bool(historySettings_.renameGroup));
+    historyGroupDirectory_->setEnabled(selected && bool(historySettings_.changeGroupDirectory));
+    historyGroupSettings_->setEnabled(selected && bool(historySettings_.openGroupSettings));
+    historyGroupCurrent_->setEnabled(selected && !isCurrent &&
+                                     bool(historySettings_.setCurrentGroup));
+    historyGroupDelete_->setEnabled(selected && !isDefault && bool(historySettings_.deleteGroup));
+}
+void SettingsDialog::updateHistoryGroups(const QVector<HistoryGroup>& groups,
+                                         const QString& currentGroupId)
+{
+    historyGroups_ = groups;
+    historyCurrentGroupId_ = currentGroupId;
+    rebuildGroupList();
 }
 void SettingsDialog::updateHistoryUsage(GroupUsage u, const QString& notice)
 {

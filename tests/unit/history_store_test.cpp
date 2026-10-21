@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QUuid>
+#include <algorithm>
 using namespace waibusnap;
 namespace
 {
@@ -140,6 +141,76 @@ class HistoryStoreTest final : public QObject
         const auto newer = other.createGroup(QStringLiteral("新组"));
         QVERIFY(newer.success);
         QCOMPARE(newer.group.cleanup.maxCount, 100);
+    }
+    void independentGroupDirectoryAndMove()
+    {
+        QTemporaryDir temporary;
+        QTemporaryDir external;
+        QVERIFY(temporary.isValid());
+        QVERIFY(external.isValid());
+        HistoryStore store(temporary.path());
+        QVERIFY(store.initialize().error.isEmpty());
+        const QString registry = QDir(QDir(temporary.path()).filePath(QStringLiteral(".waibusnap")))
+                                     .filePath(QStringLiteral("groups.json"));
+        QVERIFY(QFileInfo::exists(registry));
+        QVERIFY(readBytes(registry).contains("\"默认分组\""));
+        QVERIFY(!readBytes(registry).contains(temporary.path().toUtf8()));
+        const QString directory = external.filePath(QStringLiteral("独立分组"));
+        const auto created = store.createGroup(QStringLiteral("独立分组"), directory);
+        QVERIFY2(created.success, qPrintable(created.error));
+        QCOMPARE(created.group.absolutePath, QDir(directory).absolutePath());
+        QVERIFY(QFileInfo::exists(marker(created.group, QStringLiteral("group.json"))));
+        const auto written =
+            store.writeManagedPng(created.group.id, image(), HistorySource::Overlay);
+        QVERIFY2(written.success, qPrintable(written.error));
+        QCOMPARE(QFileInfo(written.item.absolutePath).absolutePath(),
+                 QDir(directory).absolutePath());
+
+        HistoryStore reopened(temporary.path());
+        const auto scanned = reopened.initialize();
+        QVERIFY2(scanned.error.isEmpty(), qPrintable(scanned.error));
+        QVERIFY(std::any_of(scanned.groups.cbegin(), scanned.groups.cend(),
+                            [&](const auto& snapshot)
+                            {
+                                return snapshot.group.id == created.group.id &&
+                                       snapshot.group.absolutePath ==
+                                           QDir(directory).absolutePath() &&
+                                       snapshot.items.size() == 1;
+                            }));
+        const auto renamed = reopened.renameGroup(created.group.id, QStringLiteral("改名后"));
+        QVERIFY2(renamed.success, qPrintable(renamed.error));
+        QCOMPARE(renamed.group.absolutePath, QDir(directory).absolutePath());
+        const auto renamedScan = HistoryStore(temporary.path()).scan();
+        QVERIFY(std::any_of(renamedScan.groups.cbegin(), renamedScan.groups.cend(),
+                            [&](const auto& snapshot)
+                            {
+                                return snapshot.group.id == created.group.id &&
+                                       snapshot.group.name == QStringLiteral("改名后");
+                            }));
+
+        const QString movedDirectory = external.filePath(QStringLiteral("移动后"));
+        const auto moved = reopened.changeGroupDirectory(created.group.id, movedDirectory);
+        QVERIFY2(moved.success, qPrintable(moved.error));
+        QVERIFY(!QFileInfo::exists(directory));
+        QVERIFY(QFileInfo::exists(marker(moved.group, QStringLiteral("group.json"))));
+        const auto afterMove = HistoryStore(temporary.path()).initialize();
+        QVERIFY2(afterMove.error.isEmpty(), qPrintable(afterMove.error));
+        QVERIFY(std::any_of(afterMove.groups.cbegin(), afterMove.groups.cend(),
+                            [&](const auto& snapshot)
+                            {
+                                return snapshot.group.id == created.group.id &&
+                                       snapshot.group.absolutePath ==
+                                           QDir(movedDirectory).absolutePath() &&
+                                       snapshot.items.size() == 1;
+                            }));
+
+        const QString nonEmpty = external.filePath(QStringLiteral("非空"));
+        QVERIFY(QDir().mkpath(nonEmpty));
+        QVERIFY(writeBytes(QDir(nonEmpty).filePath(QStringLiteral("用户文件.txt")), "保留"));
+        QVERIFY(!reopened.createGroup(QStringLiteral("不可接管"), nonEmpty).success);
+        QVERIFY(!reopened.changeGroupDirectory(created.group.id, nonEmpty).success);
+        QCOMPARE(readBytes(QDir(nonEmpty).filePath(QStringLiteral("用户文件.txt"))),
+                 QByteArray("保留"));
     }
     void duplicateUuidIsRepairedAndPersisted()
     {

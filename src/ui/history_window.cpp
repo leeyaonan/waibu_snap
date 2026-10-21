@@ -321,47 +321,16 @@ void HistoryWindow::editGroupName(const QString& groupId)
 {
     if (!groupActionsEnabled_)
         return;
-    QPointer<QDialog> dialog = new QDialog(this);
-    dialog->setObjectName(QStringLiteral("historyGroupNameDialog"));
-    dialog->setWindowTitle(groupId.isEmpty() ? QStringLiteral("新建分组")
-                                             : QStringLiteral("分组改名"));
-    auto* layout = new QVBoxLayout(dialog);
-    layout->addWidget(new QLabel(QStringLiteral("分组名称"), dialog));
-    auto* edit = new QLineEdit(dialog);
-    edit->setObjectName(QStringLiteral("historyGroupName"));
-    for (const auto& group : manager_.groups())
-        if (group.id == groupId)
-            edit->setText(group.name);
-    edit->selectAll();
-    layout->addWidget(edit);
-    auto* error = new QLabel(dialog);
-    error->setObjectName(QStringLiteral("historyGroupNameError"));
-    error->setWordWrap(true);
-    layout->addWidget(error);
-    auto* buttons = new QDialogButtonBox(dialog);
-    buttons->addButton(QStringLiteral("确定"), QDialogButtonBox::AcceptRole)
-        ->setObjectName(QStringLiteral("historyGroupNameSave"));
-    buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
-    layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
-    connect(buttons, &QDialogButtonBox::accepted, dialog,
-            [this, groupId, edit, error, dialog]
-            {
-                const auto result = groupId.isEmpty() ? manager_.createGroup(edit->text())
-                                                      : manager_.renameGroup(groupId, edit->text());
-                if (result.success)
-                {
-                    dialog->accept();
-                    if (groupId.isEmpty())
-                        selectView(result.group.id, true);
-                }
-                else
-                    error->setText(result.error);
-            });
     const QPointer<HistoryWindow> guard(this);
     emit groupDialogOpenChanged(true);
-    dialog->exec();
-    delete dialog.data();
+    if (groupId.isEmpty())
+    {
+        const auto result = createHistoryGroupDialog(manager_, this);
+        if (guard && result && result->success)
+            selectView(result->group.id, true);
+    }
+    else
+        renameHistoryGroupDialog(manager_, groupId, this);
     if (guard)
         emit groupDialogOpenChanged(false);
 }
@@ -419,6 +388,18 @@ void HistoryWindow::showGroupMenu(const QPoint& point)
                 ->setObjectName(QStringLiteral("historyGroupSettings"));
             menu->addAction(QStringLiteral("改名…"), this, [this, id] { editGroupName(id); })
                 ->setObjectName(QStringLiteral("historyGroupRename"));
+            menu->addAction(QStringLiteral("更改目录…"), this,
+                            [this, id]
+                            {
+                                if (!groupActionsEnabled_)
+                                    return;
+                                const QPointer<HistoryWindow> guard(this);
+                                emit groupDialogOpenChanged(true);
+                                changeHistoryGroupDirectoryDialog(manager_, id, this);
+                                if (guard)
+                                    emit groupDialogOpenChanged(false);
+                            })
+                ->setObjectName(QStringLiteral("historyGroupChangeDirectory"));
             auto* remove =
                 menu->addAction(QStringLiteral("删除…"), this, [this, id] { deleteGroup(id); });
             remove->setObjectName(QStringLiteral("historyGroupDelete"));
@@ -459,9 +440,10 @@ void HistoryWindow::rebuildGroups(const QString& view)
             group.group.id == snapshot_.currentGroupId ? QStringLiteral("● ") : QString();
         add(dot + group.group.name, group.group.id, group.items.size());
         groups_->item(groups_->count() - 1)
-            ->setToolTip(group.group.id == snapshot_.currentGroupId
-                             ? QStringLiteral("当前截图分组")
-                             : QStringLiteral("仅查看此分组"));
+            ->setToolTip((group.group.id == snapshot_.currentGroupId
+                              ? QStringLiteral("当前截图分组\n")
+                              : QStringLiteral("仅查看此分组\n")) +
+                         QStringLiteral("目录：") + group.group.absolutePath);
     }
     auto* create = new QListWidgetItem(QStringLiteral("新建分组…"), groups_);
     create->setData(Qt::UserRole, QStringLiteral("new-group"));

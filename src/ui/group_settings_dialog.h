@@ -13,6 +13,13 @@ std::optional<HistoryStatus> confirmHistoryGroupDeletion(HistoryManager& manager
                                                          const QString& groupId,
                                                          const HistoryTrash& trash,
                                                          QWidget* parent);
+// 这些入口由历史窗口、托盘和设置页共用；取消返回空值，成功返回结果。
+std::optional<HistoryGroupResult> createHistoryGroupDialog(HistoryManager& manager, QWidget* parent,
+                                                           const QString& directory = {});
+std::optional<HistoryStatus> renameHistoryGroupDialog(HistoryManager& manager,
+                                                      const QString& groupId, QWidget* parent);
+std::optional<HistoryGroupResult>
+changeHistoryGroupDirectoryDialog(HistoryManager& manager, const QString& groupId, QWidget* parent);
 class GroupSettingsDialog final : public QDialog
 {
     Q_OBJECT

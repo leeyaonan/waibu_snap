@@ -258,13 +258,13 @@ CleanupPolicy HistoryManager::defaultCleanupPolicy() const
 {
     return settings_.loadHistoryPreferences().defaultCleanup;
 }
-HistoryGroupResult HistoryManager::createGroup(const QString& name)
+HistoryGroupResult HistoryManager::createGroup(const QString& name, const QString& directory)
 {
     if (!ready_)
         return {{false, QStringLiteral("历史库未就绪，无法新建分组。")}, {}};
     // 每次读取当前模板，不重建入库 Store 或会话去重表。
     HistoryStore creator(rootDirectory(), defaultCleanupPolicy());
-    const auto result = creator.createGroup(name);
+    const auto result = creator.createGroup(name, directory);
     if (result.success)
     {
         refresh();
@@ -277,6 +277,19 @@ HistoryGroupResult HistoryManager::renameGroup(const QString& groupId, const QSt
     if (!ready_)
         return {{false, QStringLiteral("历史库未就绪，无法改名。")}, {}};
     const auto result = store_->renameGroup(groupId, name);
+    if (result.success)
+    {
+        refresh();
+        emit groupsChanged();
+    }
+    return result;
+}
+HistoryGroupResult HistoryManager::changeGroupDirectory(const QString& groupId,
+                                                        const QString& directory)
+{
+    if (!ready_)
+        return {{false, QStringLiteral("历史库未就绪，无法更改分组目录。")}, {}};
+    const auto result = store_->changeGroupDirectory(groupId, directory);
     if (result.success)
     {
         refresh();

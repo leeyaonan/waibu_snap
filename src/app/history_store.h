@@ -47,8 +47,11 @@ class HistoryStore
     // 构造不碰磁盘。首次显式初始化才创建根目录和默认分组。
     HistoryScanResult initialize();
     HistoryScanResult scan() const;
-    HistoryGroupResult createGroup(const QString& name);
+    // directory 为空时沿用 <root>/<name>；否则使用用户选择的独立绝对目录。
+    HistoryGroupResult createGroup(const QString& name, const QString& directory = {});
     HistoryGroupResult renameGroup(const QString& groupId, const QString& name);
+    // 将整组图片与元数据移动到独立目录；目标必须为空或不存在。
+    HistoryGroupResult changeGroupDirectory(const QString& groupId, const QString& directory);
     HistoryStatus deleteGroup(const QString& groupId, const HistoryTrash& trash = {});
     HistoryStatus saveCleanupPolicy(const QString& groupId, const CleanupPolicy& policy);
     HistoryWriteResult writeManagedPng(const QString& groupId, const QImage& image,
@@ -72,7 +75,9 @@ class HistoryStore
                                     bool automatic, qint64 nowMs = 0,
                                     const QString& selectedId = {});
     HistoryScanResult scanUnlocked() const;
-    HistoryGroupResult createGroupUnlocked(const QString& name, bool isDefault);
+    HistoryGroupResult createGroupUnlocked(const QString& name, bool isDefault,
+                                           const QString& directory,
+                                           const QStringList& existingNames);
     QString rootDirectory_;
     CleanupPolicy defaultCleanup_;
     HistoryTrash trash_;
