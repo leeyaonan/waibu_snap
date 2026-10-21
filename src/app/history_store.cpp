@@ -50,9 +50,10 @@ QString readRegistry(const QString& root, QStringList& paths)
     for (const auto& entry : entries)
     {
         const QString directory = entry.toString();
-        if (directory.isEmpty() || !QDir::isAbsolutePath(directory))
+        if (directory.isEmpty())
             return QStringLiteral("历史分组登记包含无效目录：%1").arg(path);
-        const QString clean = QDir::cleanPath(directory);
+        const QString clean = QDir::cleanPath(
+            QDir::isAbsolutePath(directory) ? directory : QDir(root).filePath(directory));
         if (!paths.contains(clean))
             paths.append(clean);
     }
@@ -67,8 +68,14 @@ QString writeRegistry(const QString& root, const QStringList& paths)
     if (!QDir(root).mkpath(QStringLiteral(".waibusnap")))
         return QStringLiteral("无法创建历史分组登记目录：%1").arg(metadata);
     QJsonArray entries;
+    const QString rootClean = QDir::cleanPath(root);
     for (const auto& path : paths)
-        entries.append(QDir::cleanPath(path));
+    {
+        const QString clean = QDir::cleanPath(path);
+        entries.append(clean == rootClean || clean.startsWith(rootClean + QLatin1Char('/'))
+                           ? QDir(rootClean).relativeFilePath(clean)
+                           : clean);
+    }
     return writeJson(registryFile(root),
                      {{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("groups"), entries}});
 }
