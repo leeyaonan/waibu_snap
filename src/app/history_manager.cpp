@@ -7,6 +7,89 @@
 #include <QUuid>
 namespace waibusnap
 {
+QString HistoryCleanupReport::message() const
+{
+    QStringList lines;
+    if (deletedCount)
+        lines.append(QStringLiteral("自动清理 %1 张，释放 %2 MB。")
+                         .arg(deletedCount)
+                         .arg(releasedBytes / 1000000.0, 0, 'f', 2));
+    if (protectedOverLimit)
+        lines.append(QStringLiteral("受保护 %1 张 / %2 MB，分组仍超限；可提高上限或取消星标。")
+                         .arg(protectedCount)
+                         .arg(protectedBytes / 1000000.0, 0, 'f', 2));
+    if (!error.isEmpty())
+        lines.append(QStringLiteral("自动清理已停止：%1").arg(error));
+    return lines.join(QLatin1Char('\n'));
+}
+void HistoryManager::setProtectedItem(const QString& itemId)
+{
+    protectedItemId_ = itemId;
+    // 只更新保护占用；切换选中项不触发删除或重新读盘。
+    for (auto& group : snapshot_.groups)
+    {
+        if (group.cleanupPaused)
+            continue;
+        const auto plan = selectCleanupCandidates(group.group.cleanup, group.items,
+                                                  QDateTime::currentMSecsSinceEpoch(), itemId);
+        group.usage.protectedCount = plan.protectedCount;
+        group.usage.protectedBytes = plan.protectedBytes;
+    }
+}
+HistoryCleanupReport HistoryManager::runCleanup(qint64 nowMs)
+{
+    HistoryCleanupReport report;
+    if (nowMs < 0)
+        nowMs = QDateTime::currentMSecsSinceEpoch();
+    const auto scanned = refresh();
+    report.error = !ready_ ? QStringLiteral("历史库未就绪，无法自动清理。") : scanned.error;
+    if (report.error.isEmpty())
+        for (const auto& group : scanned.groups)
+        {
+            const auto plan =
+                selectCleanupCandidates(group.group.cleanup, group.items, nowMs, protectedItemId_);
+            report.error = plan.error;
+            for (const auto& item : plan.candidates)
+            {
+                if (!report.error.isEmpty())
+                    break;
+                const auto removed =
+                    store_->permanentlyDeleteManagedItem(item, nowMs, protectedItemId_);
+                if (!removed.success)
+                {
+                    report.error = QStringLiteral("%1 / %2：%3")
+                                       .arg(group.group.name, item.fileName, removed.error);
+                    break;
+                }
+                ++report.deletedCount;
+                report.releasedBytes += item.bytes;
+            }
+            if (!report.error.isEmpty())
+                break;
+        }
+    const auto after = refresh();
+    if (report.error.isEmpty())
+        report.error = after.error;
+    for (const auto& group : after.groups)
+    {
+        if (group.cleanupPaused)
+            continue;
+        const auto remaining =
+            selectCleanupCandidates(group.group.cleanup, group.items, nowMs, protectedItemId_);
+        if (remaining.protectedOverLimit)
+        {
+            report.protectedOverLimit = true;
+            report.protectedCount += remaining.protectedCount;
+            report.protectedBytes += remaining.protectedBytes;
+        }
+    }
+    cleanup_ = report;
+    if (!report.message().isEmpty())
+        qInfo().noquote() << "截图历史：" << report.message();
+    emit groupsChanged();
+    emit cleanupFinished();
+    return report;
+}
 HistoryManager::HistoryManager(AppSettings settings, QString rootOverride, QObject* parent)
     : QObject(parent), settings_(std::move(settings)), rootOverride_(std::move(rootOverride))
 {
@@ -70,7 +153,9 @@ HistoryStatus HistoryManager::initialize()
         if (!persisted.success)
             return persisted;
     }
-    return status(notice);
+    const auto result = status(notice);
+    runCleanup();
+    return result;
 }
 HistoryStatus HistoryManager::savePreferences(HistoryPreferences preferences)
 {
@@ -122,6 +207,7 @@ HistoryStatus HistoryManager::savePreferences(HistoryPreferences preferences)
         status();
         emit groupsChanged();
         emit currentGroupChanged(currentGroupId());
+        runCleanup();
     }
     return {true, {}};
 }
@@ -131,13 +217,15 @@ GroupUsage HistoryManager::totalUsage(const QString& selectedId)
     for (const auto& group : refresh().groups)
     {
         result.managedCount += group.usage.managedCount;
+        result.starredCount += group.usage.starredCount;
         result.managedBytes += group.usage.managedBytes;
         result.externalCount += group.usage.externalCount;
         result.externalBytes += group.usage.externalBytes;
         auto policy = group.group.cleanup;
         policy.enabled = false;
-        const auto protectedItems = selectCleanupCandidates(
-            policy, group.items, QDateTime::currentMSecsSinceEpoch(), selectedId);
+        const auto protectedItems =
+            selectCleanupCandidates(policy, group.items, QDateTime::currentMSecsSinceEpoch(),
+                                    selectedId.isEmpty() ? protectedItemId_ : selectedId);
         result.protectedCount += protectedItems.protectedCount;
         result.protectedBytes += protectedItems.protectedBytes;
     }
@@ -224,8 +312,7 @@ HistoryStatus HistoryManager::saveCleanupPolicy(const QString& groupId, const Cl
     {
         if (switching)
             preferences_.currentGroupId = groupId;
-        refresh();
-        emit groupsChanged();
+        runCleanup();
         if (switching)
             emit currentGroupChanged(groupId);
     }
@@ -297,12 +384,18 @@ HistorySnapshot HistoryManager::refresh()
     else
     {
         const auto scanned = store_->scan();
-        snapshot_ = {scanned.groups, {}, scanned.error};
+        // 临时锁 / 读取失败保留已知记录和选择；目录真的消失则回到空态。
+        if (scanned.groups.isEmpty() && !scanned.error.isEmpty() &&
+            QFileInfo(store_->rootDirectory()).isDir())
+            snapshot_.error = scanned.error;
+        else
+            snapshot_ = {scanned.groups, {}, scanned.error};
     }
     groups_.clear();
     for (const auto& group : snapshot_.groups)
         if (!group.group.id.isEmpty())
             groups_.append(group.group);
+    setProtectedItem(protectedItemId_);
     return snapshot();
 }
 std::optional<HistoryItem> HistoryManager::findItem(const QString& itemId) const
@@ -320,7 +413,7 @@ HistoryStatus HistoryManager::setStarred(const QString& itemId, bool starred)
         return {false, QStringLiteral("历史记录已不存在，请刷新历史。")};
     const auto result = store_->setStarred(item->groupId, item->fileName, starred);
     if (result.success)
-        refresh();
+        runCleanup();
     return result;
 }
 HistoryStatus HistoryManager::deleteItem(const QString& itemId, const HistoryTrash& trash)
@@ -392,6 +485,8 @@ HistoryWriteResult HistoryManager::record(const HistorySession& session, const Q
     if (!result.item.fileName.isEmpty())
         sessions_.insert(session.id, result.item);
     status(result.error);
+    if (result.success)
+        runCleanup();
     return result;
 }
 }

@@ -22,6 +22,16 @@ struct HistoryImageResult : HistoryStatus
 {
     QImage image;
 };
+struct HistoryCleanupReport
+{
+    qsizetype deletedCount = 0;
+    qint64 releasedBytes = 0;
+    qsizetype protectedCount = 0;
+    qint64 protectedBytes = 0;
+    bool protectedOverLimit = false;
+    QString error;
+    QString message() const;
+};
 class HistoryManager final : public QObject
 {
     Q_OBJECT
@@ -32,6 +42,10 @@ class HistoryManager final : public QObject
     HistoryStatus initialize();
     HistoryStatus savePreferences(HistoryPreferences preferences);
     GroupUsage totalUsage(const QString& selectedId = {});
+    HistoryCleanupReport runCleanup(qint64 nowMs = -1);
+    HistoryCleanupReport lastCleanup() const { return cleanup_; }
+    void setProtectedItem(const QString& itemId);
+    QString protectedItemId() const { return protectedItemId_; }
     bool ready() const { return ready_; }
     QString error() const { return error_; }
     QString rootDirectory() const;
@@ -60,8 +74,10 @@ class HistoryManager final : public QObject
     void errorChanged(QString error);
     void currentGroupChanged(QString groupId);
     void groupsChanged();
+    void cleanupFinished();
 
   private:
+    friend struct HistoryCleanupExecutionTestAccess;
     HistoryStatus status(QString error = {});
     HistoryStatus persistCurrentGroup(const QString& groupId);
     AppSettings settings_;
@@ -71,6 +87,8 @@ class HistoryManager final : public QObject
     QVector<HistoryGroup> groups_;
     QHash<QString, HistoryItem> sessions_;
     HistorySnapshot snapshot_;
+    HistoryCleanupReport cleanup_;
+    QString protectedItemId_;
     QString error_;
     bool ready_ = false;
 };

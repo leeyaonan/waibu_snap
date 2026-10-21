@@ -44,6 +44,7 @@ class HistoryWindow final : public QWidget
   public:
     explicit HistoryWindow(HistoryManager& manager, AppSettings settings,
                            HistoryWindowActions actions = {});
+    ~HistoryWindow() override;
     void refresh();
     void navigate(int step, bool allHistory = false);
     QString selectedItemId() const { return selectedId(); }
@@ -71,6 +72,8 @@ class HistoryWindow final : public QWidget
     void toggleStar();
     void outputImage(bool pin, bool closeAfter = false);
     void deleteSelection();
+    void updateNotice();
+    void updateStatus();
     void showActionResult(const HistoryStatus& result);
     void scheduleThumbnails();
     void loadVisibleThumbnails();

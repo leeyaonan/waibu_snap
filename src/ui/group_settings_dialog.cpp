@@ -94,9 +94,12 @@ GroupSettingsDialog::GroupSettingsDialog(HistoryManager& manager, QString groupI
     maxMiB_->setRange(0.000001, 8589934591.999999);
     maxMiB_->setSuffix(QStringLiteral(" MiB"));
     bytes.second->addWidget(maxMiB_);
-    auto* explanation = new QLabel(QStringLiteral("任一规则超限即可触发。星标、最新截图、正在查看及"
-                                                  "单张超大图片受保护；外部图片不自动清理。"),
-                                   this);
+    auto* explanation = new QLabel(
+        QStringLiteral(
+            "自动清理会永久删除应用生成的历史副本。任一规则超限即可触发。星标、最新截图、正在查看及"
+            "单张超大图片受保护；外部图片不自动清理。"),
+        this);
+    explanation->setObjectName(QStringLiteral("groupCleanupExplanation"));
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
     auto* restore = new QPushButton(QStringLiteral("恢复全局默认"), this);
@@ -140,6 +143,7 @@ GroupSettingsDialog::GroupSettingsDialog(HistoryManager& manager, QString groupI
     syncCurrentGroup();
     connect(&manager_, &HistoryManager::currentGroupChanged, this,
             &GroupSettingsDialog::syncCurrentGroup);
+    connect(&manager_, &HistoryManager::groupsChanged, this, &GroupSettingsDialog::updateUsage);
     connect(restore, &QPushButton::clicked, this,
             [this] { setPolicy(manager_.defaultCleanupPolicy()); });
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);

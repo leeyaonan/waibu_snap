@@ -55,6 +55,9 @@ class HistoryStore
                                        HistorySource source, const QString& existingFileName = {});
     HistoryStatus setStarred(const QString& groupId, const QString& fileName, bool starred);
     HistoryStatus deleteManagedItem(const HistoryItem& item, const HistoryTrash& trash);
+    // 自动清理永久删除：锁内重扫并重新核对策略 / 保护；失败保留恢复信息。
+    HistoryStatus permanentlyDeleteManagedItem(const HistoryItem& item, qint64 nowMs,
+                                               const QString& selectedId = {});
     HistoryStatus validateItem(const HistoryItem& item) const;
     HistoryItemsResult itemsForGroup(const QString& groupId,
                                      HistorySort order = HistorySort::OldestFirst,
@@ -63,6 +66,11 @@ class HistoryStore
                                            const QString& selectedId = {}) const;
 
   private:
+    friend struct HistoryCleanupExecutionTestAccess;
+    HistoryTrash permanentRemove_;
+    HistoryStatus removeManagedItem(const HistoryItem& item, const HistoryTrash& remove,
+                                    bool automatic, qint64 nowMs = 0,
+                                    const QString& selectedId = {});
     HistoryScanResult scanUnlocked() const;
     HistoryGroupResult createGroupUnlocked(const QString& name, bool isDefault);
     QString rootDirectory_;

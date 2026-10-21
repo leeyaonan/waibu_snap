@@ -597,6 +597,27 @@ HistoryStatus HistoryStore::validateItem(const HistoryItem& item) const
 }
 HistoryStatus HistoryStore::deleteManagedItem(const HistoryItem& item, const HistoryTrash& trash)
 {
+    return removeManagedItem(item, trash, false);
+}
+HistoryStatus HistoryStore::permanentlyDeleteManagedItem(const HistoryItem& item, qint64 nowMs,
+                                                         const QString& selectedId)
+{
+    const HistoryTrash remove =
+        permanentRemove_
+            ? permanentRemove_
+            : HistoryTrash(
+                  [](const QString& path)
+                  {
+                      QFile file(path);
+                      const bool removed = file.remove();
+                      return HistoryStatus{removed, removed ? QString() : file.errorString()};
+                  });
+    return removeManagedItem(item, remove, true, nowMs, selectedId);
+}
+HistoryStatus HistoryStore::removeManagedItem(const HistoryItem& item, const HistoryTrash& remove,
+                                              bool automatic, qint64 nowMs,
+                                              const QString& selectedId)
+{
     auto checked = validateItem(item);
     if (!checked.success)
         return checked;
@@ -613,11 +634,26 @@ HistoryStatus HistoryStore::deleteManagedItem(const HistoryItem& item, const His
     bool matched = false;
     for (const auto& current : group->items)
         matched |= current.managed && current.fileName == item.fileName &&
-                   current.absolutePath == item.absolutePath && current.source == item.source;
+                   current.absolutePath == item.absolutePath && current.source == item.source &&
+                   (!automatic || (current.createdAtMs == item.createdAtMs &&
+                                   current.bytes == item.bytes && current.starred == item.starred));
     if (!matched)
         return {false, QStringLiteral("目标不是当前扫描的受管历史项，已拒绝删除。")};
-    if (!trash)
-        return {false, QStringLiteral("未提供回收站服务，原文件和索引已保留。")};
+    if (automatic)
+    {
+        const auto plan =
+            selectCleanupCandidates(group->group.cleanup, group->items, nowMs, selectedId);
+        if (!plan.error.isEmpty())
+            return {false, plan.error};
+        bool candidate = false;
+        for (const auto& current : plan.candidates)
+            candidate |= historyItemId(current) == historyItemId(item);
+        if (!candidate)
+            return {false,
+                    QStringLiteral("清理策略或保护状态已改变，已停止清理，原文件和索引已保留。")};
+    }
+    if (!remove)
+        return {false, QStringLiteral("未提供删除服务，原文件和索引已保留。")};
     QJsonObject index;
     error = readIndex(group->group.absolutePath, index);
     if (!error.isEmpty())
@@ -651,11 +687,11 @@ HistoryStatus HistoryStore::deleteManagedItem(const HistoryItem& item, const His
     checked = validateItem(item);
     if (!checked.success)
         return checked;
-    const auto moved = trash(item.absolutePath);
+    const auto moved = remove(item.absolutePath);
     if (!moved.success)
-        error = QStringLiteral("图片移入回收站失败：%1").arg(moved.error);
+        error = QStringLiteral("图片删除失败，原文件和索引已保留：%1").arg(moved.error);
     else if (QFileInfo::exists(item.absolutePath) || QFileInfo(item.absolutePath).isSymLink())
-        error = QStringLiteral("回收站返回成功但原文件仍存在，索引已保留。");
+        error = QStringLiteral("删除服务返回成功但原文件仍存在，索引已保留。");
     else if (!staged.commit())
         error = QStringLiteral("历史索引提交失败，已尝试恢复原图：%1").arg(staged.errorString());
     else

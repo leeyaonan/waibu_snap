@@ -562,9 +562,11 @@ void SettingsDialog::buildHistoryPage(QWidget* page)
         connect(check, &QCheckBox::toggled, inputs[i], &QWidget::setEnabled);
     }
     auto* help = new QLabel(
-        QStringLiteral("至少启用一项，任一超限即可触发；只影响以后新建的分组。自动清理尚未"
-                       "启用；届时只清理受管副本，外部图片不参与。"),
+        QStringLiteral("至少启用一项，任一超限即可触发；模板只影响以后新建的分组。自动清理会"
+                       "永久删除应用生成的历史副本；星标、最新、正在查看及单张超大图片受保护，外部"
+                       "图片不参与。"),
         policy);
+    help->setObjectName(QStringLiteral("historyCleanupExplanation"));
     help->setWordWrap(true);
     rules->addWidget(help);
     layout->addWidget(policy);
@@ -592,21 +594,24 @@ void SettingsDialog::buildHistoryPage(QWidget* page)
     usage->setObjectName(QStringLiteral("historyTotalUsage"));
     usage->setTextFormat(Qt::PlainText);
     usage->setWordWrap(true);
-    const auto u = historySettings_.usage;
-    usage->setText(QStringLiteral("分组库总占用：%1 MiB\n受管：%2 张 / %3 MiB；外部：%4 张 / %5 "
-                                  "MiB\n受保护：%6 张 / %7 MiB")
-                       .arg((u.managedBytes + u.externalBytes) / 1048576.0, 0, 'f', 2)
-                       .arg(u.managedCount)
-                       .arg(u.managedBytes / 1048576.0, 0, 'f', 2)
-                       .arg(u.externalCount)
-                       .arg(u.externalBytes / 1048576.0, 0, 'f', 2)
-                       .arg(u.protectedCount)
-                       .arg(u.protectedBytes / 1048576.0, 0, 'f', 2) +
-                   (historySettings_.usageNotice.isEmpty()
-                        ? QString()
-                        : QStringLiteral("\n") + historySettings_.usageNotice));
+    historyUsage_ = usage;
+    updateHistoryUsage(historySettings_.usage, historySettings_.usageNotice);
     layout->addWidget(usage);
     layout->addStretch();
+}
+void SettingsDialog::updateHistoryUsage(GroupUsage u, const QString& notice)
+{
+    historyUsage_->setText(
+        QStringLiteral("分组库总占用：%1 MiB\n受管：%2 张 / %3 MiB；外部：%4 张 / %5 "
+                       "MiB\n受保护：%6 张 / %7 MiB")
+            .arg((u.managedBytes + u.externalBytes) / 1048576.0, 0, 'f', 2)
+            .arg(u.managedCount)
+            .arg(u.managedBytes / 1048576.0, 0, 'f', 2)
+            .arg(u.externalCount)
+            .arg(u.externalBytes / 1048576.0, 0, 'f', 2)
+            .arg(u.protectedCount)
+            .arg(u.protectedBytes / 1048576.0, 0, 'f', 2) +
+        (notice.isEmpty() ? QString() : QStringLiteral("\n") + notice));
 }
 HistoryPreferences SettingsDialog::collectHistoryPreferences() const
 {

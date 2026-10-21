@@ -155,6 +155,7 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
     zoomBar->addStretch();
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("historyStatus"));
+    status_->setWordWrap(true);
     zoomBar->addWidget(status_);
     layout->addLayout(zoomBar);
     auto* actionBar = new QHBoxLayout;
@@ -472,8 +473,7 @@ void HistoryWindow::rebuildGroups(const QString& view)
     view_ = groupCombo_->itemData(row).toString();
     groups_->setCurrentRow(row);
     groupCombo_->setCurrentIndex(row);
-    notice_->setText(snapshot_.error);
-    notice_->setVisible(!snapshot_.error.isEmpty());
+    updateNotice();
 }
 void HistoryWindow::navigate(int step, bool allHistory)
 {
@@ -534,7 +534,6 @@ void HistoryWindow::rebuildItems(const QString& selected)
     sortCombo_->setCurrentIndex(order_ == HistorySort::NewestFirst ? 0 : 1);
     thumbnails_->clear();
     int selectedRow = 0;
-    qint64 bytes = 0;
     for (const auto& item : items_)
     {
         QString label = QDateTime::fromMSecsSinceEpoch(item.createdAtMs)
@@ -552,18 +551,18 @@ void HistoryWindow::rebuildItems(const QString& selected)
         entry->setCheckState(item.starred ? Qt::Checked : Qt::Unchecked);
         if (historyItemId(item) == selected)
             selectedRow = thumbnails_->count() - 1;
-        bytes += item.bytes;
     }
-    status_->setText(
-        QStringLiteral("%1 张 · %2 MiB").arg(items_.size()).arg(bytes / 1048576.0, 0, 'f', 1));
     thumbnails_->setCurrentRow(items_.isEmpty() ? -1 : selectedRow);
     if (thumbnails_->currentItem())
         thumbnails_->scrollToItem(thumbnails_->currentItem());
     showSelection();
     scheduleThumbnails();
 }
+HistoryWindow::~HistoryWindow() { manager_.setProtectedItem({}); }
 void HistoryWindow::showSelection()
 {
+    manager_.setProtectedItem(selectedId());
+    updateStatus();
     updateActions();
     const auto* entry = thumbnails_->currentItem();
     if (!entry)
@@ -603,10 +602,47 @@ void HistoryWindow::updateActions()
     delete_->setToolTip(item && !item->managed ? QStringLiteral("请在文件管理器中操作")
                                                : QStringLiteral("将当前受管图片移入系统回收站"));
 }
+void HistoryWindow::updateNotice()
+{
+    QStringList lines;
+    if (!snapshot_.error.isEmpty())
+        lines.append(snapshot_.error);
+    const auto cleanup = manager_.lastCleanup().message();
+    if (!cleanup.isEmpty())
+        lines.append(cleanup);
+    notice_->setText(lines.join(QLatin1Char('\n')));
+    notice_->setVisible(!notice_->text().isEmpty());
+}
+void HistoryWindow::updateStatus()
+{
+    qint64 bytes = 0, protectedBytes = 0;
+    qsizetype protectedCount = 0;
+    const auto snapshot = manager_.snapshot();
+    for (const auto& group : snapshot.groups)
+        if (view_ == QStringLiteral("all") || view_ == QStringLiteral("starred") ||
+            view_ == group.group.id)
+        {
+            protectedCount += group.usage.protectedCount;
+            protectedBytes += group.usage.protectedBytes;
+        }
+    for (const auto& item : items_)
+        bytes += item.bytes;
+    status_->setText(
+        QStringLiteral("%1 张 · %2 MiB · 受保护 %3 张 / %4 MiB%5")
+            .arg(items_.size())
+            .arg(bytes / 1048576.0, 0, 'f', 2)
+            .arg(protectedCount)
+            .arg(protectedBytes / 1048576.0, 0, 'f', 2)
+            .arg(view_ == QStringLiteral("starred") ? QStringLiteral("（全部分组）") : QString()));
+}
 void HistoryWindow::showActionResult(const HistoryStatus& result)
 {
-    notice_->setText(result.success ? snapshot_.error : result.error);
-    notice_->setVisible(!notice_->text().isEmpty());
+    updateNotice();
+    if (!result.success)
+    {
+        notice_->setText(result.error);
+        notice_->show();
+    }
     updateActions();
 }
 void HistoryWindow::toggleStar()
@@ -815,6 +851,7 @@ void HistoryWindow::saveWindowState()
 }
 void HistoryWindow::closeEvent(QCloseEvent* event)
 {
+    manager_.setProtectedItem({});
     saveWindowState();
     event->accept();
 }
