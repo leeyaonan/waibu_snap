@@ -1,5 +1,4 @@
 #include "interfaces/capture_provider.h"
-#include "interfaces/global_hotkey.h"
 #include "interfaces/presentation_observer.h"
 #include "interfaces/region_capture.h"
 #include "interfaces/window_enumerator.h"
@@ -15,16 +14,6 @@ class WindowsWindowEnumerator final : public WindowEnumerator
     {
         return {{}, QStringLiteral("窗口吸附尚未实现，请手动框选")};
     }
-};
-class WindowsHotkey final : public GlobalHotkey
-{
-  public:
-    HotkeyRegistration registerHotkey(HotkeyAction, const QKeySequence&,
-                                      std::function<void()>) override
-    {
-        return {false, QStringLiteral("Windows 多动作全局热键待批次 7b，请使用托盘入口。")};
-    }
-    void unregister(HotkeyAction) override {}
 };
 class WindowsDisplays final : public DisplayTopology
 {
@@ -51,7 +40,6 @@ class WindowsCapture final : public CaptureProvider
     }
 };
 }
-std::unique_ptr<GlobalHotkey> createGlobalHotkey() { return std::make_unique<WindowsHotkey>(); }
 std::unique_ptr<WindowEnumerator> createWindowEnumerator()
 {
     return std::make_unique<WindowsWindowEnumerator>();

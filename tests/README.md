@@ -998,3 +998,17 @@ macOS 27.0.1 / arm64、Qt 6.11.2 Release，独立 `WAIBUSNAP_BUILD_DIR=build/ver
 新增 CTest：`history_settings`（17 项）、2 倍 DPR 显式清单 `history_settings_high_dpi`（13 项）以及平台专属热键项（macOS 分发 4 项；Windows 待实现断言 3 项，包含 init / cleanup）。测试使用临时 INI、临时历史根、fake GlobalHotkey / 登录启动；没有访问真实 Pictures/WaibuSnap、用户图片、系统剪贴板或真实热键。覆盖页面与占用、选择 / 清除 / 保存 / 取消 / 编辑器 Esc、模板独立、根失败回退 / 重试、四动作配置 / 注册 / 释放 / 单项失败、冲突预检、托盘空态与所有 guard、窗口复用和分组导航。既有设置切页 / 草稿矩阵扩展至第五页，主 / 高 DPI 冒烟各新增 3 行，因此从 497 / 430 增至 500 / 433。
 
 最终本机验证（2026-10-21）：macOS / arm64、Qt 6.11.2 Release，标准 `build-project.sh`、正常系统上下文 `test-project.sh` **33/33 CTest**、clang-format **18.1.8** 的 `lint-code.sh`、`git diff --check` 与 ObjC 块捕获门禁通过。主 / 高 DPI 冒烟 **500 / 433**，历史设置 **17 / 13**，macOS Carbon 分发 **4**；入库 **35**、历史窗口各 **17**、动作各 **21**、分组 **23 / 16**、外部各 **15**、缺插件 **3**，均 0 失败 / 0 跳过。设置第五页与长状态渲染图已人工目视检查。首轮沙箱的原生窗口 / OCR 服务受限失败已在正常系统上下文复验通过；首轮旧页数 / 菜单假设与测试快照未刷新失败均已修正并通过最终完整回归。CI 结果在 PR 与设计第 17 节补记。人工待验收：macOS 真实 Carbon F1 / F7 / F8 / F9 与 Fn 模式、其他应用占用和单项换键、系统菜单栏子菜单手感；根目录切换 / 失败后重试 / 重启、清除恢复默认目录（仅人工，不让自动化访问真实 Pictures）、大库占用扫描耗时、混合 DPR / 窄窗第五页；Windows 11 高 DPI 设置与菜单体验，原生多动作键明确留给 7b。
+
+## v006 批次 7b：Windows 原生多动作热键与导航首步（2026-10-21）
+
+来源愿景：v006，设计见工作区 `docs/design/v006-history-groups.md` 第 18 节。Windows 新增 `platform/windows/global_hotkey.{h,cpp}`，替换 7a 的明确待实现桩，四动作均走 `RegisterHotKey(nullptr, id, modifiers | MOD_NOREPEAT, vk)` / `UnregisterHotKey`。Qt UI 线程安装 `QAbstractNativeEventFilter`，处理 `windows_dispatcher_MSG`（兼容 `windows_generic_MSG`）中的线程 `WM_HOTKEY`；核对原生 token、VK 和修饰键才调用处理器。每次替换使用新 token，动作槽由 `(id - 0x5700) % 4` 稳定确定；同键只更新处理器，跨动作重复提前拒绝；先注册后释放、注册失败保留旧绑定。退出与析构逐动作注销，过滤器随对象移除。
+
+映射完整覆盖共享合法规则：F1–F12、Ctrl / Alt / Meta 修饰的 A–Z / 0–9 与可选 Shift；Qt Control→Ctrl、Alt→Alt、Shift→Shift、Meta→Win。F12 由 Windows 调试器保留，Win 组合也可能为系统保留，按系统真实注册结果返回中文原因 / 错误码，不声称一定可注册。空序列、多段序列、单独字母 / 数字、仅 Shift 的字母 / 数字、F13、空格 / Tab / Esc、Keypad / GroupSwitch 均拒绝。保留 F1 与旧 `hotkey/sequence`，历史 F7 / F8 / F9 及 7a 的独立设置键不变。
+
+Windows 专属 CTest `windows_hotkey` 替换 `windows_hotkey_pending`。测试注入 Register / Unregister 两个系统调用，执行生产 WindowsHotkey 的映射、动作 ID、独立释放、析构全释放、重复 / 非法拒绝、同键更新、注册失败旧回调保留、新键替换 / 换回时过期消息拒绝、中文错误分类、失败时 GetLastError=0 仍保留旧键、MOD_NOREPEAT，以及 Qt 已安装过滤器链和回调自注销。构造 `MSG` 是分发逻辑测试，不是原生按键取证；CI 不调用真实 RegisterHotKey，不占用 runner 键盘组合。原生系统注册 / 真实键盘输入只保证双端 CI 中 Windows 源码真实编译，运行行为留给人工。
+
+`history_settings` 与高 DPI 显式清单增加导航回归：无上次选中项从最新起步并应用方向；恢复其他分组中的中间 / 边缘选中项后移动；丢失项回退；真正关闭销毁 / 再打开继续；更旧 / 更新边缘夹停；已开窗口的组内两种排序 / 方向键行为与窗口复用。全局负 step 更旧、正 step 更新，局部方向键仍按列表行序。使用 QTemporaryDir 历史根、临时 INI 与 fake GlobalHotkey，断言不增加历史、不改变当前分组；未访问真实 Pictures / 剪贴板 / 回收站。
+
+回归取证：修复前新增专项 6 通过 / 5 失败 / 0 跳过；修复后含既有导航专项 12 通过 / 0 失败 / 0 跳过。本机 Qt 6.11.2 / arm64 Release 标准 build-project.sh、正常系统服务上下文 test-project.sh **33/33 CTest**、clang-format **18.1.8** lint、差异检查与 ObjC 块捕获门禁通过；主 / 高 DPI 冒烟 **500 / 433**，历史设置 / 导航 **26 / 22**，Carbon **4**，均 0 失败 / 0 跳过。最终双端 CI、Windows 专属结果与 head 见 [PR #47](https://github.com/leeyaonan/waibu_snap/pull/47) 的验证记录；独立目录 `build/verify-v006-windows-hotkeys`，没有改动或启动正在运行的 `build/macos`。
+
+人工待验收：Windows 10 / Windows 11 的真实 F1 / F7 / F8 / F9、Ctrl / Alt / Win 字母与数字、Fn 模式、长按无重复、系统 / 其他应用占用、逐项换键失败保留旧键、单项释放与退出后可被其他应用注册；真实键盘到 WM_HOTKEY 再到控制器的端到端行为。双端全局首步与持久选择 / 重启恢复、已开组内两种排序 / 边缘夹停、截图 / 设置 / 退出 guard 的真机手感。Windows 截图采集本身仍沿用既有未实现边界，本批只接通截图动作触发。

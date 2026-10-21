@@ -18,6 +18,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <algorithm>
 using namespace waibusnap;
 namespace waibusnap
 {
@@ -525,9 +526,9 @@ class HistorySettingsTest final : public QObject
         auto* list = child<QListWidget>(window, "historyThumbnails");
         QCOMPARE(list->count(), 3);
         QCOMPARE(list->currentRow(), 0);
-        raw->fire(HotkeyAction::HistoryNext);
-        QCOMPARE(list->currentRow(), 1);
         raw->fire(HotkeyAction::HistoryPrevious);
+        QCOMPARE(list->currentRow(), 1);
+        raw->fire(HotkeyAction::HistoryNext);
         QCOMPARE(list->currentRow(), 0);
         raw->fire(HotkeyAction::HistoryOpen);
         QCOMPARE(ApplicationControllerTestAccess::window(c), window);
@@ -546,6 +547,112 @@ class HistorySettingsTest final : public QObject
         ApplicationControllerTestAccess::cleanup(c);
         for (const auto& handler : raw->handlers)
             QVERIFY(!handler);
+    }
+    void navigationFirstStep_data()
+    {
+        QTest::addColumn<bool>("previous");
+        QTest::addColumn<QString>("selection");
+        QTest::addColumn<int>("expectedRow");
+        QTest::newRow("previous-no-selection") << true << QString() << 1;
+        QTest::newRow("next-no-selection") << false << QString() << 0;
+        QTest::newRow("previous-restored") << true << QStringLiteral("middle") << 2;
+        QTest::newRow("next-restored") << false << QStringLiteral("middle") << 0;
+        QTest::newRow("previous-missing") << true << QStringLiteral("missing") << 1;
+        QTest::newRow("next-missing") << false << QStringLiteral("missing") << 0;
+        QTest::newRow("previous-oldest") << true << QStringLiteral("oldest") << 2;
+        QTest::newRow("next-newest") << false << QStringLiteral("newest") << 0;
+    }
+    void navigationFirstStep()
+    {
+        QFETCH(bool, previous);
+        QFETCH(QString, selection);
+        QFETCH(int, expectedRow);
+        Fixture f;
+        auto fake = std::make_unique<FakeHotkey>();
+        auto* raw = fake.get();
+        ApplicationController c(*qApp, options(f), {}, {}, startup(), {}, {}, std::move(fake));
+        auto& m = ApplicationControllerTestAccess::history(c);
+        const auto oldest = f.add(&m);
+        QTest::qWait(2);
+        const auto middle = f.add(&m);
+        const auto group = m.createGroup(QStringLiteral("首步分组"));
+        QVERIFY(group.success);
+        QVERIFY(m.setCurrentGroup(group.group.id).success);
+        QTest::qWait(2);
+        const auto newest = f.add(&m);
+        const QStringList ids = {historyItemId(newest.item), historyItemId(middle.item),
+                                 historyItemId(oldest.item)};
+        const AppSettings settings(options(f).settingsFile);
+        HistoryWindowState stored;
+        stored.lastView = group.group.id;
+        stored.sortOrder = QStringLiteral("oldest");
+        stored.lastSelection = selection == QStringLiteral("middle")   ? ids[1]
+                               : selection == QStringLiteral("oldest") ? ids[2]
+                               : selection == QStringLiteral("newest") ? ids[0]
+                                                                       : selection;
+        QVERIFY(settings.saveHistoryWindowState(stored).isEmpty());
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        QVERIFY(!ApplicationControllerTestAccess::window(c));
+        raw->fire(previous ? HotkeyAction::HistoryPrevious : HotkeyAction::HistoryNext);
+        auto* window = ApplicationControllerTestAccess::window(c);
+        QVERIFY(window && window->isVisible());
+        QCOMPARE(window->selectedItemId(), ids[expectedRow]);
+        QCOMPARE(child<QComboBox>(window, "historyGroupCombo")->currentData().toString(),
+                 QStringLiteral("all"));
+        QCOMPARE(child<QComboBox>(window, "historySortCombo")->currentIndex(), 0);
+        QCOMPARE(m.currentGroupId(), group.group.id);
+        QCOMPARE(m.totalUsage().managedCount, 3);
+        window->close();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(!ApplicationControllerTestAccess::window(c));
+        QCOMPARE(settings.loadHistoryWindowState().lastSelection, ids[expectedRow]);
+        // 真正关闭并销毁后再次触发，必须从刚落盘的记录继续，而非重置到最新。
+        raw->fire(previous ? HotkeyAction::HistoryPrevious : HotkeyAction::HistoryNext);
+        window = ApplicationControllerTestAccess::window(c);
+        QVERIFY(window);
+        QCOMPARE(window->selectedItemId(),
+                 ids[previous ? std::min(expectedRow + 1, 2) : std::max(expectedRow - 1, 0)]);
+    }
+    void navigationOpenGroupAndSort()
+    {
+        Fixture f;
+        HistoryWindow window(f.manager, f.settings);
+        window.setAttribute(Qt::WA_DeleteOnClose, false);
+        const auto oldest = f.add();
+        QTest::qWait(2);
+        const auto middle = f.add();
+        QTest::qWait(2);
+        const auto newest = f.add();
+        window.refresh();
+        window.show();
+        auto* combo = child<QComboBox>(&window, "historyGroupCombo");
+        combo->setCurrentIndex(combo->findData(f.manager.currentGroupId()));
+        auto* list = child<QListWidget>(&window, "historyThumbnails");
+        auto* sort = child<QComboBox>(&window, "historySortCombo");
+        for (int order = 0; order < 2; ++order)
+        {
+            sort->setCurrentIndex(order);
+            list->setCurrentRow(1);
+            QCOMPARE(window.selectedItemId(), historyItemId(middle.item));
+            window.navigate(-1);
+            QCOMPARE(window.selectedItemId(), historyItemId(oldest.item));
+            window.navigate(-1);
+            QCOMPARE(window.selectedItemId(), historyItemId(oldest.item));
+            window.navigate(1);
+            QCOMPARE(window.selectedItemId(), historyItemId(middle.item));
+            window.navigate(1);
+            QCOMPARE(window.selectedItemId(), historyItemId(newest.item));
+            window.navigate(1);
+            QCOMPARE(window.selectedItemId(), historyItemId(newest.item));
+            QCOMPARE(combo->currentData().toString(), f.manager.currentGroupId());
+            QCOMPARE(sort->currentIndex(), order);
+            // 窗口方向键仍按列表行序移动，不改变既有交互。
+            list->setCurrentRow(1);
+            QTest::keyClick(&window, Qt::Key_Right);
+            QCOMPARE(list->currentRow(), 2);
+            QTest::keyClick(&window, Qt::Key_Left);
+            QCOMPARE(list->currentRow(), 1);
+        }
     }
     void controllerSettingsRootSwitchAndModalGuard()
     {

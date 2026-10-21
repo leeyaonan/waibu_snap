@@ -322,7 +322,8 @@ add_test(NAME history_settings_high_dpi COMMAND history_settings_test
     pageControlsAndUsage directoryChooseClearCancelAndEscape rootSwitchAndNoMigration
     rootFailureKeepsOldAndRetry templateOnlyAffectsNewGroupsAndAtLeastOne bytePrecisionAndProtection
     dialogDuplicateInvalidAndSingleFailure trayMenusEmptyAndGuards
-    navigationAllGroupsCurrentSelectionAndReuse controllerSettingsRootSwitchAndModalGuard
+    navigationAllGroupsCurrentSelectionAndReuse navigationFirstStep navigationOpenGroupAndSort
+    controllerSettingsRootSwitchAndModalGuard
     -o "${CMAKE_CURRENT_BINARY_DIR}/history_settings-high-dpi-output.txt,txt")
 set_tests_properties(history_settings_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
@@ -335,9 +336,9 @@ if(APPLE)
     add_test(NAME macos_hotkey_dispatch COMMAND macos_hotkey_dispatch_test -o
         "${CMAKE_CURRENT_BINARY_DIR}/macos_hotkey_dispatch-output.txt,txt")
 elseif(WIN32)
-    qt_add_executable(windows_hotkey_pending_test unit/windows_hotkey_pending_test.cpp)
-    target_link_libraries(windows_hotkey_pending_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
-    set_target_properties(windows_hotkey_pending_test PROPERTIES WIN32_EXECUTABLE FALSE)
-    add_test(NAME windows_hotkey_pending COMMAND windows_hotkey_pending_test -o
-        "${CMAKE_CURRENT_BINARY_DIR}/windows_hotkey_pending-output.txt,txt")
+    qt_add_executable(windows_hotkey_test unit/windows_hotkey_test.cpp)
+    target_link_libraries(windows_hotkey_test PRIVATE waibusnap_platform waibusnap_settings Qt6::Test waibusnap_options)
+    set_target_properties(windows_hotkey_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME windows_hotkey COMMAND windows_hotkey_test -o
+        "${CMAKE_CURRENT_BINARY_DIR}/windows_hotkey-output.txt,txt")
 endif()

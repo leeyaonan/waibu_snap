@@ -479,16 +479,19 @@ void HistoryWindow::navigate(int step, bool allHistory)
 {
     if (allHistory)
     {
+        // 上次记录可能属于另一视图，必须在全部历史中重新定位后再应用首步。
+        const auto selected = settings_.loadHistoryWindowState().lastSelection;
         view_ = QStringLiteral("all");
         order_ = HistorySort::NewestFirst;
         rebuildGroups(view_);
-        rebuildItems({});
-        return;
+        rebuildItems(selected);
     }
     if (thumbnails_->count())
     {
+        // 全局前后按时间方向移动；窗口方向键仍由事件过滤器按列表行序处理。
+        const int rowStep = order_ == HistorySort::NewestFirst ? -step : step;
         thumbnails_->setCurrentRow(
-            std::clamp(thumbnails_->currentRow() + step, 0, thumbnails_->count() - 1));
+            std::clamp(thumbnails_->currentRow() + rowStep, 0, thumbnails_->count() - 1));
         thumbnails_->scrollToItem(thumbnails_->currentItem());
     }
 }
