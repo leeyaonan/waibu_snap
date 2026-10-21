@@ -389,6 +389,20 @@ class HistoryCleanupExecutionTest final : public QObject
         QCOMPARE(restart.lastCleanup().deletedCount, 1);
         QCOMPARE(restart.snapshot().groups[0].items.size(), 1);
     }
+    void ingestKeepsNewestWhenClockFallsBehind()
+    {
+        Fixture f;
+        // 同毫秒 / 时钟回拨都不能让刚写入的副本因稳定 ID 排序而立即被清理。
+        const auto previous = f.add(QDateTime::currentMSecsSinceEpoch() + day);
+        f.policy(countPolicy());
+        const auto written =
+            f.manager.record(f.manager.beginSession(), picture(), HistorySource::Overlay);
+        QVERIFY(written.success);
+        QVERIFY(QFileInfo::exists(written.item.absolutePath));
+        QVERIFY(!QFileInfo::exists(previous.absolutePath));
+        QVERIFY(written.item.createdAtMs > previous.createdAtMs);
+        QCOMPARE(f.items().size(), 1);
+    }
     void cleanupErrorDoesNotFailIngestOrPolicy()
     {
         Fixture f;

@@ -494,6 +494,16 @@ HistoryWriteResult HistoryStore::writeManagedPng(const QString& groupId, const Q
         item.managed = true;
         item.source = source;
         item.createdAtMs = QDateTime::currentMSecsSinceEpoch();
+        // 同毫秒 / 时钟回拨时保持组内写入顺序，避免稳定 ID 决胜把刚入库图片当成旧图清理。
+        for (const auto& previous : snapshot->items)
+            if (previous.managed && previous.createdAtMs >= item.createdAtMs)
+            {
+                if (previous.createdAtMs >= 9007199254740991LL)
+                    return {
+                        {false, QStringLiteral("历史时间标记已达索引上限，无法安全写入新记录。")},
+                        {}};
+                item.createdAtMs = previous.createdAtMs + 1;
+            }
         bool published = false;
         for (int attempt = 0; attempt < 32 && !published; ++attempt)
         {
