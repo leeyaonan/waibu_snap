@@ -379,8 +379,19 @@ void StickerWindow::mousePressEvent(QMouseEvent* event)
         return;
     if (editing_)
     {
+        const bool textWasEditing = textEditor_ && textEditor_->isVisible();
+        const qsizetype textCountBefore = annotations().size();
         finishText(true);
+        const bool textCommitted = textWasEditing && annotations().size() > textCountBefore;
         lastAnnotationSelected_ = false;
+        if (textCommitted)
+        {
+            // 点画布外提交文本时保留当前文本框选中，显示选框供直接拖动 / 旋转。
+            updateEditToolbar();
+            update();
+            event->accept();
+            return;
+        }
         if (selectMode_)
         {
             beginAnnotationGesture(event->position(), event->modifiers());
@@ -1402,6 +1413,8 @@ void StickerWindow::finishText(bool commit, bool restoreFocus)
         {
             markDirty();
             selectedAnnotation_ = int(annotations().size()) - 1;
+            if (restoreFocus)
+                showStatus(QStringLiteral("文本框已选中：拖动移动，拖圆点旋转"), true);
         }
     }
     lastAnnotationSelected_ = added;

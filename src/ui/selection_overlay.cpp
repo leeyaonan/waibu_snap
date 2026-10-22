@@ -1395,12 +1395,25 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
         update();
         return;
     }
+    const bool textWasEditing = textEditor_ && textEditor_->isVisible();
+    const qsizetype textCountBefore = annotations().size();
     finishText(true);
+    const bool textCommitted = textWasEditing && annotations().size() > textCountBefore;
     setFocus(Qt::MouseFocusReason);
     lastAnnotationSelected_ = false;
     press_ = event->position();
     lastDragPosition_ = press_;
     shiftRatio_ = event->modifiers().testFlag(Qt::ShiftModifier);
+    if (textCommitted)
+    {
+        // 点画布外提交文本时保留当前文本框选中，显示选框供直接拖动 / 旋转；
+        // 下一次点击再开始新的文本或标注，避免提交动作顺手把选框清掉。
+        updateToolbar();
+        updateCursor(press_);
+        update();
+        event->accept();
+        return;
+    }
     if (selectMode_)
     {
         beginAnnotationGesture(press_, event->modifiers());
@@ -2152,6 +2165,8 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
         {
             markDirty();
             selectedAnnotation_ = int(annotations().size()) - 1;
+            if (restoreFocus)
+                showStatus(QStringLiteral("文本框已选中：拖动移动，拖圆点旋转"), true);
         }
     }
     lastAnnotationSelected_ = added;
