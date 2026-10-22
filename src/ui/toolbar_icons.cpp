@@ -166,6 +166,25 @@ static void drawIcon(QPainter& p, int id, const QRectF& box, const QColor& fg, c
         p.drawPath(star);
         break;
     }
+    case 22: // 选择（箭头 + 选中框）
+    {
+        QPainterPath cursor;
+        cursor.moveTo(3.5, 2.5);
+        cursor.lineTo(3.5, 14);
+        cursor.lineTo(7, 10.8);
+        cursor.lineTo(9.3, 15.2);
+        cursor.lineTo(11.2, 14.2);
+        cursor.lineTo(8.9, 10);
+        cursor.lineTo(13.5, 9.4);
+        cursor.closeSubpath();
+        p.setPen(QPen(fg, 1.2));
+        p.setBrush(bg);
+        p.drawPath(cursor);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(fg, 1.1, Qt::DashLine));
+        p.drawRect(QRectF(11.5, 2.5, 4, 4));
+        break;
+    }
     }
     p.restore();
 }

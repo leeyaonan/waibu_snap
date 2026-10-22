@@ -602,6 +602,7 @@ void compareAnnotations(const QVector<waibusnap::Annotation>& actual,
         QCOMPARE(a.style.bold, b.style.bold);
         QCOMPARE(a.style.italic, b.style.italic);
         QCOMPARE(a.style.underline, b.style.underline);
+        QCOMPARE(a.rotation, b.rotation);
     }
 }
 void compareCoveredPixels(const QImage& actual, const QImage& before, QRect cover, QColor color)
@@ -1535,7 +1536,7 @@ class StartupSmokeTest final : public QObject
                                  ->findChildren<QPushButton*>())
             if (control->objectName().endsWith("ToolButton"))
                 ++tools;
-        QCOMPARE(tools, 6);
+        QCOMPARE(tools, 7);
         QCOMPARE(overlay.findChild<QWidget*>(QStringLiteral("annotationToolBar"))
                      ->findChildren<QPushButton*>()
                      .size(),
@@ -3584,8 +3585,14 @@ class StartupSmokeTest final : public QObject
         auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton"));
         QVERIFY(more && more->isVisible());
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
-        QCOMPARE(menu->actions().size(), qsizetype(13));
+        QCOMPARE(menu->actions().size(), qsizetype(14));
         QVERIFY(sticker->rect().contains(more->geometry()));
+        QCOMPARE(menu->actions().last()->data().toString(),
+                 QStringLiteral("stickerEditSelectToolButton"));
+        menu->actions().last()->trigger();
+        QVERIFY(sticker->isSelectMode());
+        menu->actions().last()->trigger();
+        QVERIFY(!sticker->isSelectMode());
         auto* formatMenu = menu->actions()[7];
         QCOMPARE(formatMenu->menu()->actions().size(), qsizetype(3));
         auto* privacy = menu->actions()[4];
@@ -3617,7 +3624,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(status->text().contains(QStringLiteral("高敏感内容请用实心遮盖")));
         stickerClick(*sticker, "stickerEditMosaicToolButton");
         QVERIFY(menu->actions()[5]->isEnabled());
-        menu->actions().last()->trigger();
+        stickerClick(*sticker, "stickerEditDoneButton");
         QVERIFY(!sticker->isEditing());
     }
     void stickerTextImeEscapeAndCommitBoundaries()
@@ -6327,7 +6334,7 @@ class StartupSmokeTest final : public QObject
                 QVERIFY(control->isVisible());
                 QVERIFY(toolbar->rect().contains(control->geometry()));
             }
-        QCOMPARE(toolbar->height(), screenWidth >= 534 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 566 ? 44 : screenWidth > 320 ? 76 : 140);
         clickAnnotationTool(overlay, "coverToolButton");
         QVERIFY(overlay.activeTool() == AnnotationType::Cover);
         clickAnnotationTool(overlay, "mosaicToolButton");
@@ -6341,7 +6348,7 @@ class StartupSmokeTest final : public QObject
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
         QTRY_VERIFY(!overlay.isRecognizingText());
         QVERIFY(button(overlay, "extractAllTextButton")->isVisible());
-        QCOMPARE(toolbar->height(), screenWidth >= 587 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 619 ? 44 : screenWidth > 320 ? 76 : 140);
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
         for (auto* control : toolbar->findChildren<QPushButton*>())
         {
