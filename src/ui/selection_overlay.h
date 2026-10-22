@@ -17,6 +17,7 @@
 #include <QWidget>
 #include <functional>
 #include <optional>
+class QPainter;
 class QPushButton;
 class QShortcut;
 namespace waibusnap
@@ -65,6 +66,8 @@ class SelectionOverlay final : public QWidget
     QPoint selectionGlobalPosition() const;
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
     std::optional<AnnotationType> activeTool() const { return activeTool_; }
+    bool isSelectMode() const { return selectMode_; }
+    int selectedAnnotation() const { return selectedAnnotation_; }
     // 不打开对话框；路径确认由保存入口负责，供导出测试和后续输出入口复用。
     bool exportToPath(const QString& path);
   signals:
@@ -131,6 +134,15 @@ class SelectionOverlay final : public QWidget
     void positionStatus();
     void markDirty();
     void activateTool(AnnotationType type, bool toggle = true);
+    void toggleSelectMode();
+    bool beginAnnotationGesture(QPointF position, Qt::KeyboardModifiers modifiers);
+    void updateAnnotationGesture(QPointF position, Qt::KeyboardModifiers modifiers);
+    void finishAnnotationGesture();
+    void clearAnnotationSelection();
+    int annotationAt(QPointF position) const;
+    bool rotationHandleHit(QPointF position) const;
+    void paintAnnotationSelection(QPainter& painter) const;
+    QPointF annotationLogicalPoint(QPointF point) const;
     void updateAnnotation(QPointF position);
     void undoAnnotation();
     void redoAnnotation();
@@ -202,6 +214,20 @@ class SelectionOverlay final : public QWidget
     AnnotationStyle style_;
     std::optional<AnnotationType> activeTool_;
     std::optional<Annotation> draft_;
+    QPushButton* selectButton_ = nullptr;
+    bool selectMode_ = false;
+    int selectedAnnotation_ = -1;
+    enum class AnnotationGesture
+    {
+        None,
+        Move,
+        Rotate
+    };
+    AnnotationGesture annotationGesture_ = AnnotationGesture::None;
+    QPointF annotationPressPhysical_;
+    QPointF annotationStartCenter_;
+    qreal annotationStartAngle_ = 0;
+    Annotation annotationBeforeEdit_;
     // 刚提交的线宽类标注仍可作为滚轮目标；切换工具 / 新起笔画 / 撤销后清除。
     bool lastAnnotationSelected_ = false;
     // Mouse FocusOut 延迟一拍提交，让文本格式 / 字号按钮有机会取消提交。

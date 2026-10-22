@@ -82,6 +82,13 @@ void paintAnnotationWithPatch(QPainter& painter, const Annotation& annotation, c
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::TextAntialiasing);
+    if (!qFuzzyIsNull(annotation.rotation))
+    {
+        const QPointF center = annotationCenter(annotation);
+        painter.translate(center);
+        painter.rotate(annotation.rotation);
+        painter.translate(-center);
+    }
     painter.setPen(QPen(annotation.style.color, annotation.style.lineWidth, Qt::SolidLine,
                         Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);

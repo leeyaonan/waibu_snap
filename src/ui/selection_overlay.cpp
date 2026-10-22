@@ -176,6 +176,11 @@ void SelectionOverlay::ensureToolbar()
         buttonsStyle);
     toolBar_->setFixedSize(68, 36);
     toolBar_->hide();
+    selectButton_ = makeButton(toolbar_, QStringLiteral("selectToolButton"),
+                               QStringLiteral("选择标注：点击选中，拖动移动，拖动上方圆点旋转"),
+                               ToolbarIcon::Select);
+    selectButton_->setCheckable(true);
+    connect(selectButton_, &QPushButton::clicked, this, &SelectionOverlay::toggleSelectMode);
     for (int slot = 0; slot < int(toolTypes_.size()); ++slot)
     {
         const auto type = toolTypes_[slot];
@@ -422,6 +427,8 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
     for (auto* separator : separators_)
         separator->hide();
     QVector<QWidget*> tools;
+    if (selectButton_)
+        tools.append(selectButton_);
     for (auto* tool : toolButtons_)
         tools.append(tool);
     tools.append(ocrButton_);
@@ -500,7 +507,7 @@ void SelectionOverlay::updateOptionsBar()
     {
         auto* button = toolButtons_[slot];
         const auto type = toolTypes_[slot];
-        button->setChecked(activeTool_ == type);
+        button->setChecked(!selectMode_ && activeTool_ == type);
         const QString tip = annotationToolTip(type);
         if (button->toolTip() != tip)
         {
@@ -509,9 +516,12 @@ void SelectionOverlay::updateOptionsBar()
             button->setIcon(toolbarIcon(static_cast<ToolbarIcon>(type)));
         }
     }
-    const bool showTools = grouped && !textMode_;
-    const bool colors = !textMode_ && activeTool_ && activeTool_ != AnnotationType::Mosaic;
-    const bool widths = activeTool_ && annotationUsesLineWidth(*activeTool_);
+    if (selectButton_)
+        selectButton_->setChecked(selectMode_);
+    const bool showTools = !selectMode_ && grouped && !textMode_;
+    const bool colors =
+        !selectMode_ && !textMode_ && activeTool_ && activeTool_ != AnnotationType::Mosaic;
+    const bool widths = !selectMode_ && activeTool_ && annotationUsesLineWidth(*activeTool_);
     const bool sizes = colors && activeTool_ == AnnotationType::Text;
     const int barHeight = colors || sizes ? 68 : (showTools ? 44 : 0);
     // 一级组态、颜色 / 线宽 / 字号全部排在同一条参数栏内：
@@ -1146,6 +1156,16 @@ void SelectionOverlay::updateCursor(QPointF position)
         setCursor(textAt(position, false).valid() ? Qt::IBeamCursor : Qt::ArrowCursor);
         return;
     }
+    if (selectMode_)
+    {
+        if (rotationHandleHit(position))
+            setCursor(Qt::CrossCursor);
+        else if (annotationAt(position) >= 0)
+            setCursor(Qt::SizeAllCursor);
+        else
+            setCursor(Qt::ArrowCursor);
+        return;
+    }
     if (activeTool_ && !selection_.isEmpty())
     {
         setCursor(*activeTool_ == AnnotationType::Text ? Qt::IBeamCursor : Qt::CrossCursor);
@@ -1320,9 +1340,11 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
                             painter.drawRect(QRectF(x[column] - 3, y[row] - 3, 6, 6));
             }
         }
+        paintAnnotationSelection(painter);
         const QString hint =
             scrollReady_ ? QStringLiteral("回车开始采集 · Esc 取消 · 尽量避开固定侧栏")
-            : textMode_   ? QStringLiteral("拖选文字 · 双击选词 · Esc 退出取字")
+            : textMode_ ? QStringLiteral("拖选文字 · 双击选词 · Esc 退出取字")
+            : selectMode_ ? QStringLiteral("点击选中标注 · 拖动移动 · 拖圆点旋转 · Esc 取消")
             : activeTool_ ? QStringLiteral("拖拽标注 · 再点工具调整选区 · Esc 取消")
                           : QStringLiteral("单击吸附 · 拖拽框选 · Esc 取消");
         const QString text = selectionSizeText() + QStringLiteral("   ") + hint;
@@ -1366,6 +1388,12 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
     press_ = event->position();
     lastDragPosition_ = press_;
     shiftRatio_ = event->modifiers().testFlag(Qt::ShiftModifier);
+    if (selectMode_)
+    {
+        beginAnnotationGesture(press_, event->modifiers());
+        event->accept();
+        return;
+    }
     if (activeTool_ && !selection_.isEmpty())
     {
         if (*activeTool_ == AnnotationType::Text)
@@ -1415,6 +1443,11 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
         updateCursor(event->position());
         return;
     }
+    if (annotationGesture_ != AnnotationGesture::None)
+    {
+        updateAnnotationGesture(event->position(), event->modifiers());
+        return;
+    }
     if (dragMode_ != DragMode::None)
     {
         shiftRatio_ = event->modifiers().testFlag(Qt::ShiftModifier);
@@ -1437,6 +1470,12 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         if (selectingText_)
             selectOcrTo(event->position());
         selectingText_ = false;
+        return;
+    }
+    if (annotationGesture_ != AnnotationGesture::None)
+    {
+        finishAnnotationGesture();
+        event->accept();
         return;
     }
     if (finished_ || saveDialogOpen_ || dragMode_ == DragMode::None ||
@@ -1504,6 +1543,14 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
         dragTo(lastDragPosition_);
         event->accept();
     }
+    else if (event->key() == Qt::Key_Escape && selectedAnnotation_ >= 0)
+    {
+        clearAnnotationSelection();
+        updateToolbar();
+        updateCursor(mapFromGlobal(QCursor::pos()));
+        update();
+        event->accept();
+    }
     else if (event->key() == Qt::Key_Escape)
     {
         if (ocrDialog_)
@@ -1554,7 +1601,7 @@ QString SelectionOverlay::selectionSizeText() const
 }
 bool SelectionOverlay::nudgeSelection(QKeyEvent* event)
 {
-    if (textMode_ || !hasFocus() || activeTool_ || selection_.isEmpty() ||
+    if (textMode_ || !hasFocus() || activeTool_ || selectMode_ || selection_.isEmpty() ||
         dragMode_ != DragMode::None)
         return false;
     const auto modifiers = event->modifiers();
@@ -1723,6 +1770,8 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
         return;
     exitTextMode();
     finishText(true);
+    clearAnnotationSelection();
+    selectMode_ = false;
     lastAnnotationSelected_ = false;
     widthWheel_.reset();
     toolTypes_[annotationToolSlot(type)] = type;
@@ -1738,6 +1787,167 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
     updateToolbar();
     updateCursor(mapFromGlobal(QCursor::pos()));
     update();
+}
+void SelectionOverlay::toggleSelectMode()
+{
+    if (ocrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+        return;
+    exitTextMode();
+    finishText(true);
+    activeTool_.reset();
+    lastAnnotationSelected_ = false;
+    widthWheel_.reset();
+    selectMode_ = !selectMode_;
+    if (selectMode_)
+    {
+        hideMagnifier();
+        showStatus(QStringLiteral("选择标注：拖动移动，拖动上方圆点旋转；Esc 取消选择"), true);
+    }
+    else
+        clearAnnotationSelection();
+    setFocus(Qt::OtherFocusReason);
+    updateToolbar();
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+}
+int SelectionOverlay::annotationAt(QPointF position) const
+{
+    if (selection_.isEmpty())
+        return -1;
+    const QPointF physical = physicalPoint(position);
+    const qreal tolerance = 4;
+    const auto& items = annotations();
+    for (qsizetype index = items.size() - 1; index >= 0; --index)
+        if (annotationHitTest(items[index], physical, tolerance))
+            return int(index);
+    return -1;
+}
+bool SelectionOverlay::rotationHandleHit(QPointF position) const
+{
+    if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations().size())
+        return false;
+    const auto& annotation = annotations()[selectedAnnotation_];
+    const qreal dpr = frame_.display.devicePixelRatio;
+    const QPointF physical = physicalPoint(position);
+    return std::hypot(physical.x() - annotationRotationHandle(annotation, 24 * dpr).x(),
+                      physical.y() - annotationRotationHandle(annotation, 24 * dpr).y()) <=
+           10 / dpr;
+}
+bool SelectionOverlay::beginAnnotationGesture(QPointF position, Qt::KeyboardModifiers modifiers)
+{
+    if (!selectMode_ || selection_.isEmpty())
+        return false;
+    if (rotationHandleHit(position))
+    {
+        const auto& annotation = annotations()[selectedAnnotation_];
+        annotationBeforeEdit_ = annotation;
+        annotationPressPhysical_ = physicalPoint(position);
+        annotationStartCenter_ = annotationCenter(annotation);
+        annotationStartAngle_ =
+            std::atan2(annotationPressPhysical_.y() - annotationStartCenter_.y(),
+                       annotationPressPhysical_.x() - annotationStartCenter_.x()) *
+            180.0 / 3.14159265358979323846;
+        annotationGesture_ = AnnotationGesture::Rotate;
+        history_.beginEdit();
+        return true;
+    }
+    const int hit = annotationAt(position);
+    if (hit < 0)
+    {
+        clearAnnotationSelection();
+        updateToolbar();
+        updateCursor(position);
+        update();
+        return true;
+    }
+    selectedAnnotation_ = hit;
+    const auto& annotation = annotations()[hit];
+    annotationBeforeEdit_ = annotation;
+    annotationPressPhysical_ = physicalPoint(position);
+    annotationStartCenter_ = annotationCenter(annotation);
+    annotationStartAngle_ = std::atan2(annotationPressPhysical_.y() - annotationStartCenter_.y(),
+                                       annotationPressPhysical_.x() - annotationStartCenter_.x()) *
+                            180.0 / 3.14159265358979323846;
+    annotationGesture_ = AnnotationGesture::Move;
+    history_.beginEdit();
+    Q_UNUSED(modifiers);
+    updateToolbar();
+    update();
+    return true;
+}
+void SelectionOverlay::updateAnnotationGesture(QPointF position, Qt::KeyboardModifiers modifiers)
+{
+    if (annotationGesture_ == AnnotationGesture::None || selectedAnnotation_ < 0 ||
+        selectedAnnotation_ >= annotations().size())
+        return;
+    const QPointF physical = physicalPoint(position);
+    Annotation next = annotationBeforeEdit_;
+    if (annotationGesture_ == AnnotationGesture::Move)
+        translateAnnotation(next, physical - annotationPressPhysical_);
+    else
+    {
+        const qreal angle = std::atan2(physical.y() - annotationStartCenter_.y(),
+                                       physical.x() - annotationStartCenter_.x()) *
+                            180.0 / 3.14159265358979323846;
+        qreal rotation = annotationBeforeEdit_.rotation + angle - annotationStartAngle_;
+        if (modifiers.testFlag(Qt::ShiftModifier))
+            rotation = snapAnnotationRotation(rotation);
+        setAnnotationRotation(next, rotation);
+    }
+    if (history_.updateAnnotation(selectedAnnotation_, std::move(next)))
+        update();
+}
+void SelectionOverlay::finishAnnotationGesture()
+{
+    if (annotationGesture_ == AnnotationGesture::None)
+        return;
+    if (history_.commitEdit())
+        markDirty();
+    annotationGesture_ = AnnotationGesture::None;
+    annotationBeforeEdit_ = {};
+    updateToolbar();
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+}
+void SelectionOverlay::clearAnnotationSelection()
+{
+    if (annotationGesture_ != AnnotationGesture::None)
+        history_.cancelEdit();
+    annotationGesture_ = AnnotationGesture::None;
+    selectedAnnotation_ = -1;
+    annotationBeforeEdit_ = {};
+}
+QPointF SelectionOverlay::annotationLogicalPoint(QPointF point) const
+{
+    return point / frame_.display.devicePixelRatio;
+}
+void SelectionOverlay::paintAnnotationSelection(QPainter& painter) const
+{
+    if (!selectMode_ || selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations().size() ||
+        textMode_ || finished_)
+        return;
+    const auto& annotation = annotations()[selectedAnnotation_];
+    const qreal dpr = frame_.display.devicePixelRatio;
+    const QPolygonF physicalCorners = annotationCorners(annotation);
+    QPolygonF corners;
+    for (const QPointF point : physicalCorners)
+        corners << annotationLogicalPoint(point);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPen pen(QColor(245, 130, 35), 1.4, Qt::DashLine);
+    pen.setDashPattern({4, 3});
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawPolygon(corners);
+    const QRectF base = annotationBaseBounds(annotation);
+    const QPointF top = annotationLogicalPoint(
+        annotationFromBase(annotation, QPointF(base.center().x(), base.top())));
+    const QPointF handle = annotationLogicalPoint(annotationRotationHandle(annotation, 24 * dpr));
+    painter.drawLine(top, handle);
+    painter.setPen(QPen(QColor(245, 130, 35), 1.5));
+    painter.setBrush(QColor(245, 130, 35));
+    painter.drawEllipse(handle, 4, 4);
+    painter.restore();
 }
 void SelectionOverlay::wheelEvent(QWheelEvent* event)
 {
@@ -1790,9 +2000,11 @@ void SelectionOverlay::updateAnnotation(QPointF position)
 }
 void SelectionOverlay::undoAnnotation()
 {
-    if (textMode_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+    if (textMode_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None ||
+        annotationGesture_ != AnnotationGesture::None)
         return;
     finishText(true);
+    clearAnnotationSelection();
     lastAnnotationSelected_ = false;
     if (history_.undo())
         markDirty();
@@ -1801,9 +2013,11 @@ void SelectionOverlay::undoAnnotation()
 }
 void SelectionOverlay::redoAnnotation()
 {
-    if (textMode_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+    if (textMode_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None ||
+        annotationGesture_ != AnnotationGesture::None)
         return;
     finishText(true);
+    clearAnnotationSelection();
     lastAnnotationSelected_ = false;
     if (history_.redo())
         markDirty();
@@ -2063,9 +2277,11 @@ bool SelectionOverlay::eventFilter(QObject* watched, QEvent* event)
 void SelectionOverlay::discardAnnotations()
 {
     finishText(false);
+    clearAnnotationSelection();
     history_.clear();
     draft_.reset();
     activeTool_.reset();
+    selectMode_ = false;
     lastAnnotationSelected_ = false;
     updateToolbar();
 }
@@ -2079,10 +2295,14 @@ void SelectionOverlay::toggleTextMode()
     else
     {
         finishText(true);
+        clearAnnotationSelection();
         activeTool_.reset();
+        selectMode_ = false;
         lastAnnotationSelected_ = false;
         for (auto* button : toolButtons_)
             button->setChecked(false);
+        if (selectButton_)
+            selectButton_->setChecked(false);
         textMode_ = true;
         hideMagnifier();
         startOcrRecognition();

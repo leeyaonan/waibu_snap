@@ -10,6 +10,7 @@
 #include <functional>
 #include <optional>
 class QLabel;
+class QPainter;
 class QScreen;
 class QPushButton;
 class QComboBox;
@@ -71,6 +72,8 @@ class StickerWindow final : public QWidget
     void setQuitInteraction(bool busy);
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
     std::optional<AnnotationType> activeTool() const { return activeTool_; }
+    bool isSelectMode() const { return selectMode_; }
+    int selectedAnnotation() const { return selectedAnnotation_; }
     QImage renderedImage() const;
   signals:
     void closed();
@@ -100,6 +103,15 @@ class StickerWindow final : public QWidget
     void ensureEditToolbar();
     void updateEditToolbar();
     void activateTool(AnnotationType type, bool toggle = true);
+    void toggleSelectMode();
+    bool beginAnnotationGesture(QPointF point, Qt::KeyboardModifiers modifiers);
+    void updateAnnotationGesture(QPointF point, Qt::KeyboardModifiers modifiers);
+    void finishAnnotationGesture();
+    void clearAnnotationSelection();
+    int annotationAt(QPointF point) const;
+    bool rotationHandleHit(QPointF point) const;
+    void paintAnnotationSelection(QPainter& painter) const;
+    qreal annotationLogicalFactor() const;
     void undoAnnotation();
     void redoAnnotation();
     void markDirty();
@@ -151,6 +163,20 @@ class StickerWindow final : public QWidget
     AnnotationStyle style_;
     std::optional<AnnotationType> activeTool_;
     std::optional<Annotation> draft_;
+    QPushButton* selectButton_ = nullptr;
+    bool selectMode_ = false;
+    int selectedAnnotation_ = -1;
+    enum class AnnotationGesture
+    {
+        None,
+        Move,
+        Rotate
+    };
+    AnnotationGesture annotationGesture_ = AnnotationGesture::None;
+    QPointF annotationPressPhysical_;
+    QPointF annotationStartCenter_;
+    qreal annotationStartAngle_ = 0;
+    Annotation annotationBeforeEdit_;
     // 刚提交的线宽类标注仍可作为滚轮目标；切换工具 / 新起笔画 / 撤销后清除。
     bool lastAnnotationSelected_ = false;
     // Mouse FocusOut 延迟一拍提交，让文本格式 / 字号按钮有机会取消提交。

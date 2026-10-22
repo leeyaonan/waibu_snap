@@ -1,5 +1,6 @@
 #include "core/annotation.h"
 #include "core/selection_geometry.h"
+#include <QGuiApplication>
 #include <QTest>
 #include <cmath>
 #include <limits>
@@ -32,6 +33,7 @@ void compare(const waibusnap::Annotation& actual, const waibusnap::Annotation& e
     QCOMPARE(actual.style.bold, expected.style.bold);
     QCOMPARE(actual.style.italic, expected.style.italic);
     QCOMPARE(actual.style.underline, expected.style.underline);
+    QCOMPARE(actual.rotation, expected.rotation);
 }
 }
 class AnnotationTest final : public QObject
@@ -357,6 +359,102 @@ class AnnotationTest final : public QObject
         arrow.last = arrow.first;
         QVERIFY(arrowHead(arrow).isEmpty());
     }
+    void rotationGeometryAndHitTest()
+    {
+        using namespace waibusnap;
+        Annotation rectangle = sample(AnnotationType::Rectangle);
+        rectangle.first = {100, 100};
+        rectangle.last = {200, 120};
+        rectangle.style.lineWidth = 4;
+        QCOMPARE(annotationCenter(rectangle), QPointF(150, 110));
+        const QRectF base = annotationBaseBounds(rectangle);
+        QCOMPARE(base, QRectF(98, 98, 104, 24));
+        const QPointF handle = annotationRotationHandle(rectangle, 24);
+        QVERIFY(qAbs(handle.x() - 150) < 1e-9);
+        QVERIFY(qAbs(handle.y() - 74) < 1e-9);
+        QVERIFY(annotationHitTest(rectangle, {150, 110}));
+        QVERIFY(!annotationHitTest(rectangle, {150, 200}));
+
+        setAnnotationRotation(rectangle, 90);
+        QCOMPARE(rectangle.rotation, 90);
+        const QRectF rotated = annotationBounds(rectangle);
+        QVERIFY(qAbs(rotated.width() - 24) < 1e-9);
+        QVERIFY(qAbs(rotated.height() - 104) < 1e-9);
+        QVERIFY(annotationHitTest(rectangle, {150, 150}));
+        QVERIFY(!annotationHitTest(rectangle, {190, 110}));
+        const QPointF rotatedHandle = annotationRotationHandle(rectangle, 24);
+        QVERIFY(rotatedHandle.x() > 150);
+        QVERIFY(qAbs(rotatedHandle.y() - 110) < 1e-9);
+        QCOMPARE(annotationCorners(rectangle).size(), 4);
+
+        Annotation text = sample(AnnotationType::Text);
+        text.first = {40, 50};
+        text.last = text.first;
+        text.style.textSize = 28;
+        const QRectF textBounds = annotationBaseBounds(text);
+        QVERIFY(textBounds.width() > 0);
+        QVERIFY(textBounds.height() > 0);
+        QVERIFY(annotationHitTest(text, textBounds.center()));
+        QVERIFY(!annotationHitTest(text, textBounds.bottomRight() + QPointF(100, 100)));
+
+        QCOMPARE(normalizedRotation(360), qreal(0));
+        QCOMPARE(normalizedRotation(181), qreal(-179));
+        QCOMPARE(normalizedRotation(-181), qreal(179));
+        QCOMPARE(normalizedRotation(-90), qreal(-90));
+        QCOMPARE(snapAnnotationRotation(37), qreal(30));
+        QCOMPARE(snapAnnotationRotation(38), qreal(45));
+        QCOMPARE(snapAnnotationRotation(173), qreal(-180));
+        QCOMPARE(snapAnnotationRotation(-173), qreal(-180));
+        for (int type = 0; type < 8; ++type)
+        {
+            Annotation annotation = sample(static_cast<AnnotationType>(type));
+            setAnnotationRotation(annotation, 37);
+            QVERIFY(!annotationBounds(annotation).isEmpty());
+            QCOMPARE(annotationCorners(annotation).size(), 4);
+            QVERIFY(annotationHitTest(annotation, annotationBounds(annotation).center()));
+        }
+    }
+    void historyEditTransactions()
+    {
+        using namespace waibusnap;
+        AnnotationHistory history;
+        const Annotation rectangle = sample(AnnotationType::Rectangle);
+        QVERIFY(history.add(rectangle));
+        QVERIFY(history.beginEdit());
+        Annotation moved = rectangle;
+        translateAnnotation(moved, {30, -10});
+        QVERIFY(history.updateAnnotation(0, moved));
+        QVERIFY(history.commitEdit());
+        compare(history.annotations().last(), moved);
+        QVERIFY(history.undo());
+        compare(history.annotations().last(), rectangle);
+        QVERIFY(history.redo());
+        compare(history.annotations().last(), moved);
+
+        // 取消编辑恢复原状态，且不新增步骤。
+        QVERIFY(history.beginEdit());
+        Annotation cancelled = moved;
+        translateAnnotation(cancelled, {100, 100});
+        QVERIFY(history.updateAnnotation(0, cancelled));
+        history.cancelEdit();
+        compare(history.annotations().last(), moved);
+
+        // 未实际更新时不提交空步骤。
+        QVERIFY(history.beginEdit());
+        QVERIFY(!history.commitEdit());
+        compare(history.annotations().last(), moved);
+
+        // 编辑提交会清除重做分支。
+        QVERIFY(history.undo());
+        QVERIFY(history.canRedo());
+        QVERIFY(history.beginEdit());
+        Annotation rotated = rectangle;
+        setAnnotationRotation(rotated, 45);
+        QVERIFY(history.updateAnnotation(0, rotated));
+        QVERIFY(history.commitEdit());
+        QVERIFY(!history.canRedo());
+        compare(history.annotations().last(), rotated);
+    }
     void freehandThinsInPhysicalPixels()
     {
         waibusnap::Annotation annotation;
@@ -448,5 +546,10 @@ class AnnotationTest final : public QObject
         compare(history.annotations().first(), annotation);
     }
 };
-QTEST_APPLESS_MAIN(AnnotationTest)
+int main(int argc, char** argv)
+{
+    QGuiApplication application(argc, argv);
+    AnnotationTest test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "annotation_test.moc"

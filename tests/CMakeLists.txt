@@ -42,6 +42,7 @@ qt_add_executable(annotation_test unit/annotation_test.cpp)
 target_link_libraries(annotation_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(annotation_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME annotation COMMAND annotation_test)
+set_tests_properties(annotation PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(window_snapping_test unit/window_snapping_test.cpp)
 target_link_libraries(window_snapping_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
@@ -359,3 +360,9 @@ add_test(NAME history_cleanup_execution_high_dpi COMMAND history_cleanup_executi
     -o "${CMAKE_CURRENT_BINARY_DIR}/history_cleanup_execution-high-dpi-output.txt,txt")
 set_tests_properties(history_cleanup_execution_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+qt_add_executable(annotation_transform_test integration/annotation_transform_test.cpp)
+target_link_libraries(annotation_transform_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(annotation_transform_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME annotation_transform COMMAND annotation_transform_test)
+set_tests_properties(annotation_transform PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
