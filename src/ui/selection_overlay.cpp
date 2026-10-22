@@ -1166,6 +1166,19 @@ void SelectionOverlay::updateCursor(QPointF position)
             setCursor(Qt::ArrowCursor);
         return;
     }
+    if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations().size())
+    {
+        if (rotationHandleHit(position))
+        {
+            setCursor(Qt::CrossCursor);
+            return;
+        }
+        if (annotationHitTest(annotations()[selectedAnnotation_], physicalPoint(position), 4))
+        {
+            setCursor(Qt::SizeAllCursor);
+            return;
+        }
+    }
     if (activeTool_ && !selection_.isEmpty())
     {
         setCursor(*activeTool_ == AnnotationType::Text ? Qt::IBeamCursor : Qt::CrossCursor);
@@ -1394,6 +1407,23 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
         event->accept();
         return;
     }
+    if (activeTool_ && selectedAnnotation_ >= 0)
+    {
+        if (rotationHandleHit(press_))
+        {
+            startAnnotationGesture(AnnotationGesture::Rotate, selectedAnnotation_, press_);
+            event->accept();
+            return;
+        }
+        if (annotationHitTest(annotations()[selectedAnnotation_], physicalPoint(press_), 4))
+        {
+            pendingSelectedGesture_ = true;
+            pendingSelectedPress_ = press_;
+            event->accept();
+            return;
+        }
+        clearAnnotationSelection();
+    }
     if (activeTool_ && !selection_.isEmpty())
     {
         if (*activeTool_ == AnnotationType::Text)
@@ -1443,6 +1473,15 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
         updateCursor(event->position());
         return;
     }
+    if (pendingSelectedGesture_)
+    {
+        if (std::hypot(event->position().x() - pendingSelectedPress_.x(),
+                       event->position().y() - pendingSelectedPress_.y()) < 2)
+            return;
+        pendingSelectedGesture_ = false;
+        if (!beginSelectedAnnotationGesture(pendingSelectedPress_))
+            return;
+    }
     if (annotationGesture_ != AnnotationGesture::None)
     {
         updateAnnotationGesture(event->position(), event->modifiers());
@@ -1472,6 +1511,19 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         selectingText_ = false;
         return;
     }
+    if (pendingSelectedGesture_)
+    {
+        pendingSelectedGesture_ = false;
+        if (activeTool_ == AnnotationType::Text)
+        {
+            selectedAnnotation_ = -1;
+            startText(pendingSelectedPress_);
+        }
+        else
+            clearAnnotationSelection();
+        event->accept();
+        return;
+    }
     if (annotationGesture_ != AnnotationGesture::None)
     {
         finishAnnotationGesture();
@@ -1497,6 +1549,7 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         {
             markDirty();
             lastAnnotationSelected_ = widthTool;
+            selectedAnnotation_ = int(annotations().size()) - 1;
         }
         else
             lastAnnotationSelected_ = false;
@@ -1543,7 +1596,7 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
         dragTo(lastDragPosition_);
         event->accept();
     }
-    else if (event->key() == Qt::Key_Escape && selectedAnnotation_ >= 0)
+    else if (event->key() == Qt::Key_Escape && selectMode_ && selectedAnnotation_ >= 0)
     {
         clearAnnotationSelection();
         updateToolbar();
@@ -1837,18 +1890,10 @@ bool SelectionOverlay::beginAnnotationGesture(QPointF position, Qt::KeyboardModi
 {
     if (!selectMode_ || selection_.isEmpty())
         return false;
+    Q_UNUSED(modifiers);
     if (rotationHandleHit(position))
     {
-        const auto& annotation = annotations()[selectedAnnotation_];
-        annotationBeforeEdit_ = annotation;
-        annotationPressPhysical_ = physicalPoint(position);
-        annotationStartCenter_ = annotationCenter(annotation);
-        annotationStartAngle_ =
-            std::atan2(annotationPressPhysical_.y() - annotationStartCenter_.y(),
-                       annotationPressPhysical_.x() - annotationStartCenter_.x()) *
-            180.0 / 3.14159265358979323846;
-        annotationGesture_ = AnnotationGesture::Rotate;
-        history_.beginEdit();
+        startAnnotationGesture(AnnotationGesture::Rotate, selectedAnnotation_, position);
         return true;
     }
     const int hit = annotationAt(position);
@@ -1860,20 +1905,42 @@ bool SelectionOverlay::beginAnnotationGesture(QPointF position, Qt::KeyboardModi
         update();
         return true;
     }
-    selectedAnnotation_ = hit;
-    const auto& annotation = annotations()[hit];
+    startAnnotationGesture(AnnotationGesture::Move, hit, position);
+    return true;
+}
+bool SelectionOverlay::beginSelectedAnnotationGesture(QPointF position)
+{
+    if (!activeTool_ || selection_.isEmpty() || selectedAnnotation_ < 0 ||
+        selectedAnnotation_ >= annotations().size())
+        return false;
+    if (rotationHandleHit(position))
+    {
+        startAnnotationGesture(AnnotationGesture::Rotate, selectedAnnotation_, position);
+        return true;
+    }
+    const auto& annotation = annotations()[selectedAnnotation_];
+    if (!annotationHitTest(annotation, physicalPoint(position), 4))
+        return false;
+    startAnnotationGesture(AnnotationGesture::Move, selectedAnnotation_, position);
+    return true;
+}
+void SelectionOverlay::startAnnotationGesture(AnnotationGesture gesture, int index,
+                                              QPointF position)
+{
+    if (index < 0 || index >= annotations().size())
+        return;
+    selectedAnnotation_ = index;
+    const auto& annotation = annotations()[index];
     annotationBeforeEdit_ = annotation;
     annotationPressPhysical_ = physicalPoint(position);
     annotationStartCenter_ = annotationCenter(annotation);
     annotationStartAngle_ = std::atan2(annotationPressPhysical_.y() - annotationStartCenter_.y(),
                                        annotationPressPhysical_.x() - annotationStartCenter_.x()) *
                             180.0 / 3.14159265358979323846;
-    annotationGesture_ = AnnotationGesture::Move;
+    annotationGesture_ = gesture;
     history_.beginEdit();
-    Q_UNUSED(modifiers);
     updateToolbar();
     update();
-    return true;
 }
 void SelectionOverlay::updateAnnotationGesture(QPointF position, Qt::KeyboardModifiers modifiers)
 {
@@ -1914,6 +1981,7 @@ void SelectionOverlay::clearAnnotationSelection()
     if (annotationGesture_ != AnnotationGesture::None)
         history_.cancelEdit();
     annotationGesture_ = AnnotationGesture::None;
+    pendingSelectedGesture_ = false;
     selectedAnnotation_ = -1;
     annotationBeforeEdit_ = {};
 }
@@ -1923,8 +1991,8 @@ QPointF SelectionOverlay::annotationLogicalPoint(QPointF point) const
 }
 void SelectionOverlay::paintAnnotationSelection(QPainter& painter) const
 {
-    if (!selectMode_ || selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations().size() ||
-        textMode_ || finished_)
+    if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations().size() || textMode_ ||
+        finished_)
         return;
     const auto& annotation = annotations()[selectedAnnotation_];
     const qreal dpr = frame_.display.devicePixelRatio;
@@ -2076,7 +2144,10 @@ void SelectionOverlay::finishText(bool commit, bool restoreFocus)
     {
         added = history_.add(std::move(textDraft_));
         if (added)
+        {
             markDirty();
+            selectedAnnotation_ = int(annotations().size()) - 1;
+        }
     }
     lastAnnotationSelected_ = added;
     textDraft_ = {};

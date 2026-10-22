@@ -96,6 +96,12 @@ class StickerWindow final : public QWidget
     void closeEvent(QCloseEvent*) override;
 
   private:
+    enum class AnnotationGesture
+    {
+        None,
+        Move,
+        Rotate
+    };
     void setCenteredScale(qreal scale);
     void updateScaleLabel();
     void applyGeometry(QPointF position, QSize size);
@@ -105,6 +111,8 @@ class StickerWindow final : public QWidget
     void activateTool(AnnotationType type, bool toggle = true);
     void toggleSelectMode();
     bool beginAnnotationGesture(QPointF point, Qt::KeyboardModifiers modifiers);
+    bool beginSelectedAnnotationGesture(QPointF point);
+    void startAnnotationGesture(AnnotationGesture gesture, int index, QPointF point);
     void updateAnnotationGesture(QPointF point, Qt::KeyboardModifiers modifiers);
     void finishAnnotationGesture();
     void clearAnnotationSelection();
@@ -166,13 +174,9 @@ class StickerWindow final : public QWidget
     QPushButton* selectButton_ = nullptr;
     bool selectMode_ = false;
     int selectedAnnotation_ = -1;
-    enum class AnnotationGesture
-    {
-        None,
-        Move,
-        Rotate
-    };
     AnnotationGesture annotationGesture_ = AnnotationGesture::None;
+    bool pendingSelectedGesture_ = false;
+    QPointF pendingSelectedPress_;
     QPointF annotationPressPhysical_;
     QPointF annotationStartCenter_;
     qreal annotationStartAngle_ = 0;

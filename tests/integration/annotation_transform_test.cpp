@@ -193,14 +193,84 @@ class AnnotationTransformTest final : public QObject
         auto* editor = overlay.findChild<AnnotationTextEdit*>();
         QVERIFY(editor && editor->isVisible());
         editor->setPlainText(QStringLiteral("可拖动文本 ABC"));
-        QTest::mouseClick(button(overlay, "selectToolButton"), Qt::LeftButton);
+        QTest::keyClick(editor, Qt::Key_Return, Qt::ControlModifier);
         QCOMPARE(overlay.annotations().size(), qsizetype(1));
+        QCOMPARE(overlay.activeTool(), std::optional<AnnotationType>(AnnotationType::Text));
+        QCOMPARE(overlay.selectedAnnotation(), 0);
         const Annotation original = overlay.annotations().first();
         const QPointF center = centerOf(original);
-        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, center.toPoint());
-        QCOMPARE(overlay.selectedAnnotation(), 0);
         drag(overlay, center.toPoint(), (center + QPointF(30, 20)).toPoint());
         QCOMPARE(overlay.annotations().first().first, original.first + QPointF(30, 20));
+    }
+    void overlayCurrentObjectContinuous()
+    {
+        SelectionOverlay overlay(frame());
+        overlay.show();
+        overlay.activateWindow();
+        QTest::qWait(1);
+        drag(overlay, {0, 0}, {800, 600});
+        QTest::mouseClick(button(overlay, "rectangleToolButton"), Qt::LeftButton);
+        drag(overlay, {100, 100}, {300, 200});
+        QCOMPARE(overlay.annotations().size(), qsizetype(1));
+        QCOMPARE(overlay.selectedAnnotation(), 0);
+        QCOMPARE(overlay.activeTool(), std::optional<AnnotationType>(AnnotationType::Rectangle));
+        const Annotation original = overlay.annotations().first();
+
+        // 不切工具：直接拖当前对象。
+        drag(overlay, {200, 150}, {240, 180});
+        QCOMPARE(overlay.annotations().first().first, original.first + QPointF(40, 30));
+        QCOMPARE(overlay.activeTool(), std::optional<AnnotationType>(AnnotationType::Rectangle));
+        QCOMPARE(overlay.selectedAnnotation(), 0);
+
+        // 不切工具：直接拖旋转手柄。
+        const Annotation beforeRotate = overlay.annotations().first();
+        const QPointF center = centerOf(beforeRotate);
+        const QPointF handle = annotationRotationHandle(beforeRotate, 24);
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, handle.toPoint());
+        QTest::mouseMove(&overlay, (center + QPointF(100, 0)).toPoint());
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier,
+                            (center + QPointF(100, 0)).toPoint());
+        QVERIFY(std::abs(overlay.annotations().first().rotation - 90) < 2);
+        QCOMPARE(overlay.activeTool(), std::optional<AnnotationType>(AnnotationType::Rectangle));
+
+        // 点外侧继续画新对象，当前对象自动切换为新的最后一个。
+        drag(overlay, {500, 300}, {600, 400});
+        QCOMPARE(overlay.annotations().size(), qsizetype(2));
+        QCOMPARE(overlay.selectedAnnotation(), 1);
+    }
+    void stickerCurrentObjectContinuous()
+    {
+        QImage image(800, 600, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        StickerWindow sticker(image, {40, 50}, true);
+        sticker.show();
+        sticker.setEditing(true);
+        QTest::qWait(1);
+        QTest::mouseClick(button(sticker, "stickerEditRectangleToolButton"), Qt::LeftButton);
+        drag(sticker, {100, 100}, {300, 200});
+        QCOMPARE(sticker.annotations().size(), qsizetype(1));
+        QCOMPARE(sticker.selectedAnnotation(), 0);
+        QCOMPARE(sticker.activeTool(), std::optional<AnnotationType>(AnnotationType::Rectangle));
+        const Annotation original = sticker.annotations().first();
+
+        drag(sticker, {200, 150}, {240, 180});
+        QCOMPARE(sticker.annotations().first().first, original.first + QPointF(40, 30));
+        QCOMPARE(sticker.activeTool(), std::optional<AnnotationType>(AnnotationType::Rectangle));
+        QCOMPARE(sticker.selectedAnnotation(), 0);
+
+        const Annotation beforeRotate = sticker.annotations().first();
+        const QPointF center = centerOf(beforeRotate);
+        const QPointF handle = annotationRotationHandle(beforeRotate, 24);
+        QTest::mousePress(&sticker, Qt::LeftButton, Qt::NoModifier, handle.toPoint());
+        QTest::mouseMove(&sticker, (center + QPointF(100, 0)).toPoint());
+        QTest::mouseRelease(&sticker, Qt::LeftButton, Qt::NoModifier,
+                            (center + QPointF(100, 0)).toPoint());
+        QVERIFY(std::abs(sticker.annotations().first().rotation - 90) < 2);
+        QCOMPARE(sticker.activeTool(), std::optional<AnnotationType>(AnnotationType::Rectangle));
+
+        drag(sticker, {500, 300}, {600, 400});
+        QCOMPARE(sticker.annotations().size(), qsizetype(2));
+        QCOMPARE(sticker.selectedAnnotation(), 1);
     }
     void stickerScaledSelectMove()
     {
