@@ -3766,7 +3766,11 @@ class StartupSmokeTest final : public QObject
         QTest::keyClick(editor, Qt::Key_Escape);
         stickerClick(*sticker, "stickerEditLineToolButton");
         for (int index = 0; index < 22; ++index)
+        {
+            // 当前对象会自动保持选中；先单击取消选择，再开始同一位置的新笔画。
+            QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
             stickerDrag(*sticker, {100, 100}, {200, 100});
+        }
         const qsizetype count = sticker->annotations().size();
         for (int index = 0; index < 22; ++index)
             stickerClick(*sticker, "stickerEditUndoAnnotationButton");

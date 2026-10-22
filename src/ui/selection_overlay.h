@@ -106,6 +106,12 @@ class SelectionOverlay final : public QWidget
         Resize,
         Annotate
     };
+    enum class AnnotationGesture
+    {
+        None,
+        Move,
+        Rotate
+    };
     void complete(int outcome);
     void copySelection();
     void copyShortcut();
@@ -136,6 +142,8 @@ class SelectionOverlay final : public QWidget
     void activateTool(AnnotationType type, bool toggle = true);
     void toggleSelectMode();
     bool beginAnnotationGesture(QPointF position, Qt::KeyboardModifiers modifiers);
+    bool beginSelectedAnnotationGesture(QPointF position);
+    void startAnnotationGesture(AnnotationGesture gesture, int index, QPointF position);
     void updateAnnotationGesture(QPointF position, Qt::KeyboardModifiers modifiers);
     void finishAnnotationGesture();
     void clearAnnotationSelection();
@@ -217,13 +225,9 @@ class SelectionOverlay final : public QWidget
     QPushButton* selectButton_ = nullptr;
     bool selectMode_ = false;
     int selectedAnnotation_ = -1;
-    enum class AnnotationGesture
-    {
-        None,
-        Move,
-        Rotate
-    };
     AnnotationGesture annotationGesture_ = AnnotationGesture::None;
+    bool pendingSelectedGesture_ = false;
+    QPointF pendingSelectedPress_;
     QPointF annotationPressPhysical_;
     QPointF annotationStartCenter_;
     qreal annotationStartAngle_ = 0;

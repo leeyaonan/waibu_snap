@@ -387,6 +387,25 @@ void StickerWindow::mousePressEvent(QMouseEvent* event)
             event->accept();
             return;
         }
+        if (activeTool_ && selectedAnnotation_ >= 0)
+        {
+            if (rotationHandleHit(event->position()))
+            {
+                startAnnotationGesture(AnnotationGesture::Rotate, selectedAnnotation_,
+                                       event->position());
+                event->accept();
+                return;
+            }
+            if (annotationHitTest(annotations()[selectedAnnotation_],
+                                  physicalPoint(event->position()), 4))
+            {
+                pendingSelectedGesture_ = true;
+                pendingSelectedPress_ = event->position();
+                event->accept();
+                return;
+            }
+            clearAnnotationSelection();
+        }
         if (!activeTool_)
             return;
         if (activeTool_ == AnnotationType::Text)
@@ -420,6 +439,15 @@ void StickerWindow::moveDrag(QPointF globalPosition)
 }
 void StickerWindow::mouseMoveEvent(QMouseEvent* event)
 {
+    if (pendingSelectedGesture_)
+    {
+        if (std::hypot(event->position().x() - pendingSelectedPress_.x(),
+                       event->position().y() - pendingSelectedPress_.y()) < 2)
+            return;
+        pendingSelectedGesture_ = false;
+        if (!beginSelectedAnnotationGesture(pendingSelectedPress_))
+            return;
+    }
     if (annotationGesture_ != AnnotationGesture::None)
     {
         updateAnnotationGesture(event->position(), event->modifiers());
@@ -434,6 +462,16 @@ void StickerWindow::mouseMoveEvent(QMouseEvent* event)
         else
             setCursor(Qt::ArrowCursor);
     }
+    else if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations().size())
+    {
+        if (rotationHandleHit(event->position()))
+            setCursor(Qt::CrossCursor);
+        else if (annotationHitTest(annotations()[selectedAnnotation_],
+                                   physicalPoint(event->position()), 4))
+            setCursor(Qt::SizeAllCursor);
+        else if (activeTool_)
+            setCursor(*activeTool_ == AnnotationType::Text ? Qt::IBeamCursor : Qt::CrossCursor);
+    }
     if (draft_ && !saveDialogOpen_ && !quitInteraction_)
     {
         updateAnnotation(event->position());
@@ -444,6 +482,24 @@ void StickerWindow::mouseMoveEvent(QMouseEvent* event)
 }
 void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (event->button() == Qt::LeftButton && pendingSelectedGesture_)
+    {
+        pendingSelectedGesture_ = false;
+        if (activeTool_ == AnnotationType::Text)
+        {
+            selectedAnnotation_ = -1;
+            startText(pendingSelectedPress_);
+        }
+        else
+        {
+            clearAnnotationSelection();
+            updateEditToolbar();
+            setCursor(Qt::ArrowCursor);
+            update();
+        }
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton && annotationGesture_ != AnnotationGesture::None)
     {
         finishAnnotationGesture();
@@ -458,6 +514,7 @@ void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
         {
             markDirty();
             lastAnnotationSelected_ = widthTool;
+            selectedAnnotation_ = int(annotations().size()) - 1;
         }
         else
             lastAnnotationSelected_ = false;
@@ -1107,19 +1164,10 @@ bool StickerWindow::beginAnnotationGesture(QPointF point, Qt::KeyboardModifiers 
 {
     if (!selectMode_ || !editing_)
         return false;
+    Q_UNUSED(modifiers);
     if (rotationHandleHit(point))
     {
-        const auto& annotation = annotations()[selectedAnnotation_];
-        annotationBeforeEdit_ = annotation;
-        annotationPressPhysical_ = physicalPoint(point);
-        annotationStartCenter_ = annotationCenter(annotation);
-        annotationStartAngle_ =
-            std::atan2(annotationPressPhysical_.y() - annotationStartCenter_.y(),
-                       annotationPressPhysical_.x() - annotationStartCenter_.x()) *
-            180.0 / 3.14159265358979323846;
-        annotationGesture_ = AnnotationGesture::Rotate;
-        history_.beginEdit();
-        updateEditToolbar();
+        startAnnotationGesture(AnnotationGesture::Rotate, selectedAnnotation_, point);
         return true;
     }
     const int hit = annotationAt(point);
@@ -1131,20 +1179,41 @@ bool StickerWindow::beginAnnotationGesture(QPointF point, Qt::KeyboardModifiers 
         update();
         return true;
     }
-    selectedAnnotation_ = hit;
-    const auto& annotation = annotations()[hit];
+    startAnnotationGesture(AnnotationGesture::Move, hit, point);
+    return true;
+}
+bool StickerWindow::beginSelectedAnnotationGesture(QPointF point)
+{
+    if (!editing_ || !activeTool_ || selectedAnnotation_ < 0 ||
+        selectedAnnotation_ >= annotations().size())
+        return false;
+    if (rotationHandleHit(point))
+    {
+        startAnnotationGesture(AnnotationGesture::Rotate, selectedAnnotation_, point);
+        return true;
+    }
+    const auto& annotation = annotations()[selectedAnnotation_];
+    if (!annotationHitTest(annotation, physicalPoint(point), 4))
+        return false;
+    startAnnotationGesture(AnnotationGesture::Move, selectedAnnotation_, point);
+    return true;
+}
+void StickerWindow::startAnnotationGesture(AnnotationGesture gesture, int index, QPointF point)
+{
+    if (index < 0 || index >= annotations().size())
+        return;
+    selectedAnnotation_ = index;
+    const auto& annotation = annotations()[index];
     annotationBeforeEdit_ = annotation;
     annotationPressPhysical_ = physicalPoint(point);
     annotationStartCenter_ = annotationCenter(annotation);
     annotationStartAngle_ = std::atan2(annotationPressPhysical_.y() - annotationStartCenter_.y(),
                                        annotationPressPhysical_.x() - annotationStartCenter_.x()) *
                             180.0 / 3.14159265358979323846;
-    annotationGesture_ = AnnotationGesture::Move;
+    annotationGesture_ = gesture;
     history_.beginEdit();
     updateEditToolbar();
-    Q_UNUSED(modifiers);
     update();
-    return true;
 }
 void StickerWindow::updateAnnotationGesture(QPointF point, Qt::KeyboardModifiers modifiers)
 {
@@ -1184,13 +1253,13 @@ void StickerWindow::clearAnnotationSelection()
     if (annotationGesture_ != AnnotationGesture::None)
         history_.cancelEdit();
     annotationGesture_ = AnnotationGesture::None;
+    pendingSelectedGesture_ = false;
     selectedAnnotation_ = -1;
     annotationBeforeEdit_ = {};
 }
 void StickerWindow::paintAnnotationSelection(QPainter& painter) const
 {
-    if (!selectMode_ || selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations().size() ||
-        !editing_)
+    if (selectedAnnotation_ < 0 || selectedAnnotation_ >= annotations().size() || !editing_)
         return;
     const qreal factor = annotationLogicalFactor();
     if (factor <= 0)
@@ -1330,7 +1399,10 @@ void StickerWindow::finishText(bool commit, bool restoreFocus)
     {
         added = history_.add(std::move(textDraft_));
         if (added)
+        {
             markDirty();
+            selectedAnnotation_ = int(annotations().size()) - 1;
+        }
     }
     lastAnnotationSelected_ = added;
     textDraft_ = {};
@@ -1535,7 +1607,7 @@ void StickerWindow::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Escape && editing_ && !hasPendingInteraction() && !quitInteraction_)
     {
-        if (selectedAnnotation_ >= 0)
+        if (selectMode_ && selectedAnnotation_ >= 0)
         {
             clearAnnotationSelection();
             updateEditToolbar();
