@@ -1050,7 +1050,7 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 
 - 范围 C：八类标注统一支持选择、移动、旋转；覆盖层与贴图编辑面共用核心几何 / 命中 / 历史。
 - `annotation` 新增旋转字段、基础 / 旋转后包围盒、四角、手柄、命中、平移、角度归一化 / 15° 吸附与编辑事务测试；`annotation_test` 改为使用 offscreen `QGuiApplication` 以覆盖文本排版尺寸。
-- 新增 `annotation_transform`：覆盖层 / 贴图的选中、拖动、旋转、撤销重做、Esc、空白取消、DPR 2 坐标映射和旋转出图；工具栏「选择」与贴图紧凑菜单入口均有断言。
+- 新增 `annotation_transform`：覆盖层 / 贴图的选中、拖动、旋转、撤销重做、Esc、空白取消、DPR 2 坐标映射和旋转出图；工具栏「选择」与贴图紧凑菜单入口均有断言，并覆盖 50% 贴图缩放下的坐标与旋转手柄。
 - 工具栏新增选择按钮后，覆盖层窄屏单行阈值更新为 566 / 619（普通 / 取字展开），`ocrModeLifecycle` 顶层工具数 6 → 7；贴图紧凑菜单 13 → 14 项，`stickerEditSelectToolButton` 追加在末尾以保持既有菜单索引。
-- 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **36/36 CTest** 通过，主冒烟 **503 项**、独立高 DPI 子集 **436 项**，`annotation` / `annotation_transform` 分别 159 / 7 项；clang-format 18.1.8 与 `git diff --check` 通过。
+- 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **36/36 CTest** 通过，主冒烟 **503 项**、独立高 DPI 子集 **436 项**，`annotation` / `annotation_transform` 分别 159 / 8 项；clang-format 18.1.8 与 `git diff --check` 通过。
 - 待人工：真实鼠标 / 触控板旋转手感、旋转文本清晰度与 1x / 2x 混合 DPI、遮盖 / 马赛克旋转边缘、Windows 原生实机；自动化不能代替。

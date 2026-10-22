@@ -202,6 +202,40 @@ class AnnotationTransformTest final : public QObject
         drag(overlay, center.toPoint(), (center + QPointF(30, 20)).toPoint());
         QCOMPARE(overlay.annotations().first().first, original.first + QPointF(30, 20));
     }
+    void stickerScaledSelectMove()
+    {
+        QImage image(800, 600, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        StickerWindow sticker(image, {40, 50}, true, {}, 0.5);
+        sticker.show();
+        sticker.setEditing(true);
+        QTest::qWait(1);
+        QVERIFY(sticker.isEditing());
+        const qreal factor = sticker.width() / qreal(image.width());
+        QVERIFY(std::abs(factor - 0.5) < 0.01);
+
+        QTest::mouseClick(button(sticker, "stickerEditRectangleToolButton"), Qt::LeftButton);
+        drag(sticker, {50, 50}, {150, 100});
+        QCOMPARE(sticker.annotations().size(), qsizetype(1));
+        const Annotation original = sticker.annotations().first();
+        QCOMPARE(original.first, QPointF(100, 100));
+        QCOMPARE(original.last, QPointF(300, 200));
+
+        QTest::mouseClick(button(sticker, "stickerEditSelectToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&sticker, Qt::LeftButton, Qt::NoModifier, {100, 75});
+        QCOMPARE(sticker.selectedAnnotation(), 0);
+        drag(sticker, {100, 75}, {120, 90});
+        QCOMPARE(sticker.annotations().first().first, original.first + QPointF(40, 30));
+
+        const Annotation beforeRotate = sticker.annotations().first();
+        const QPointF handle = annotationRotationHandle(beforeRotate, 24 / factor) * factor;
+        const QPointF center = centerOf(beforeRotate) * factor;
+        QTest::mousePress(&sticker, Qt::LeftButton, Qt::NoModifier, handle.toPoint());
+        QTest::mouseMove(&sticker, (center + QPointF(60, 0)).toPoint());
+        QTest::mouseRelease(&sticker, Qt::LeftButton, Qt::NoModifier,
+                            (center + QPointF(60, 0)).toPoint());
+        QVERIFY(std::abs(sticker.annotations().first().rotation - 90) < 2);
+    }
     void stickerSelectMoveRotate()
     {
         QImage image(800, 600, QImage::Format_ARGB32_Premultiplied);
