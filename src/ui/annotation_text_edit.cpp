@@ -104,21 +104,39 @@ bool AnnotationTextEdit::event(QEvent* event)
 bool AnnotationTextEdit::viewportEvent(QEvent* event)
 {
     const bool handled = QTextEdit::viewportEvent(event);
-    // Qt 的 placeholder 在获得焦点后会隐藏，透明编辑框会因此完全没有落笔提示。
-    // 空文档且有焦点时自绘高对比提示：黑字 + 白描边，深浅底色都可见；
-    // 不画背景或边框，提交后仅保留实际文字。
-    if (event->type() == QEvent::Paint && hasFocus() && document()->isEmpty() && !composing_ &&
-        !placeholderText().isEmpty())
+    // 透明编辑框需要从落笔开始就明确可拖拽范围；虚线框只属于编辑 UI，不进入最终图像。
+    if (event->type() == QEvent::Paint)
     {
         QPainter painter(viewport());
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        const QRect caret = cursorRect();
-        const QFontMetricsF metrics(font());
-        const QPointF baseline(caret.left() + 3.0, std::max(caret.top(), 0) + metrics.ascent());
-        QPainterPath path;
-        path.addText(baseline, font(), placeholderText());
-        painter.strokePath(path, QPen(QColor(255, 255, 255, 230), 2.0));
-        painter.fillPath(path, QColor(0, 0, 0, 190));
+        painter.setRenderHint(QPainter::Antialiasing, false);
+
+        // Qt 的 placeholder 在获得焦点后会隐藏，空文档时自绘高对比提示。
+        if (hasFocus() && document()->isEmpty() && !composing_ && !placeholderText().isEmpty())
+        {
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            const QRect caret = cursorRect();
+            const QFontMetricsF metrics(font());
+            const QPointF baseline(caret.left() + 3.0, std::max(caret.top(), 0) + metrics.ascent());
+            QPainterPath path;
+            path.addText(baseline, font(), placeholderText());
+            painter.strokePath(path, QPen(QColor(255, 255, 255, 230), 2.0));
+            painter.fillPath(path, QColor(0, 0, 0, 190));
+            painter.setRenderHint(QPainter::Antialiasing, false);
+        }
+
+        const QRect border = viewport()->rect().adjusted(1, 1, -2, -2);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(QColor(255, 255, 255, 210), 3.0));
+        painter.drawRect(border);
+        QPen dashed(QColor(245, 130, 35, 240), 1.5, Qt::DashLine);
+        dashed.setDashPattern({4, 3});
+        painter.setPen(dashed);
+        painter.drawRect(border);
+        painter.setPen(QPen(QColor(245, 130, 35), 1.0));
+        painter.setBrush(QColor(245, 130, 35));
+        for (const QPoint& point :
+             {border.topLeft(), border.topRight(), border.bottomLeft(), border.bottomRight()})
+            painter.drawRect(QRect(point - QPoint(2, 2), QSize(4, 4)));
     }
     return handled;
 }
