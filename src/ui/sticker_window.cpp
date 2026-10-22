@@ -491,7 +491,12 @@ void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
             startText(pendingSelectedPress_);
         }
         else
+        {
             clearAnnotationSelection();
+            updateEditToolbar();
+            setCursor(Qt::ArrowCursor);
+            update();
+        }
         event->accept();
         return;
     }

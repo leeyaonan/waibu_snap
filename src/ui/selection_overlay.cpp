@@ -1520,7 +1520,12 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
             startText(pendingSelectedPress_);
         }
         else
+        {
             clearAnnotationSelection();
+            updateToolbar();
+            updateCursor(mapFromGlobal(QCursor::pos()));
+            update();
+        }
         event->accept();
         return;
     }
