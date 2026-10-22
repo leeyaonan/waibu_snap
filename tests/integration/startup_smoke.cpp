@@ -3679,6 +3679,10 @@ class StartupSmokeTest final : public QObject
         editor->setPlainText(QStringLiteral("点击别处提交"));
         QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {200, 200});
         QCOMPARE(sticker->annotations().size(), qsizetype(3));
+        QVERIFY(!editor->isVisible());
+        // 点外提交保留当前文本选中；第二次点击才开始下一段文本。
+        QTest::mouseClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 150});
+        QVERIFY(editor->isVisible());
         editor->setPlainText(QStringLiteral("完成提交"));
         stickerClick(*sticker, "stickerEditDoneButton");
         QCOMPARE(sticker->annotations().size(), qsizetype(4));

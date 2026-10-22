@@ -198,9 +198,58 @@ class AnnotationTransformTest final : public QObject
         QCOMPARE(overlay.activeTool(), std::optional<AnnotationType>(AnnotationType::Text));
         QCOMPARE(overlay.selectedAnnotation(), 0);
         const Annotation original = overlay.annotations().first();
+        const QRect frameArea = annotationBaseBounds(original).adjusted(-8, -8, 8, 8).toRect();
+        const QImage screenshot = overlay.grab().toImage();
+        int framePixels = 0;
+        for (int y = frameArea.top(); y <= frameArea.bottom(); ++y)
+            for (int x = frameArea.left(); x <= frameArea.right(); ++x)
+                if (screenshot.rect().contains(x, y))
+                {
+                    const QColor color = screenshot.pixelColor(x, y);
+                    if (color.red() > 200 && color.green() > 70 && color.green() < 180 &&
+                        color.blue() < 90)
+                        ++framePixels;
+                }
+        QVERIFY2(framePixels > 0, "文本框提交后应显示橙色选框");
         const QPointF center = centerOf(original);
         drag(overlay, center.toPoint(), (center + QPointF(30, 20)).toPoint());
         QCOMPARE(overlay.annotations().first().first, original.first + QPointF(30, 20));
+    }
+    void overlayTextCommitOutsideKeepsSelection()
+    {
+        SelectionOverlay overlay(frame());
+        overlay.show();
+        overlay.activateWindow();
+        QTest::qWait(1);
+        drag(overlay, {0, 0}, {800, 600});
+        QTest::mouseClick(button(overlay, "textToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {400, 300});
+        auto* editor = overlay.findChild<AnnotationTextEdit*>();
+        QVERIFY(editor && editor->isVisible());
+        editor->setPlainText(QStringLiteral("点外提交后保留选框"));
+        // 点画布空白处提交：应当只提交并保留当前文本框选中，不再顺手开新文本。
+        QTest::mouseClick(&overlay, Qt::LeftButton, Qt::NoModifier, {700, 500});
+        QCOMPARE(overlay.annotations().size(), qsizetype(1));
+        QCOMPARE(overlay.selectedAnnotation(), 0);
+        QCOMPARE(overlay.activeTool(), std::optional<AnnotationType>(AnnotationType::Text));
+        QVERIFY(!editor->isVisible());
+        const Annotation committed = overlay.annotations().first();
+        const QRect frameArea = annotationBaseBounds(committed).adjusted(-8, -8, 8, 8).toRect();
+        const QImage screenshot = overlay.grab().toImage();
+        int framePixels = 0;
+        for (int y = frameArea.top(); y <= frameArea.bottom(); ++y)
+            for (int x = frameArea.left(); x <= frameArea.right(); ++x)
+                if (screenshot.rect().contains(x, y))
+                {
+                    const QColor color = screenshot.pixelColor(x, y);
+                    if (color.red() > 200 && color.green() > 70 && color.green() < 180 &&
+                        color.blue() < 90)
+                        ++framePixels;
+                }
+        QVERIFY2(framePixels > 0, "点外提交后应保留文本框橙色选框");
+        const QPointF center = centerOf(committed);
+        drag(overlay, center.toPoint(), (center + QPointF(30, 20)).toPoint());
+        QCOMPARE(overlay.annotations().first().first, committed.first + QPointF(30, 20));
     }
     void overlayCurrentObjectContinuous()
     {
@@ -237,6 +286,29 @@ class AnnotationTransformTest final : public QObject
         drag(overlay, {500, 300}, {600, 400});
         QCOMPARE(overlay.annotations().size(), qsizetype(2));
         QCOMPARE(overlay.selectedAnnotation(), 1);
+    }
+    void stickerTextCommitOutsideKeepsSelection()
+    {
+        QImage image(800, 600, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        StickerWindow sticker(image, {40, 50}, true);
+        sticker.show();
+        sticker.setEditing(true);
+        QTest::qWait(1);
+        QTest::mouseClick(button(sticker, "stickerEditTextToolButton"), Qt::LeftButton);
+        QTest::mouseClick(&sticker, Qt::LeftButton, Qt::NoModifier, {200, 200});
+        auto* editor = sticker.findChild<AnnotationTextEdit*>();
+        QVERIFY(editor && editor->isVisible());
+        editor->setPlainText(QStringLiteral("贴图文本"));
+        QTest::mouseClick(&sticker, Qt::LeftButton, Qt::NoModifier, {700, 500});
+        QCOMPARE(sticker.annotations().size(), qsizetype(1));
+        QCOMPARE(sticker.selectedAnnotation(), 0);
+        QCOMPARE(sticker.activeTool(), std::optional<AnnotationType>(AnnotationType::Text));
+        QVERIFY(!editor->isVisible());
+        const Annotation committed = sticker.annotations().first();
+        const QPointF center = centerOf(committed);
+        drag(sticker, center.toPoint(), (center + QPointF(30, 20)).toPoint());
+        QCOMPARE(sticker.annotations().first().first, committed.first + QPointF(30, 20));
     }
     void stickerCurrentObjectContinuous()
     {
