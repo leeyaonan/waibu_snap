@@ -50,7 +50,24 @@ class AnnotationTextEditTest final : public QObject
         QVERIFY(!editor.viewport()->testAttribute(Qt::WA_OpaquePaintEvent));
         QCOMPARE(editor.frameShape(), QFrame::NoFrame);
         QCOMPARE(editor.document()->documentMargin(), qreal(0));
-        QCOMPARE(canvas.grab().toImage(), before);
+        const QImage after = canvas.grab().toImage();
+        QVERIFY(after != before);
+        // 边界显示橙色虚线；框内仍保持画布背景透明。
+        const qreal scale = qreal(after.width()) / canvas.width();
+        const QRect logical = editor.geometry();
+        const QRect area(qRound(logical.x() * scale), qRound(logical.y() * scale),
+                         qRound(logical.width() * scale), qRound(logical.height() * scale));
+        int borderPixels = 0;
+        for (int x = area.left(); x <= area.right(); ++x)
+        {
+            const QColor top = after.pixelColor(x, area.top() + 1);
+            const QColor bottom = after.pixelColor(x, area.bottom() - 1);
+            borderPixels += top.red() > 180 && top.green() > 60 && top.blue() < 120;
+            borderPixels += bottom.red() > 180 && bottom.green() > 60 && bottom.blue() < 120;
+        }
+        QVERIFY(borderPixels > 0);
+        const QPoint inside(area.center().x(), area.center().y());
+        QCOMPARE(after.pixelColor(inside), before.pixelColor(inside));
     }
     void focusedEmptyHintIsVisible_data()
     {
