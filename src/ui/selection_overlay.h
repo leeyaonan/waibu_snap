@@ -5,6 +5,7 @@
 #include "core/selection_geometry.h"
 #include "core/shape_mask.h"
 #include "core/text_layout.h"
+#include "core/watermark.h"
 #include "interfaces/capture_provider.h"
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
@@ -17,14 +18,17 @@
 #include <QWidget>
 #include <functional>
 #include <optional>
+class QComboBox;
 class QPainter;
 class QPushButton;
+class QSpinBox;
 class QShortcut;
 namespace waibusnap
 {
 class AnnotationTextEdit;
 class AnnotationColorPalette;
 class OcrDialog;
+class WatermarkService;
 struct OverlayActions : ImageSaveActions
 {
     QString historySessionId;
@@ -38,6 +42,7 @@ struct OverlayActions : ImageSaveActions
     std::function<void(const QString&)> setClipboardText;
     std::function<ImageOutputResult(const QImage&)> copyImage;
     std::function<ImageOutputResult(const QImage&)> pinImage;
+    WatermarkService* watermarks = nullptr;
 };
 class SelectionOverlay final : public QWidget
 {
@@ -68,6 +73,8 @@ class SelectionOverlay final : public QWidget
     std::optional<AnnotationType> activeTool() const { return activeTool_; }
     bool isSelectMode() const { return selectMode_; }
     int selectedAnnotation() const { return selectedAnnotation_; }
+    bool hasWatermark() const { return watermark_.has_value(); }
+    bool isWatermarkToolActive() const { return watermarkToolActive_; }
     // 不打开对话框；路径确认由保存入口负责，供导出测试和后续输出入口复用。
     bool exportToPath(const QString& path);
   signals:
@@ -116,6 +123,24 @@ class SelectionOverlay final : public QWidget
     void copySelection();
     void copyShortcut();
     void toggleTextMode();
+    void toggleWatermarkTool();
+    void applyWatermarkPreset();
+    void removeWatermark();
+    void resetWatermark();
+    void updateWatermarkBar();
+    void paintWatermarkOverlay(QPainter& painter) const;
+    void paintWatermarkSelection(QPainter& painter) const;
+    bool watermarkHit(QPointF position) const;
+    bool watermarkRotationHandleHit(QPointF position) const;
+    bool watermarkScaleHandleHit(QPointF position) const;
+    QPointF watermarkOutputPoint(QPointF position) const;
+    QRectF watermarkLogicalBounds() const;
+    QPointF watermarkRotationHandleLogical() const;
+    QPointF watermarkScaleHandleLogical() const;
+    void beginWatermarkGesture(int gesture, QPointF position);
+    void updateWatermarkGesture(QPointF position, Qt::KeyboardModifiers modifiers);
+    void finishWatermarkGesture();
+    void syncWatermarkBar();
     void exitTextMode();
     void startOcrRecognition();
     void openOcrDialog();
@@ -132,7 +157,7 @@ class SelectionOverlay final : public QWidget
     void updateShapeBar();
     void chooseShape(int index);
     QString shapeLabel() const;
-    QImage outputImage() const;
+    QImage outputImage(bool includeWatermark = true) const;
     void chooseRatio(std::optional<AspectRatio> ratio);
     std::optional<AspectRatio> dragRatio() const;
     QRect toolbarClusterRect() const;
@@ -187,6 +212,7 @@ class SelectionOverlay final : public QWidget
     QWidget* optionsBar_ = nullptr;
     QWidget* ratioBar_ = nullptr;
     QWidget* shapeBar_ = nullptr;
+    QWidget* watermarkBar_ = nullptr;
     QPushButton* shapeButton_ = nullptr;
     QPushButton* shapeWhiteBackgroundButton_ = nullptr;
     QVector<QPushButton*> shapeButtons_;
@@ -246,6 +272,29 @@ class SelectionOverlay final : public QWidget
     QPushButton* redoButton_ = nullptr;
     QPushButton* ocrButton_ = nullptr;
     QPushButton* extractAllTextButton_ = nullptr;
+    QPushButton* watermarkToolButton_ = nullptr;
+    QComboBox* watermarkPresetCombo_ = nullptr;
+    QSpinBox* watermarkOpacitySpin_ = nullptr;
+    QSpinBox* watermarkScaleSpin_ = nullptr;
+    QPushButton* watermarkVisibilityButton_ = nullptr;
+    QPushButton* watermarkResetButton_ = nullptr;
+    QPushButton* watermarkRemoveButton_ = nullptr;
+    std::optional<WatermarkInstance> watermark_;
+    bool watermarkToolActive_ = false;
+    bool watermarkSelected_ = false;
+    enum class WatermarkGesture
+    {
+        None,
+        Move,
+        Rotate,
+        Scale
+    };
+    WatermarkGesture watermarkGesture_ = WatermarkGesture::None;
+    QPointF watermarkPressOutput_;
+    WatermarkInstance watermarkBeforeGesture_;
+    QPointF watermarkGestureCenter_;
+    qreal watermarkGestureStartDistance_ = 0;
+    qreal watermarkGestureStartAngle_ = 0;
     QShortcut* copyShortcut_ = nullptr;
     bool textMode_ = false;
     bool recognizingText_ = false;

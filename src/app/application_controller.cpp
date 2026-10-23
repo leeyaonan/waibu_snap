@@ -739,6 +739,7 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
     const auto localWindows =
         localWindowRects(listed.windows, result.frame.display.logicalGeometry);
     OverlayActions actions;
+    actions.watermarks = &watermarks_;
     const auto session = historySession_;
     actions.historySessionId = session.id;
     actions.historyGroupId = session.groupId;
