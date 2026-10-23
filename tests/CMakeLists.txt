@@ -82,6 +82,13 @@ if(APPLE)
     add_test(NAME platform_workarounds COMMAND platform_workarounds_test)
     set_tests_properties(platform_workarounds PROPERTIES TIMEOUT 30)
 
+    qt_add_executable(sticker_window_behavior_test unit/sticker_window_behavior_test.mm)
+    target_link_libraries(sticker_window_behavior_test PRIVATE waibusnap_platform Qt6::Test
+        waibusnap_options "${AppKit_FRAMEWORK}")
+    target_compile_options(sticker_window_behavior_test PRIVATE -fobjc-arc)
+    add_test(NAME sticker_window_behavior COMMAND sticker_window_behavior_test)
+    set_tests_properties(sticker_window_behavior PROPERTIES TIMEOUT 30)
+
     add_test(NAME probe_cpu_calibration COMMAND waibusnap_measure_probe --self-test)
     set_tests_properties(probe_cpu_calibration PROPERTIES TIMEOUT 10)
 endif()

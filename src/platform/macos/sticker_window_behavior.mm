@@ -1,11 +1,28 @@
 #include "interfaces/sticker_window_behavior.h"
 #include <AppKit/AppKit.h>
+#include <QDebug>
 #include <QGuiApplication>
 #include <QWindow>
+#import <objc/message.h>
 namespace waibusnap
 {
 namespace
 {
+void setPreventsActivation(NSWindow* native, bool prevents)
+{
+    // Qt 创建的 NSPanel 初始 styleMask 不含 Nonactivating；运行中补上 mask
+    // 只会改变 AppKit 的视图，不会同步 WindowServer 的 prevents-activation tag。
+    // 必须显式同步 tag，否则点击贴图仍会激活本应用，在多显示器下可能触发
+    // 其他应用窗口的焦点 / 层级重排。selector 缺失时保持原行为并留下诊断。
+    SEL selector = @selector(_setPreventsActivation:);
+    if (![native respondsToSelector:selector])
+    {
+        qWarning().noquote() << "贴图非激活 tag 无法同步：_setPreventsActivation: 不存在";
+        return;
+    }
+    using Setter = void (*)(id, SEL, BOOL);
+    reinterpret_cast<Setter>(objc_msgSend)(native, selector, prevents ? YES : NO);
+}
 class CocoaStickerFocusSession final : public StickerFocusSession
 {
   public:
@@ -36,11 +53,17 @@ bool configureStickerWindowBehavior(QWindow* window, bool editing)
     NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
     NSWindow* native = view.window;
     if (editing)
-        return native && !(native.styleMask & NSWindowStyleMaskNonactivatingPanel);
+    {
+        if (!native)
+            return false;
+        setPreventsActivation(native, false);
+        return !(native.styleMask & NSWindowStyleMaskNonactivatingPanel);
+    }
     if (![native isKindOfClass:[NSPanel class]])
         return false;
     native.styleMask |= NSWindowStyleMaskNonactivatingPanel;
     native.hidesOnDeactivate = NO;
+    setPreventsActivation(native, true);
     return (native.styleMask & NSWindowStyleMaskNonactivatingPanel) != 0;
 }
 std::unique_ptr<StickerFocusSession> activateStickerEditing(QWindow* window)

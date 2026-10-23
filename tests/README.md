@@ -34,6 +34,7 @@
 | `hotkey_settings` | 合法 / 非法键矩阵、Portable / Native 往返；临时 INI 往返、缺文件默认且不创建、损坏值 / 文件回退且不改写；替身验证存储键成功、存储键失败后 F1 成功、双失败仅托盘状态；改键非法不注册、冲突保旧与配置不变、注册前文件仍为旧值、成功持久化、写入失败不虚报重启保留 |
 | `probe_cpu_calibration`（macOS） | libproc Mach 时间换算对照 getrusage CPU 微秒时间；原错误在 M3 Pro 上先失败，修正后通过 |
 | `platform_workarounds`（macOS） | 安装前 AppKitDefined 的 `clickCount` 确实抛 NSException；安装后返回 1、不抛，鼠标双击仍返回 2，重复安装不替换已安装实现；覆盖层抬升 / 降级接口对空指针、无原生窗口安全返回；Cocoa 隐藏 QWindow 验证 25→0→25，非 Cocoa / 无可用屏幕 / 无原生窗口明确跳过层级断言 |
+| `sticker_window_behavior`（macOS） | 真实 Qt Tool 创建 QNSPanel 后，检查 `NSWindowStyleMaskNonactivatingPanel` 与原生 `_preventsActivation`；运行中补 mask 若不同步 WindowServer tag，回归用例先失败，修复后通过；非 Cocoa / 无屏幕 / 无原生窗口明确跳过 |
 | `measurement_tool` | nearest-rank 30 次第 29 项、最大样本和空样本；有效会话集合 `(1, 2, 10, 11)`、旧码兼容与缺失终点过滤；刷新代理不能宣布通过；跨进程 CPU 总和、进程退出后的记账缺口 |
 
 S01 实心遮盖新增用例：`annotation` 核对 Cover 追加枚举、可见性、点 / 水平 / 垂直零面积拒绝、反向拖画、撤销重做与七类混合 20 步历史序列；`image_output::coverReplacesShapeAndTextPixels` 在 1 / 1.5 / 2 倍 DPR、正反拖画和三色下，先合成图形及中文文本再遮盖，真实 PNG 全图逐像素回读：覆盖区纯色且 alpha=255，四边 / 四角无混合，区域外保持前一合成结果；同时核对共享预览、裁剪与后画图形的顺序语义。
@@ -1057,3 +1058,12 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 - 工具栏新增选择按钮后，覆盖层窄屏单行阈值更新为 566 / 619（普通 / 取字展开），`ocrModeLifecycle` 顶层工具数 6 → 7；贴图紧凑菜单 13 → 14 项，`stickerEditSelectToolButton` 追加在末尾以保持既有菜单索引。
 - 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **36/36 CTest** 通过，主冒烟 **503 项**、独立高 DPI 子集 **436 项**，`annotation` / `annotation_transform` 分别 159 / 12 项；clang-format 18.1.8 与 `git diff --check` 通过。
 - 待人工：真实鼠标 / 触控板旋转手感、旋转文本清晰度与 1x / 2x 混合 DPI、遮盖 / 马赛克旋转边缘、Windows 原生实机；自动化不能代替。
+
+## 钉图非激活 tag 同步（2026-10-23，BUG-0002）
+
+- 症状：多显示器下，屏幕 1 使用窗口 A、屏幕 2 最后使用 Edge；回到屏幕 1 点击钉图准备拖动时，屏幕 1 的 Edge 窗口 B 会被顶到最前。
+- 根因方向：Qt 创建贴图 NSPanel 后再补 `NSWindowStyleMaskNonactivatingPanel`，AppKit 视图层显示为非激活，但 WindowServer 的 prevents-activation tag 没有同步；点击贴图仍会触发本应用激活 / 焦点重排。
+- 修复：`sticker_window_behavior.mm` 在设置 mask 后显式同步 `_setPreventsActivation:`；编辑态重建窗口清除非激活状态。该 selector 缺失时保留原行为并输出诊断。
+- 新增 `sticker_window_behavior` 原生回归：先确认运行中仅补 mask 时 `_preventsActivation` 为 false（修复前失败），再断言修复后为 true；没有以 offscreen 代替 Cocoa 原生窗口。
+- 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **37/37 CTest** 通过；主冒烟 **503 项**、独立高 DPI 子集 **436 项**保持；clang-format 18.1.8 与 `git diff --check` 通过。
+- 待人工：双显示器真实复现（屏幕 A 使用窗口 A、屏幕 B 最后使用 Edge，回屏幕 A 点击钉图），确认窗口 A 不被 Edge B 顶掉；单屏、Stage Manager、全屏 Space、混合 DPI 与 Windows 均未由本机覆盖。
