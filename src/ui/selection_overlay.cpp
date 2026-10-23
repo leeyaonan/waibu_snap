@@ -1,9 +1,11 @@
 #include "ui/selection_overlay.h"
+#include "app/watermark_service.h"
 #include "core/selection_assistance.h"
 #include "core/window_snapping.h"
 #include "interfaces/overlay_window_behavior.h"
 #include "interfaces/region_capture.h"
 #include "output/annotation_renderer.h"
+#include "output/watermark_renderer.h"
 #include "session/monotonic_clock.h"
 #include "session/session_metrics.h"
 #include "ui/annotation_color_palette.h"
@@ -16,6 +18,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QDebug>
 #include <QDir>
 #include <QFocusEvent>
@@ -29,6 +32,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QShowEvent>
+#include <QSpinBox>
 #include <QUuid>
 #include <QWheelEvent>
 #include <algorithm>
@@ -165,6 +169,15 @@ void SelectionOverlay::ensureToolbar()
         connect(button, &QPushButton::clicked, this,
                 [this, slot] { activateTool(toolTypes_[slot]); });
     }
+    if (actions_.watermarks)
+    {
+        watermarkToolButton_ = makeButton(
+            toolbar_, QStringLiteral("watermarkToolButton"),
+            QStringLiteral("水印：拖动水印，拖动圆点旋转，拖动角缩放"), ToolbarIcon::Watermark);
+        watermarkToolButton_->setCheckable(true);
+        connect(watermarkToolButton_, &QPushButton::clicked, this,
+                &SelectionOverlay::toggleWatermarkTool);
+    }
     for (auto type : {AnnotationType::Rectangle, AnnotationType::Ellipse, AnnotationType::Line,
                       AnnotationType::Arrow, AnnotationType::Cover, AnnotationType::Mosaic})
     {
@@ -284,6 +297,111 @@ void SelectionOverlay::ensureToolbar()
             });
     shapeBar_->hide();
     ratioBar_->hide();
+    if (actions_.watermarks)
+    {
+        watermarkBar_ = new QWidget(this);
+        watermarkBar_->setObjectName(QStringLiteral("watermarkBar"));
+        watermarkBar_->setStyleSheet(
+            annotation_toolbar::pillStyle(QStringLiteral("watermarkBar"), 8) +
+            QStringLiteral("QComboBox, QSpinBox { background: #2e2e2e; color: #f2f2f2; "
+                           "border: 1px solid #4a4a4a; border-radius: 4px; padding: 1px 4px; "
+                           "font-size: 12px; }"));
+        auto* watermarkLayout = new QHBoxLayout(watermarkBar_);
+        watermarkLayout->setContentsMargins(4, 4, 4, 4);
+        watermarkLayout->setSpacing(4);
+        watermarkPresetCombo_ = new QComboBox(watermarkBar_);
+        watermarkPresetCombo_->setObjectName(QStringLiteral("watermarkPresetCombo"));
+        watermarkPresetCombo_->setFocusPolicy(Qt::NoFocus);
+        watermarkPresetCombo_->setFixedHeight(26);
+        watermarkPresetCombo_->setFixedWidth(88);
+        watermarkLayout->addWidget(watermarkPresetCombo_);
+        watermarkOpacitySpin_ = new QSpinBox(watermarkBar_);
+        watermarkOpacitySpin_->setObjectName(QStringLiteral("watermarkOpacitySpin"));
+        watermarkOpacitySpin_->setRange(watermarkMinimumOpacity, watermarkMaximumOpacity);
+        watermarkOpacitySpin_->setSuffix(QStringLiteral("%"));
+        watermarkOpacitySpin_->setToolTip(QStringLiteral("水印透明度"));
+        watermarkOpacitySpin_->setAccessibleName(QStringLiteral("水印透明度"));
+        watermarkOpacitySpin_->setFixedHeight(26);
+        watermarkOpacitySpin_->setFixedWidth(58);
+        watermarkLayout->addWidget(watermarkOpacitySpin_);
+        watermarkScaleSpin_ = new QSpinBox(watermarkBar_);
+        watermarkScaleSpin_->setObjectName(QStringLiteral("watermarkScaleSpin"));
+        watermarkScaleSpin_->setRange(watermarkMinimumScale, watermarkMaximumScale);
+        watermarkScaleSpin_->setSuffix(QStringLiteral("%"));
+        watermarkScaleSpin_->setToolTip(QStringLiteral("水印缩放"));
+        watermarkScaleSpin_->setAccessibleName(QStringLiteral("水印缩放"));
+        watermarkScaleSpin_->setFixedHeight(26);
+        watermarkScaleSpin_->setFixedWidth(58);
+        watermarkLayout->addWidget(watermarkScaleSpin_);
+        const auto textButton =
+            [this, watermarkLayout](const QString& object, const QString& text, const QString& tip)
+        {
+            auto* button = new QPushButton(text, watermarkBar_);
+            button->setObjectName(object);
+            button->setToolTip(tip);
+            button->setAccessibleName(tip);
+            button->setFixedSize(24, 26);
+            button->setFocusPolicy(Qt::NoFocus);
+            watermarkLayout->addWidget(button);
+            return button;
+        };
+        watermarkVisibilityButton_ = textButton(QStringLiteral("watermarkVisibilityButton"),
+                                                QStringLiteral("隐"), QStringLiteral("隐藏水印"));
+        watermarkResetButton_ = textButton(QStringLiteral("watermarkResetButton"),
+                                           QStringLiteral("重"), QStringLiteral("重置为预设默认"));
+        watermarkRemoveButton_ = textButton(QStringLiteral("watermarkRemoveButton"),
+                                            QStringLiteral("删"), QStringLiteral("移除水印"));
+        connect(watermarkPresetCombo_, &QComboBox::currentIndexChanged, this,
+                [this]
+                {
+                    if (!actions_.watermarks || !watermarkPresetCombo_)
+                        return;
+                    const QString id = watermarkPresetCombo_->currentData().toString();
+                    if (id.isEmpty() || id == actions_.watermarks->currentPresetId())
+                        return;
+                    if (!actions_.watermarks->setCurrentPreset(id).isEmpty())
+                        return;
+                    if (watermark_)
+                        applyWatermarkPreset();
+                    else if (watermarkToolActive_)
+                        applyWatermarkPreset();
+                    updateToolbar();
+                    update();
+                });
+        connect(watermarkOpacitySpin_, &QSpinBox::valueChanged, this,
+                [this](int value)
+                {
+                    if (!watermark_)
+                        return;
+                    watermark_->opacity = value;
+                    markDirty();
+                    update();
+                });
+        connect(watermarkScaleSpin_, &QSpinBox::valueChanged, this,
+                [this](int value)
+                {
+                    if (!watermark_)
+                        return;
+                    watermark_->scale = value;
+                    markDirty();
+                    update();
+                });
+        connect(watermarkVisibilityButton_, &QPushButton::clicked, this,
+                [this]
+                {
+                    if (!watermark_)
+                        return;
+                    watermark_->visible = !watermark_->visible;
+                    markDirty();
+                    syncWatermarkBar();
+                    update();
+                });
+        connect(watermarkResetButton_, &QPushButton::clicked, this,
+                &SelectionOverlay::resetWatermark);
+        connect(watermarkRemoveButton_, &QPushButton::clicked, this,
+                &SelectionOverlay::removeWatermark);
+        watermarkBar_->hide();
+    }
     undoButton_ = actionButtons_[0];
     redoButton_ = actionButtons_[1];
     extractAllTextButton_ = makeButton(toolbar_, QStringLiteral("extractAllTextButton"),
@@ -375,9 +493,11 @@ void SelectionOverlay::ensureToolbar()
     status_->setStyleSheet(QStringLiteral(
         "background: #202020; color: #e8e8e8; border-radius: 8px; padding: 0 10px;"));
     status_->hide();
-    for (auto* panel :
-         {toolbar_, toolBar_, optionsBar_, ratioBar_, shapeBar_, static_cast<QWidget*>(status_)})
+    for (auto* panel : {toolbar_, toolBar_, optionsBar_, ratioBar_, shapeBar_, watermarkBar_,
+                        static_cast<QWidget*>(status_)})
     {
+        if (!panel)
+            continue;
         panel->setCursor(Qt::ArrowCursor);
         panel->setMouseTracking(true);
         panel->installEventFilter(this);
@@ -405,6 +525,8 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
         tools.append(selectButton_);
     for (auto* tool : toolButtons_)
         tools.append(tool);
+    if (watermarkToolButton_)
+        tools.append(watermarkToolButton_);
     tools.append(ocrButton_);
     tools.append(longImageButton_);
     QVector<QWidget*> actions;
@@ -698,9 +820,22 @@ void SelectionOverlay::updateShapeBar()
     shapeBar_->setFixedSize(width, y + 32);
     shapeBar_->setVisible(shapeButton_->isChecked());
 }
-QImage SelectionOverlay::outputImage() const
+QImage SelectionOverlay::outputImage(bool includeWatermark) const
 {
-    const QImage image = renderAnnotatedSelection(frame_.pixels, annotations(), selection_);
+    QImage image = renderAnnotatedSelection(frame_.pixels, annotations(), selection_);
+    if (includeWatermark && watermark_ && watermark_->visible && !image.isNull() &&
+        actions_.watermarks)
+    {
+        const auto* preset = actions_.watermarks->preset(watermark_->presetId);
+        const auto* asset = preset ? actions_.watermarks->asset(preset->assetId) : nullptr;
+        if (preset && asset)
+        {
+            QString error;
+            const QImage assetImage = actions_.watermarks->assetImage(asset->id, &error);
+            if (asset->kind == WatermarkKind::Text || !assetImage.isNull())
+                image = composeWatermark(image, *asset, assetImage, *watermark_);
+        }
+    }
     if (activeShape_ < 0)
         return image;
     QImage mask;
@@ -721,7 +856,8 @@ QRect SelectionOverlay::toolbarClusterRect() const
 {
     QRect cluster;
     // toolBar_ 是 optionsBar_ 的透明内层容器，几何相对父级，不能直接并入覆盖层坐标。
-    for (auto* panel : {toolbar_, optionsBar_, ratioBar_, shapeBar_, scrollReadyBar_})
+    for (auto* panel :
+         {toolbar_, optionsBar_, ratioBar_, shapeBar_, watermarkBar_, scrollReadyBar_})
         if (panel && !panel->isHidden())
             cluster = cluster.united(panel->geometry());
     return cluster;
@@ -756,6 +892,8 @@ void SelectionOverlay::updateToolbar()
         optionsBar_->hide();
         ratioBar_->hide();
         shapeBar_->hide();
+        if (watermarkBar_)
+            watermarkBar_->hide();
         undoShortcut_->setEnabled(false);
         redoShortcut_->setEnabled(false);
         copyShortcut_->setEnabled(false);
@@ -774,6 +912,8 @@ void SelectionOverlay::updateToolbar()
             optionsBar_->hide();
             ratioBar_->hide();
             shapeBar_->hide();
+            if (watermarkBar_)
+                watermarkBar_->hide();
             status_->hide();
         }
         if (undoShortcut_)
@@ -799,15 +939,19 @@ void SelectionOverlay::updateToolbar()
     updateOptionsBar();
     updateRatioBar();
     updateShapeBar();
+    syncWatermarkBar();
     const int optionsHeight = optionsBar_->isHidden() ? 0 : optionsBar_->height() + 6;
-    const int clusterHeight = toolbar_->height() + optionsHeight +
+    const int watermarkHeight =
+        !watermarkBar_ || watermarkBar_->isHidden() ? 0 : watermarkBar_->height() + 6;
+    const int clusterHeight = toolbar_->height() + optionsHeight + watermarkHeight +
                               (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6) +
                               (shapeBar_->isHidden() ? 0 : shapeBar_->height() + 6);
     const QRectF region = logicalSelection();
     const int clusterWidth =
         std::max({toolbar_->width(), optionsBar_->isHidden() ? 0 : optionsBar_->width(),
                   ratioBar_->isHidden() ? 0 : ratioBar_->width(),
-                  shapeBar_->isHidden() ? 0 : shapeBar_->width()});
+                  shapeBar_->isHidden() ? 0 : shapeBar_->width(),
+                  !watermarkBar_ || watermarkBar_->isHidden() ? 0 : watermarkBar_->width()});
     const int x = std::clamp(qRound(region.right()) - clusterWidth, bounds.left(),
                              std::max(bounds.left(), bounds.right() + 1 - clusterWidth));
     int y = qRound(region.bottom()) + 10;
@@ -820,8 +964,10 @@ void SelectionOverlay::updateToolbar()
     y = std::clamp(y, bounds.top(), std::max(bounds.top(), bounds.bottom() + 1 - clusterHeight));
     toolbar_->move(x, y);
     optionsBar_->move(x, y + toolbar_->height() + 6);
-    ratioBar_->move(x, y + toolbar_->height() + 6 + optionsHeight);
-    shapeBar_->move(x, y + toolbar_->height() + 6 + optionsHeight +
+    if (watermarkBar_)
+        watermarkBar_->move(x, y + toolbar_->height() + 6 + optionsHeight);
+    ratioBar_->move(x, y + toolbar_->height() + 6 + optionsHeight + watermarkHeight);
+    shapeBar_->move(x, y + toolbar_->height() + 6 + optionsHeight + watermarkHeight +
                            (ratioBar_->isHidden() ? 0 : ratioBar_->height() + 6));
     const bool enabled = dragMode_ == DragMode::None && !saveDialogOpen_;
     toolbar_->setEnabled(enabled);
@@ -829,6 +975,8 @@ void SelectionOverlay::updateToolbar()
     optionsBar_->setEnabled(enabled);
     ratioBar_->setEnabled(enabled);
     shapeBar_->setEnabled(enabled);
+    if (watermarkBar_)
+        watermarkBar_->setEnabled(enabled);
     toolbar_->show();
     positionStatus();
     if (!actions_.shapeTemplateNotice.isEmpty())
@@ -858,6 +1006,13 @@ void SelectionOverlay::enterScrollReady(QRect preset)
     }
     const bool annotated = history_.canUndo() || history_.canRedo();
     discardAnnotations();
+    if (watermark_)
+    {
+        watermark_.reset();
+        watermarkToolActive_ = false;
+        watermarkSelected_ = false;
+        markDirty();
+    }
     if (annotated)
         markDirty();
     ensureToolbar();
@@ -1130,6 +1285,18 @@ void SelectionOverlay::updateCursor(QPointF position)
         setCursor(textAt(position, false).valid() ? Qt::IBeamCursor : Qt::ArrowCursor);
         return;
     }
+    if (watermarkToolActive_)
+    {
+        if (watermarkRotationHandleHit(position))
+            setCursor(Qt::CrossCursor);
+        else if (watermarkScaleHandleHit(position))
+            setCursor(Qt::SizeFDiagCursor);
+        else if (watermarkHit(position))
+            setCursor(Qt::SizeAllCursor);
+        else
+            setCursor(Qt::ArrowCursor);
+        return;
+    }
     if (selectMode_)
     {
         if (rotationHandleHit(position))
@@ -1247,6 +1414,7 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
         if (draft_)
             paintAnnotation(painter, *draft_, frame_.pixels);
         painter.restore();
+        paintWatermarkOverlay(painter);
         const QRectF region = logicalSelection();
         QPainterPath shade;
         shade.addRect(rect());
@@ -1328,9 +1496,15 @@ void SelectionOverlay::paintEvent(QPaintEvent*)
             }
         }
         paintAnnotationSelection(painter);
+        paintWatermarkSelection(painter);
         const QString hint =
             scrollReady_ ? QStringLiteral("回车开始采集 · Esc 取消 · 尽量避开固定侧栏")
             : textMode_ ? QStringLiteral("拖选文字 · 双击选词 · Esc 退出取字")
+            : watermarkToolActive_
+                ? (watermark_ && (watermark_->layout == WatermarkLayout::DiagonalForward ||
+                                  watermark_->layout == WatermarkLayout::DiagonalReverse)
+                       ? QStringLiteral("平铺水印：参数条调缩放 / 透明度 · Esc 退出")
+                       : QStringLiteral("拖动水印 · 拖圆点旋转 · 拖角缩放 · Esc 退出"))
             : selectMode_ ? QStringLiteral("点击选中标注 · 拖动移动 · 拖圆点旋转 · Esc 取消")
             : activeTool_ ? QStringLiteral("拖拽标注 · 再点工具调整选区 · Esc 取消")
                           : QStringLiteral("单击吸附 · 拖拽框选 · Esc 取消");
@@ -1360,6 +1534,44 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
     if (ocrDialog_ || finished_ || saveDialogOpen_ || event->button() != Qt::LeftButton)
         return;
     hideMagnifier();
+    if (watermarkToolActive_)
+    {
+        setFocus(Qt::MouseFocusReason);
+        if (watermark_)
+        {
+            if (watermarkRotationHandleHit(event->position()))
+            {
+                beginWatermarkGesture(int(WatermarkGesture::Rotate), event->position());
+                event->accept();
+                return;
+            }
+            if (watermarkScaleHandleHit(event->position()))
+            {
+                beginWatermarkGesture(int(WatermarkGesture::Scale), event->position());
+                event->accept();
+                return;
+            }
+            if (watermarkHit(event->position()))
+            {
+                beginWatermarkGesture(int(WatermarkGesture::Move), event->position());
+                event->accept();
+                return;
+            }
+        }
+        if (logicalSelection().contains(event->position()))
+        {
+            if (!watermark_)
+                applyWatermarkPreset();
+            else
+            {
+                watermarkSelected_ = false;
+                updateToolbar();
+                update();
+            }
+            event->accept();
+            return;
+        }
+    }
     if (textMode_)
     {
         setFocus(Qt::MouseFocusReason);
@@ -1453,6 +1665,11 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
         return;
     if (ocrDialog_ || finished_ || saveDialogOpen_)
         return;
+    if (watermarkGesture_ != WatermarkGesture::None)
+    {
+        updateWatermarkGesture(event->position(), event->modifiers());
+        return;
+    }
     if (textMode_)
     {
         if (selectingText_)
@@ -1491,6 +1708,13 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
         return;
     if (ocrDialog_)
         return;
+    if (watermarkGesture_ != WatermarkGesture::None && event->button() == Qt::LeftButton)
+    {
+        updateWatermarkGesture(event->position(), event->modifiers());
+        finishWatermarkGesture();
+        event->accept();
+        return;
+    }
     if (textMode_ && !finished_ && !saveDialogOpen_ && event->button() == Qt::LeftButton)
     {
         if (selectingText_)
@@ -1574,6 +1798,21 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
     }
     else if (finished_ || saveDialogOpen_)
         event->accept();
+    else if (watermarkToolActive_)
+    {
+        if (event->key() == Qt::Key_Escape)
+        {
+            watermarkToolActive_ = false;
+            watermarkSelected_ = false;
+            watermarkGesture_ = WatermarkGesture::None;
+            updateToolbar();
+            updateCursor(mapFromGlobal(QCursor::pos()));
+            update();
+        }
+        else if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)
+            removeWatermark();
+        event->accept();
+    }
     else if (textEditor_ && textEditor_->isVisible())
     {
         // 焦点层即使有事件泄漏到覆盖层，也不能取消会话或撤销已提交标注。
@@ -1646,8 +1885,8 @@ QString SelectionOverlay::selectionSizeText() const
 }
 bool SelectionOverlay::nudgeSelection(QKeyEvent* event)
 {
-    if (textMode_ || !hasFocus() || activeTool_ || selectMode_ || selection_.isEmpty() ||
-        dragMode_ != DragMode::None)
+    if (textMode_ || watermarkToolActive_ || !hasFocus() || activeTool_ || selectMode_ ||
+        selection_.isEmpty() || dragMode_ != DragMode::None)
         return false;
     const auto modifiers = event->modifiers();
     if (modifiers & ~(Qt::ShiftModifier | Qt::AltModifier) ||
@@ -1813,6 +2052,9 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
 {
     if (ocrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
         return;
+    watermarkToolActive_ = false;
+    watermarkSelected_ = false;
+    watermarkGesture_ = WatermarkGesture::None;
     exitTextMode();
     finishText(true);
     clearAnnotationSelection();
@@ -1837,6 +2079,9 @@ void SelectionOverlay::toggleSelectMode()
 {
     if (ocrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
         return;
+    watermarkToolActive_ = false;
+    watermarkSelected_ = false;
+    watermarkGesture_ = WatermarkGesture::None;
     exitTextMode();
     finishText(true);
     activeTool_.reset();
@@ -1854,6 +2099,326 @@ void SelectionOverlay::toggleSelectMode()
     updateToolbar();
     updateCursor(mapFromGlobal(QCursor::pos()));
     update();
+}
+void SelectionOverlay::toggleWatermarkTool()
+{
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || dragMode_ != DragMode::None ||
+        !actions_.watermarks)
+        return;
+    if (!actions_.watermarks->currentPreset())
+    {
+        showStatus(QStringLiteral("请先在设置 → 水印中创建预设。"), true);
+        return;
+    }
+    exitTextMode();
+    finishText(true);
+    clearAnnotationSelection();
+    activeTool_.reset();
+    selectMode_ = false;
+    lastAnnotationSelected_ = false;
+    widthWheel_.reset();
+    watermarkToolActive_ = !watermarkToolActive_;
+    if (watermarkToolActive_ && !watermark_ && !selection_.isEmpty())
+        applyWatermarkPreset();
+    if (!watermarkToolActive_)
+    {
+        watermarkSelected_ = false;
+        watermarkGesture_ = WatermarkGesture::None;
+    }
+    setFocus(Qt::OtherFocusReason);
+    updateToolbar();
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+}
+void SelectionOverlay::applyWatermarkPreset()
+{
+    if (selection_.isEmpty() || !actions_.watermarks)
+        return;
+    const auto* preset = actions_.watermarks->currentPreset();
+    const auto* asset = preset ? actions_.watermarks->asset(preset->assetId) : nullptr;
+    if (!preset || !asset)
+        return;
+    QString error;
+    const QImage assetImage = actions_.watermarks->assetImage(asset->id, &error);
+    if (asset->kind == WatermarkKind::Image && assetImage.isNull())
+    {
+        showStatus(error.isEmpty() ? QStringLiteral("水印图片不可用。") : error, false);
+        watermark_.reset();
+        watermarkSelected_ = false;
+        updateToolbar();
+        update();
+        return;
+    }
+    WatermarkInstance instance;
+    instance.presetId = preset->id;
+    instance.layout = preset->layout;
+    instance.opacity = preset->opacity;
+    instance.scale = preset->scale;
+    instance.visible = true;
+    instance.normalizedCenter = watermarkInitialCenter(
+        preset->layout, watermarkBaseSize(*asset, assetImage), selection_.size());
+    watermark_ = instance;
+    watermarkSelected_ = true;
+    markDirty();
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::removeWatermark()
+{
+    if (!watermark_)
+        return;
+    watermark_.reset();
+    watermarkSelected_ = false;
+    watermarkGesture_ = WatermarkGesture::None;
+    markDirty();
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::resetWatermark()
+{
+    if (!watermark_)
+    {
+        applyWatermarkPreset();
+        return;
+    }
+    applyWatermarkPreset();
+}
+void SelectionOverlay::syncWatermarkBar()
+{
+    if (!watermarkToolButton_ || !watermarkBar_ || !actions_.watermarks)
+        return;
+    const bool hasPreset = actions_.watermarks->currentPreset() != nullptr;
+    watermarkToolButton_->setEnabled(hasPreset);
+    watermarkToolButton_->setChecked(watermarkToolActive_);
+    watermarkToolButton_->setToolTip(
+        hasPreset ? QStringLiteral("水印：拖动水印，拖动圆点旋转，拖动角缩放")
+                  : QStringLiteral("请先在设置 → 水印中创建预设"));
+    watermarkToolButton_->setAccessibleName(watermarkToolButton_->toolTip());
+    const bool showBar = watermarkToolActive_ && hasPreset && !selection_.isEmpty() && !textMode_ &&
+                         !finished_ && !saveDialogOpen_ && !ocrDialog_;
+    watermarkBar_->setVisible(showBar);
+    if (!showBar)
+        return;
+    {
+        const QSignalBlocker blocker(watermarkPresetCombo_);
+        watermarkPresetCombo_->clear();
+        const auto& preferences = actions_.watermarks->preferences();
+        for (const auto& preset : preferences.presets)
+            watermarkPresetCombo_->addItem(preset.name, preset.id);
+        const QString current = actions_.watermarks->currentPresetId();
+        const int index = watermarkPresetCombo_->findData(current);
+        if (index >= 0)
+            watermarkPresetCombo_->setCurrentIndex(index);
+    }
+    if (watermark_)
+    {
+        const QSignalBlocker opacityBlocker(watermarkOpacitySpin_);
+        const QSignalBlocker scaleBlocker(watermarkScaleSpin_);
+        watermarkOpacitySpin_->setValue(watermark_->opacity);
+        watermarkScaleSpin_->setValue(watermark_->scale);
+        watermarkOpacitySpin_->setEnabled(true);
+        watermarkScaleSpin_->setEnabled(true);
+        watermarkVisibilityButton_->setText(watermark_->visible ? QStringLiteral("隐")
+                                                                : QStringLiteral("显"));
+        watermarkVisibilityButton_->setToolTip(watermark_->visible ? QStringLiteral("隐藏水印")
+                                                                   : QStringLiteral("显示水印"));
+        watermarkResetButton_->setEnabled(true);
+        watermarkRemoveButton_->setEnabled(true);
+    }
+    else
+    {
+        watermarkOpacitySpin_->setEnabled(false);
+        watermarkScaleSpin_->setEnabled(false);
+        watermarkVisibilityButton_->setText(QStringLiteral("隐"));
+        watermarkVisibilityButton_->setToolTip(QStringLiteral("隐藏水印"));
+        watermarkResetButton_->setEnabled(hasPreset);
+        watermarkRemoveButton_->setEnabled(false);
+    }
+    watermarkBar_->adjustSize();
+}
+QPointF SelectionOverlay::watermarkOutputPoint(QPointF position) const
+{
+    return physicalPoint(position) - QPointF(selection_.topLeft());
+}
+QRectF SelectionOverlay::watermarkLogicalBounds() const
+{
+    if (!watermark_ || !actions_.watermarks || selection_.isEmpty() ||
+        watermark_->layout == WatermarkLayout::DiagonalForward ||
+        watermark_->layout == WatermarkLayout::DiagonalReverse)
+        return {};
+    const auto* preset = actions_.watermarks->preset(watermark_->presetId);
+    const auto* asset = preset ? actions_.watermarks->asset(preset->assetId) : nullptr;
+    if (!preset || !asset)
+        return {};
+    QString error;
+    const QImage assetImage = actions_.watermarks->assetImage(asset->id, &error);
+    const QSizeF base = watermarkBaseSize(*asset, assetImage);
+    if (base.isEmpty())
+        return {};
+    const qreal dpr = frame_.display.devicePixelRatio;
+    const QSizeF size(base.width() * watermark_->scale / 100.0,
+                      base.height() * watermark_->scale / 100.0);
+    const QPointF center =
+        QPointF(selection_.x() + watermark_->normalizedCenter.x() * selection_.width(),
+                selection_.y() + watermark_->normalizedCenter.y() * selection_.height()) /
+        dpr;
+    const QRectF local(-size.width() / (2 * dpr), -size.height() / (2 * dpr), size.width() / dpr,
+                       size.height() / dpr);
+    QTransform transform;
+    transform.translate(center.x(), center.y());
+    transform.rotate(watermark_->rotation);
+    return transform.mapRect(local);
+}
+QPointF SelectionOverlay::watermarkRotationHandleLogical() const
+{
+    const QRectF bounds = watermarkLogicalBounds();
+    if (bounds.isEmpty())
+        return {};
+    const QPointF center = bounds.center();
+    const QPointF top(bounds.center().x(), bounds.top());
+    const QPointF direction = top - center;
+    const qreal length = std::hypot(direction.x(), direction.y());
+    if (length <= 0)
+        return top;
+    return top + direction / length * 24;
+}
+QPointF SelectionOverlay::watermarkScaleHandleLogical() const
+{
+    const QRectF bounds = watermarkLogicalBounds();
+    if (bounds.isEmpty())
+        return {};
+    return bounds.bottomRight();
+}
+bool SelectionOverlay::watermarkHit(QPointF position) const
+{
+    if (!watermark_ || !watermark_->visible ||
+        watermark_->layout == WatermarkLayout::DiagonalForward ||
+        watermark_->layout == WatermarkLayout::DiagonalReverse)
+        return false;
+    const QRectF bounds = watermarkLogicalBounds();
+    return !bounds.isEmpty() && bounds.contains(position);
+}
+bool SelectionOverlay::watermarkRotationHandleHit(QPointF position) const
+{
+    const QPointF handle = watermarkRotationHandleLogical();
+    return !handle.isNull() &&
+           std::hypot(position.x() - handle.x(), position.y() - handle.y()) <= 10;
+}
+bool SelectionOverlay::watermarkScaleHandleHit(QPointF position) const
+{
+    const QPointF handle = watermarkScaleHandleLogical();
+    return !handle.isNull() &&
+           std::hypot(position.x() - handle.x(), position.y() - handle.y()) <= 10;
+}
+void SelectionOverlay::beginWatermarkGesture(int gesture, QPointF position)
+{
+    if (!watermark_)
+        return;
+    watermarkSelected_ = true;
+    watermarkGesture_ = WatermarkGesture(gesture);
+    watermarkBeforeGesture_ = *watermark_;
+    watermarkPressOutput_ = watermarkOutputPoint(position);
+    watermarkGestureCenter_ =
+        QPointF(watermarkBeforeGesture_.normalizedCenter.x() * selection_.width(),
+                watermarkBeforeGesture_.normalizedCenter.y() * selection_.height());
+    watermarkGestureStartDistance_ =
+        std::hypot(watermarkPressOutput_.x() - watermarkGestureCenter_.x(),
+                   watermarkPressOutput_.y() - watermarkGestureCenter_.y());
+    watermarkGestureStartAngle_ =
+        std::atan2(watermarkPressOutput_.y() - watermarkGestureCenter_.y(),
+                   watermarkPressOutput_.x() - watermarkGestureCenter_.x()) *
+        180.0 / 3.14159265358979323846;
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::updateWatermarkGesture(QPointF position, Qt::KeyboardModifiers modifiers)
+{
+    if (!watermark_ || watermarkGesture_ == WatermarkGesture::None)
+        return;
+    const QPointF output = watermarkOutputPoint(position);
+    if (watermarkGesture_ == WatermarkGesture::Move)
+    {
+        QPointF center = watermarkGestureCenter_ + output - watermarkPressOutput_;
+        watermark_->normalizedCenter =
+            QPointF(std::clamp(center.x() / std::max(1, selection_.width()), 0.0, 1.0),
+                    std::clamp(center.y() / std::max(1, selection_.height()), 0.0, 1.0));
+    }
+    else if (watermarkGesture_ == WatermarkGesture::Rotate)
+    {
+        const qreal angle = std::atan2(output.y() - watermarkGestureCenter_.y(),
+                                       output.x() - watermarkGestureCenter_.x()) *
+                            180.0 / 3.14159265358979323846;
+        qreal rotation = watermarkBeforeGesture_.rotation + angle - watermarkGestureStartAngle_;
+        if (modifiers.testFlag(Qt::ShiftModifier))
+            rotation = snapAnnotationRotation(rotation);
+        watermark_->rotation = rotation;
+    }
+    else
+    {
+        const qreal distance = std::hypot(output.x() - watermarkGestureCenter_.x(),
+                                          output.y() - watermarkGestureCenter_.y());
+        if (watermarkGestureStartDistance_ > 1)
+            watermark_->scale = std::clamp(
+                qRound(watermarkBeforeGesture_.scale * distance / watermarkGestureStartDistance_),
+                watermarkMinimumScale, watermarkMaximumScale);
+    }
+    syncWatermarkBar();
+    update();
+}
+void SelectionOverlay::finishWatermarkGesture()
+{
+    if (watermarkGesture_ == WatermarkGesture::None)
+        return;
+    watermarkGesture_ = WatermarkGesture::None;
+    markDirty();
+    updateToolbar();
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+}
+void SelectionOverlay::paintWatermarkOverlay(QPainter& painter) const
+{
+    if (!watermark_ || !watermark_->visible || !actions_.watermarks || selection_.isEmpty())
+        return;
+    const auto* preset = actions_.watermarks->preset(watermark_->presetId);
+    const auto* asset = preset ? actions_.watermarks->asset(preset->assetId) : nullptr;
+    if (!preset || !asset)
+        return;
+    QString error;
+    const QImage assetImage = actions_.watermarks->assetImage(asset->id, &error);
+    if (asset->kind == WatermarkKind::Image && assetImage.isNull())
+        return;
+    const qreal dpr = frame_.display.devicePixelRatio;
+    painter.save();
+    painter.setClipRect(logicalSelection());
+    painter.translate(selection_.x() / dpr, selection_.y() / dpr);
+    painter.scale(1 / dpr, 1 / dpr);
+    paintWatermark(painter, selection_.size(), *asset, assetImage, *watermark_);
+    painter.restore();
+}
+void SelectionOverlay::paintWatermarkSelection(QPainter& painter) const
+{
+    if (!watermarkToolActive_ || !watermarkSelected_ || !watermark_ || textMode_ || finished_)
+        return;
+    if (watermark_->layout == WatermarkLayout::DiagonalForward ||
+        watermark_->layout == WatermarkLayout::DiagonalReverse)
+        return;
+    const QPolygonF polygon = QPolygonF(watermarkLogicalBounds());
+    if (polygon.isEmpty())
+        return;
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPen pen(QColor(245, 130, 35), 1.4, Qt::DashLine);
+    pen.setDashPattern({4, 3});
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawPolygon(polygon);
+    const QPointF rotation = watermarkRotationHandleLogical();
+    painter.drawLine(polygon.boundingRect().center(), rotation);
+    painter.setPen(QPen(QColor(245, 130, 35), 1.5));
+    painter.setBrush(QColor(245, 130, 35));
+    painter.drawEllipse(rotation, 4, 4);
+    painter.drawRect(QRectF(watermarkScaleHandleLogical() - QPointF(4, 4), QSizeF(8, 8)));
+    painter.restore();
 }
 int SelectionOverlay::annotationAt(QPointF position) const
 {
@@ -2014,7 +2579,8 @@ void SelectionOverlay::wheelEvent(QWheelEvent* event)
     const bool widthTool = activeTool_ && annotationUsesLineWidth(*activeTool_);
     const bool textTool = activeTool_ && *activeTool_ == AnnotationType::Text;
     if (finished_ || saveDialogOpen_ || ocrDialog_ || textMode_ || scrollReady_ ||
-        (!widthTool && !textTool) || !logicalSelection().contains(event->position()))
+        watermarkToolActive_ || (!widthTool && !textTool) ||
+        !logicalSelection().contains(event->position()))
     {
         widthWheel_.reset();
         event->ignore();
@@ -2355,6 +2921,9 @@ void SelectionOverlay::toggleTextMode()
     if (finished_ || saveDialogOpen_ || ocrDialog_ || selection_.isEmpty() ||
         dragMode_ != DragMode::None)
         return;
+    watermarkToolActive_ = false;
+    watermarkSelected_ = false;
+    watermarkGesture_ = WatermarkGesture::None;
     if (textMode_)
         exitTextMode();
     else

@@ -32,7 +32,8 @@ enum class ToolbarIcon
     ZoomOut,
     ZoomIn,
     Edit,
-    Done
+    Done,
+    Watermark
 };
 // 两编辑面共享一级工具槽位、默认子工具和元数据；会话内选择由各窗口持有。
 inline constexpr std::array<AnnotationType, 5> defaultAnnotationTools = {

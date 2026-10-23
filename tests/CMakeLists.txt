@@ -332,6 +332,17 @@ add_test(NAME history_missing_webp COMMAND history_missing_webp_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/history_missing_webp-output.txt,txt")
 set_tests_properties(history_missing_webp PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
+qt_add_executable(watermark_overlay_test integration/watermark_overlay_test.cpp)
+target_link_libraries(watermark_overlay_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(watermark_overlay_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME watermark_overlay COMMAND watermark_overlay_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/watermark_overlay-output.txt,txt")
+set_tests_properties(watermark_overlay PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+add_test(NAME watermark_overlay_high_dpi COMMAND watermark_overlay_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/watermark_overlay-high-dpi-output.txt,txt")
+set_tests_properties(watermark_overlay_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
 qt_add_executable(watermark_settings_test integration/watermark_settings_test.cpp)
 target_link_libraries(watermark_settings_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
 set_target_properties(watermark_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)

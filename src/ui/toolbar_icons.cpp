@@ -211,6 +211,19 @@ static void drawIcon(QPainter& p, int id, const QRectF& box, const QColor& fg, c
         p.setPen(QPen(fg, 2.0));
         p.drawPolyline(QPolygonF({QPointF(3.5, 9.2), QPointF(7.2, 13), QPointF(14.8, 4.8)}));
         break;
+    case 27: // 水印（水滴 + 斜纹）
+    {
+        QPainterPath drop;
+        drop.moveTo(9, 2.5);
+        drop.cubicTo(6.2, 6.2, 4.5, 8.6, 4.5, 11.2);
+        drop.cubicTo(4.5, 13.9, 6.5, 15.5, 9, 15.5);
+        drop.cubicTo(11.5, 15.5, 13.5, 13.9, 13.5, 11.2);
+        drop.cubicTo(13.5, 8.6, 11.8, 6.2, 9, 2.5);
+        p.drawPath(drop);
+        p.drawLine(QPointF(7.2, 10.8), QPointF(9, 12.8));
+        p.drawLine(QPointF(9, 12.8), QPointF(10.8, 10.8));
+        break;
+    }
     }
     p.restore();
 }
