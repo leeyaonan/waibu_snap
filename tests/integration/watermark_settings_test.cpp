@@ -168,6 +168,64 @@ class WatermarkSettingsTest final : public QObject
         QCOMPARE(page.collect().presets.size(), 2);
         QCOMPARE(page.collect().defaultPresetId, QStringLiteral("preset"));
     }
+    void emptyStateAddAssetEnablesPreset()
+    {
+        WatermarkSettingsActions actions;
+        actions.historyEnabled = true;
+        WatermarkSettingsPage page(actions);
+        page.show();
+        QApplication::processEvents();
+        auto* addPreset = page.findChild<QPushButton*>(QStringLiteral("watermarkAddPresetButton"));
+        auto* assets = page.findChild<QListWidget*>(QStringLiteral("watermarkAssetsList"));
+        auto* presets = page.findChild<QListWidget*>(QStringLiteral("watermarkPresetsList"));
+        auto* preview = page.findChild<QLabel*>(QStringLiteral("watermarkAssetPreview"));
+        QVERIFY(addPreset && assets && presets && preview);
+        QVERIFY(!addPreset->isEnabled());
+        bool filled = false;
+        QTimer::singleShot(
+            0,
+            [&filled]
+            {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dialog)
+                    return;
+                auto* name = dialog->findChild<QLineEdit*>(QStringLiteral("watermarkAssetName"));
+                auto* text =
+                    dialog->findChild<QPlainTextEdit*>(QStringLiteral("watermarkAssetText"));
+                auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                if (!name || !text || !buttons)
+                    return;
+                name->setText(QStringLiteral("首个资产"));
+                text->setPlainText(QStringLiteral("WaibuSnap"));
+                filled = true;
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+        page.findChild<QPushButton*>(QStringLiteral("watermarkAddTextButton"))->click();
+        QVERIFY(filled);
+        QCOMPARE(assets->count(), 1);
+        QVERIFY(addPreset->isEnabled());
+        QVERIFY(!preview->pixmap().isNull());
+        filled = false;
+        QTimer::singleShot(
+            0,
+            [&filled]
+            {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (!dialog)
+                    return;
+                auto* name = dialog->findChild<QLineEdit*>(QStringLiteral("watermarkPresetName"));
+                auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                if (!name || !buttons)
+                    return;
+                name->setText(QStringLiteral("首个预设"));
+                filled = true;
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+        addPreset->click();
+        QVERIFY(filled);
+        QCOMPARE(presets->count(), 1);
+        QVERIFY(page.findChild<QCheckBox*>(QStringLiteral("watermarkAutoCheck"))->isEnabled());
+    }
     void controllerTrayPresetAndAuto()
     {
         QTemporaryDir directory;
