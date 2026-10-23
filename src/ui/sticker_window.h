@@ -1,5 +1,6 @@
 #pragma once
 #include "core/annotation.h"
+#include "core/text_layout.h"
 #include "interfaces/sticker_window_behavior.h"
 #include "interfaces/text_recognizer.h"
 #include "output/annotation_renderer.h"
@@ -62,6 +63,7 @@ struct StickerActions : ImageSaveActions
     // 返回 true 表示用户选择“开启并关闭”。
     std::function<bool(QWidget*)> confirmDoubleClickClose;
     std::shared_ptr<const TextRecognizer> recognizer;
+    std::function<void(const QString&)> setClipboardText;
 };
 class StickerWindow final : public QWidget
 {
@@ -73,6 +75,10 @@ class StickerWindow final : public QWidget
     qreal scale() const { return scale_; }
     bool isSaved() const { return saved_; }
     void setSaved(bool saved) { saved_ = saved; }
+    bool isOcrMode() const { return ocrMode_; }
+    bool isOcrRecognizing() const { return ocrRecognizing_; }
+    QString selectedOcrText() const;
+    QVector<QRectF> ocrHighlightBoxes() const;
     // 绘图工具在画布上滚轮调线宽；其他状态沿用光标锚点缩放。
     void setEditing(bool editing);
     bool isEditing() const { return editing_; }
@@ -152,7 +158,14 @@ class StickerWindow final : public QWidget
     void finishText(bool commit, bool restoreFocus = true);
     void positionTextEditor();
     void focusForKeyboard();
+    void toggleOcrMode();
+    void exitOcrMode();
     void startOcrRecognition();
+    void openOcrDialog();
+    void copySelectedOcrText();
+    text_layout::TokenPosition ocrTextAt(QPointF position, bool nearest) const;
+    void selectOcrTo(QPointF position);
+    void paintOcrSelection(QPainter& painter) const;
     enum class TextStyleToggle
     {
         Bold,
@@ -187,6 +200,7 @@ class StickerWindow final : public QWidget
     QPushButton* copyButton_ = nullptr;
     QPushButton* doneButton_ = nullptr;
     QPushButton* ocrButton_ = nullptr;
+    QPushButton* extractAllTextButton_ = nullptr;
     QShortcut* undoShortcut_ = nullptr;
     QShortcut* redoShortcut_ = nullptr;
     QVector<QPushButton*> toolButtons_;
@@ -225,7 +239,12 @@ class StickerWindow final : public QWidget
     Annotation textDraft_;
     std::unique_ptr<StickerFocusSession> focusSession_;
     QPointer<OcrDialog> ocrDialog_;
+    TextRecognitionResult ocrResult_;
+    text_layout::TokenPosition ocrAnchor_;
+    QVector<text_layout::SelectionRange> ocrSelection_;
+    bool ocrMode_ = false;
     bool ocrRecognizing_ = false;
+    bool selectingOcr_ = false;
     quint64 ocrToken_ = 0;
     QWidget* statusWindow_ = nullptr;
     QLabel* status_ = nullptr;

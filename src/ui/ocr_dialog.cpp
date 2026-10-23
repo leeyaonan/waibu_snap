@@ -107,6 +107,8 @@ OcrDialog::OcrDialog(QWidget* parent, std::function<void(const QMimeData&)> setC
     retry_ = button(QStringLiteral("重试"), QStringLiteral("ocrRetryButton"));
     copy_ = button(QStringLiteral("复制"), QStringLiteral("ocrCopyButton"));
     plainCopy_ = button(QStringLiteral("仅复制文字"), QStringLiteral("ocrPlainCopyButton"));
+    auto* close = button(QStringLiteral("关闭"), QStringLiteral("ocrCloseButton"));
+    close->setAutoDefault(false);
     feedback_ = new QLabel(this);
     feedback_->setObjectName(QStringLiteral("ocrCopyFeedback"));
     actions->addWidget(edit_);
@@ -115,6 +117,7 @@ OcrDialog::OcrDialog(QWidget* parent, std::function<void(const QMimeData&)> setC
     actions->addWidget(feedback_);
     actions->addWidget(copy_);
     actions->addWidget(plainCopy_);
+    actions->addWidget(close);
     layout->addLayout(actions);
     connect(edit_, &QPushButton::clicked, this, [this] { setEditing(!editing_); });
     connect(retry_, &QPushButton::clicked, this,
@@ -125,6 +128,7 @@ OcrDialog::OcrDialog(QWidget* parent, std::function<void(const QMimeData&)> setC
             });
     connect(copy_, &QPushButton::clicked, this, [this] { copyDocument(true); });
     connect(plainCopy_, &QPushButton::clicked, this, [this] { copyDocument(false); });
+    connect(close, &QPushButton::clicked, this, &QDialog::reject);
     connect(bold, &QPushButton::clicked, this,
             [this, bold]
             {
