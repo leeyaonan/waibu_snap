@@ -107,7 +107,17 @@ class WatermarkOverlayTest final : public QObject
         QVERIFY(pairRecorded);
         QVERIFY(recordedOriginal.has_value());
         QCOMPARE(bluePixels(*recordedOriginal), 0);
-        tool->click();
+        auto* conceal = overlay.findChild<QPushButton*>(QStringLiteral("concealToolButton"));
+        auto* cover = overlay.findChild<QPushButton*>(QStringLiteral("coverToolButton"));
+        QVERIFY(conceal && cover);
+        QTest::mouseClick(conceal, Qt::LeftButton);
+        QTest::mouseClick(cover, Qt::LeftButton);
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, {60, 60});
+        QTest::mouseMove(&overlay, {240, 140});
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, {240, 140});
+        const QString topmostPath = directory.filePath(QStringLiteral("topmost.png"));
+        QVERIFY(overlay.exportToPath(topmostPath));
+        QVERIFY(bluePixels(QImage(topmostPath)) > 100);
         QVERIFY(!overlay.isWatermarkToolActive());
         QVERIFY(overlay.hasWatermark());
     }
