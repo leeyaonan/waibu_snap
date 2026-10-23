@@ -3646,26 +3646,55 @@ class StartupSmokeTest final : public QObject
     {
         using namespace waibusnap;
         auto engine = std::make_shared<OcrStub>();
+        QString copiedText;
         StickerActions actions;
         actions.recognizer = engine;
+        actions.setClipboardText = [&](const QString& text) { copiedText = text; };
         StickerManager manager(nullptr, actions);
         QImage image(640, 480, QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::white);
         QVERIFY(manager.create(image, {60, 60}, true).success);
         auto sticker = manager.windows().first();
         sticker->setEditing(true);
-        QVERIFY(sticker->findChild<QPushButton*>(QStringLiteral("stickerEditOcrToolButton")));
+        auto* ocrButton =
+            sticker->findChild<QPushButton*>(QStringLiteral("stickerEditOcrToolButton"));
+        QVERIFY(ocrButton);
         stickerClick(*sticker, "stickerEditOcrToolButton");
+        QTRY_VERIFY(sticker->isOcrMode());
+        QVERIFY(!sticker->findChild<OcrDialog*>(QStringLiteral("ocrDialog")));
+        QTRY_VERIFY(!sticker->isOcrRecognizing());
+        QCOMPARE(engine->calls.load(), 1);
+        QCOMPARE(engine->input().size(), image.size());
+
+        // 在贴图上拖选识别文字；双击选词和 ⌘/Ctrl+C 由共享文本布局逻辑处理。
+        QTest::mousePress(sticker, Qt::LeftButton, Qt::NoModifier, {30, 30});
+        QTest::mouseMove(sticker, {150, 30});
+        QTest::mouseRelease(sticker, Qt::LeftButton, Qt::NoModifier, {150, 30});
+        QVERIFY(sticker->selectedOcrText().contains(QStringLiteral("Hello")));
+        QVERIFY(sticker->selectedOcrText().contains(QStringLiteral("world")));
+        QVERIFY(!sticker->ocrHighlightBoxes().isEmpty());
+        QTest::keyClick(sticker, Qt::Key_C, Qt::ControlModifier);
+        QTest::mouseDClick(sticker, Qt::LeftButton, Qt::NoModifier, {30, 30});
+        QCOMPARE(sticker->selectedOcrText(), QStringLiteral("Hello"));
+        QVERIFY(copiedText.contains(QStringLiteral("Hello")));
+
+        auto* toolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+        QVERIFY(toolbar && toolbar->isVisible());
+        stickerClick(*sticker, "stickerEditExtractAllTextButton");
         QTRY_VERIFY(sticker->findChild<OcrDialog*>(QStringLiteral("ocrDialog")));
         auto* dialog = sticker->findChild<OcrDialog*>(QStringLiteral("ocrDialog"));
+        QVERIFY(!toolbar->isVisible());
         auto* editor = dialog->findChild<QTextEdit*>(QStringLiteral("ocrTextEdit"));
         QTRY_VERIFY(editor && editor->isVisible());
         QVERIFY(editor->toPlainText().contains(QStringLiteral("Hello")));
         QVERIFY(editor->toPlainText().contains(QString::fromUtf8("你好")));
-        QCOMPARE(engine->calls.load(), 1);
-        QCOMPARE(engine->input().size(), image.size());
-        dialog->reject();
+        auto* close = dialog->findChild<QPushButton*>(QStringLiteral("ocrCloseButton"));
+        QVERIFY(close);
+        QTest::mouseClick(close, Qt::LeftButton);
         QTRY_VERIFY(!sticker->findChild<OcrDialog*>(QStringLiteral("ocrDialog")));
+        QTRY_VERIFY(toolbar->isVisible());
+        QTest::keyClick(sticker, Qt::Key_Escape);
+        QVERIFY(!sticker->isOcrMode());
     }
     void stickerFloatingChromePlacementAndHover()
     {

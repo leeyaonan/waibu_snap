@@ -9,6 +9,7 @@
 #include "ui/text_recognition_task.h"
 #include <QAction>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QContextMenuEvent>
@@ -25,6 +26,7 @@
 #include <QMouseEvent>
 #include <QMoveEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPointer>
 #include <QPushButton>
 #include <QScopedValueRollback>
@@ -36,6 +38,7 @@
 #include <QWindow>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 namespace waibusnap
 {
 namespace
@@ -120,6 +123,9 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
         image_.setDevicePixelRatio(1);
     if (!actions_.copyImage)
         actions_.copyImage = copyImageToClipboard;
+    if (!actions_.setClipboardText)
+        actions_.setClipboardText = [](const QString& text)
+        { QGuiApplication::clipboard()->setText(text); };
     if (!actions_.confirmClose)
         actions_.confirmClose = [](QWidget* parent)
         {
@@ -317,6 +323,8 @@ void StickerWindow::setEditing(bool editing)
     hide();
     destroy();
     editing_ = editing;
+    if (!editing_ && ocrMode_)
+        exitOcrMode();
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setFocusPolicy(editing ? Qt::StrongFocus : Qt::ClickFocus);
@@ -444,6 +452,7 @@ void StickerWindow::paintEvent(QPaintEvent*)
     if (draft_)
         paintAnnotation(painter, *draft_, image_);
     painter.restore();
+    paintOcrSelection(painter);
     paintAnnotationSelection(painter);
 }
 QImage StickerWindow::renderedImage() const
@@ -503,6 +512,21 @@ void StickerWindow::mousePressEvent(QMouseEvent* event)
     if (event->button() != Qt::LeftButton || closed_ || saveDialogOpen_ || confirmingClose_ ||
         confirmingDoubleClickClose_ || quitInteraction_)
         return;
+    if (ocrMode_)
+    {
+        if (ocrRecognizing_ || !ocrResult_.ok)
+        {
+            event->accept();
+            return;
+        }
+        setFocus(Qt::MouseFocusReason);
+        ocrAnchor_ = ocrTextAt(event->position(), false);
+        selectingOcr_ = ocrAnchor_.valid();
+        ocrSelection_ = text_layout::selectionRange(ocrResult_.lines, ocrAnchor_, ocrAnchor_);
+        update();
+        event->accept();
+        return;
+    }
     if (editing_)
     {
         const bool textWasEditing = textEditor_ && textEditor_->isVisible();
@@ -582,11 +606,16 @@ void StickerWindow::focusForKeyboard()
         windowHandle()->requestActivate();
     setFocus(Qt::MouseFocusReason);
 }
-void StickerWindow::startOcrRecognition()
+void StickerWindow::toggleOcrMode()
 {
-    if (closed_ || !editing_ || quitInteraction_ || saveDialogOpen_ || confirmingClose_ ||
-        confirmingDoubleClickClose_ || ocrRecognizing_ || draft_)
+    if (closed_ || !editing_ || hasPendingInteraction() || quitInteraction_ || saveDialogOpen_ ||
+        ocrRecognizing_ || draft_)
         return;
+    if (ocrMode_)
+    {
+        exitOcrMode();
+        return;
+    }
     finishText(true);
     clearAnnotationSelection();
     activeTool_.reset();
@@ -594,50 +623,182 @@ void StickerWindow::startOcrRecognition()
     lastAnnotationSelected_ = false;
     widthWheel_.reset();
     wheelRemainder_ = 0;
+    ocrMode_ = true;
+    ocrResult_ = {};
+    ocrAnchor_ = {};
+    ocrSelection_.clear();
+    selectingOcr_ = false;
+    setCursor(Qt::IBeamCursor);
+    updateEditToolbar();
+    startOcrRecognition();
+    update();
+}
+void StickerWindow::exitOcrMode()
+{
+    if (!ocrMode_)
+        return;
+    ++ocrToken_;
+    ocrMode_ = false;
+    ocrRecognizing_ = false;
+    selectingOcr_ = false;
+    ocrResult_ = {};
+    ocrAnchor_ = {};
+    ocrSelection_.clear();
+    if (status_)
+        status_->hide();
+    if (statusWindow_)
+        statusWindow_->hide();
     setCursor(Qt::SizeAllCursor);
     updateEditToolbar();
+    update();
+}
+void StickerWindow::startOcrRecognition()
+{
+    if (closed_ || !editing_ || !ocrMode_ || ocrRecognizing_ || quitInteraction_ ||
+        saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_ || draft_)
+        return;
     if (!actions_.recognizer)
         actions_.recognizer = createTextRecognizer();
-    if (!ocrDialog_)
-    {
-        auto* dialog = new OcrDialog(this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        ocrDialog_ = dialog;
-        connect(dialog, &OcrDialog::retryRequested, this, &StickerWindow::startOcrRecognition);
-        connect(dialog, &QDialog::finished, this,
-                [this]
-                {
-                    ocrDialog_ = nullptr;
-                    ocrRecognizing_ = false;
-                    ++ocrToken_;
-                    updateEditToolbar();
-                    if (!closed_ && editing_)
-                    {
-                        activateWindow();
-                        setFocus(Qt::OtherFocusReason);
-                    }
-                });
-        dialog->open();
-    }
-    ocrDialog_->setRecognizing();
     ocrRecognizing_ = true;
+    selectingOcr_ = false;
+    ocrSelection_.clear();
     const quint64 token = ++ocrToken_;
+    showStatus(QStringLiteral("正在识别文字…"), false);
+    if (ocrDialog_)
+        ocrDialog_->setRecognizing();
     auto* task = new TextRecognitionTask(actions_.recognizer, renderedImage(), token, this);
     connect(
         task, &TextRecognitionTask::completed, this,
         [this](quint64 completedToken, TextRecognitionResult result)
         {
-            if (closed_ || completedToken != ocrToken_)
+            if (closed_ || !ocrMode_ || completedToken != ocrToken_)
                 return;
             ocrRecognizing_ = false;
+            ocrResult_ = std::move(result);
             if (ocrDialog_)
-                ocrDialog_->setResult(result);
+                ocrDialog_->setResult(ocrResult_);
+            if (!ocrResult_.ok)
+                showStatus(QStringLiteral("识别失败：%1").arg(ocrResult_.explanation), false);
+            else if (ocrResult_.lines.isEmpty())
+                showStatus(QStringLiteral("未识别到文字"), false);
+            else
+                showStatus(QStringLiteral("拖选文字 · 双击选词 · ⌘C 复制 · Esc 退出取字"), true);
             updateEditToolbar();
+            update();
         },
         Qt::QueuedConnection);
     connect(task, &QThread::finished, task, &QObject::deleteLater);
     task->start();
     updateEditToolbar();
+    update();
+}
+void StickerWindow::openOcrDialog()
+{
+    if (!ocrMode_ || closed_ || saveDialogOpen_ || ocrRecognizing_ || ocrDialog_)
+        return;
+    auto* dialog = new OcrDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    ocrDialog_ = dialog;
+    dialog->setResult(ocrResult_);
+    connect(dialog, &OcrDialog::retryRequested, this, &StickerWindow::startOcrRecognition);
+    connect(dialog, &QDialog::finished, this,
+            [this]
+            {
+                ocrDialog_ = nullptr;
+                updateEditToolbar();
+                if (!closed_ && editing_)
+                {
+                    activateWindow();
+                    setFocus(Qt::OtherFocusReason);
+                }
+            });
+    editToolbar_->hide();
+    if (statusWindow_)
+        statusWindow_->hide();
+    dialog->open();
+    updateEditToolbar();
+}
+void StickerWindow::copySelectedOcrText()
+{
+    if (!ocrMode_ || ocrDialog_ || ocrRecognizing_)
+        return;
+    const QString text = selectedOcrText();
+    if (text.isEmpty())
+        return;
+    if (actions_.setClipboardText)
+        actions_.setClipboardText(text);
+    showStatus(QStringLiteral("已复制 %1 个字符").arg(text.size()), true);
+}
+text_layout::TokenPosition StickerWindow::ocrTextAt(QPointF position, bool nearest) const
+{
+    if (!ocrMode_ || ocrRecognizing_ || !ocrResult_.ok)
+        return {};
+    const QPointF point = physicalPoint(position);
+    int lineIndex = -1;
+    qreal best = std::numeric_limits<qreal>::max();
+    for (int i = 0; i < ocrResult_.lines.size(); ++i)
+    {
+        const auto& line = ocrResult_.lines[i];
+        if (!nearest)
+        {
+            const auto tokens = text_layout::selectableTokens(line);
+            for (int j = 0; j < tokens.size(); ++j)
+                if (tokens[j].box.contains(point))
+                    return {i, j};
+        }
+        else
+        {
+            const qreal distance = std::abs(line.box.center().y() - point.y());
+            if (distance < best && !line.text.isEmpty())
+            {
+                lineIndex = i;
+                best = distance;
+            }
+        }
+    }
+    return lineIndex < 0
+               ? text_layout::TokenPosition{}
+               : text_layout::TokenPosition{
+                     lineIndex, text_layout::nearestToken(ocrResult_.lines[lineIndex], point.x())};
+}
+void StickerWindow::selectOcrTo(QPointF position)
+{
+    ocrSelection_ =
+        text_layout::selectionRange(ocrResult_.lines, ocrAnchor_, ocrTextAt(position, true));
+    update();
+}
+QString StickerWindow::selectedOcrText() const
+{
+    return text_layout::selectionText(ocrResult_.lines, ocrSelection_);
+}
+QVector<QRectF> StickerWindow::ocrHighlightBoxes() const
+{
+    QVector<QRectF> boxes;
+    for (const auto& range : ocrSelection_)
+    {
+        const auto tokens = text_layout::selectableTokens(ocrResult_.lines[range.line]);
+        for (int i = range.firstToken; i <= range.lastToken; ++i)
+            boxes.append(tokens[i].box);
+    }
+    return boxes;
+}
+void StickerWindow::paintOcrSelection(QPainter& painter) const
+{
+    if (!ocrMode_ || ocrRecognizing_ || !ocrResult_.ok || ocrSelection_.isEmpty())
+        return;
+    const qreal factor = annotationLogicalFactor();
+    if (factor <= 0)
+        return;
+    QColor color = palette().color(QPalette::Highlight);
+    color.setAlpha(77);
+    painter.save();
+    painter.setClipRect(rect());
+    painter.setBrush(color);
+    painter.setPen(QPen(palette().color(QPalette::Highlight), 1));
+    for (const auto& box : ocrHighlightBoxes())
+        painter.drawRect(QRectF(box.x() * factor, box.y() * factor, box.width() * factor,
+                                box.height() * factor));
+    painter.restore();
 }
 void StickerWindow::moveDrag(QPointF globalPosition)
 {
@@ -652,6 +813,13 @@ void StickerWindow::moveDrag(QPointF globalPosition)
 }
 void StickerWindow::mouseMoveEvent(QMouseEvent* event)
 {
+    if (ocrMode_)
+    {
+        if (selectingOcr_)
+            selectOcrTo(event->position());
+        setCursor(Qt::IBeamCursor);
+        return;
+    }
     if (pendingSelectedGesture_)
     {
         if (std::hypot(event->position().x() - pendingSelectedPress_.x(),
@@ -699,6 +867,14 @@ void StickerWindow::mouseMoveEvent(QMouseEvent* event)
 }
 void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (event->button() == Qt::LeftButton && ocrMode_)
+    {
+        if (selectingOcr_)
+            selectOcrTo(event->position());
+        selectingOcr_ = false;
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton && pendingSelectedGesture_)
     {
         pendingSelectedGesture_ = false;
@@ -752,7 +928,7 @@ void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
 void StickerWindow::wheelEvent(QWheelEvent* event)
 {
     if (closed_ || saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_ ||
-        quitInteraction_)
+        quitInteraction_ || ocrMode_)
         return;
     if (editing_ && activeTool_ && annotationUsesLineWidth(*activeTool_))
     {
@@ -1051,10 +1227,15 @@ void StickerWindow::ensureEditToolbar()
         else
             connect(action, &QAction::triggered, button, &QPushButton::click);
     }
-    ocrButton_ =
-        annotation_toolbar::makeButton(editMainBar_, QStringLiteral("stickerEditOcrToolButton"),
-                                       QStringLiteral("取字（文字识别）"), ToolbarIcon::Ocr);
-    connect(ocrButton_, &QPushButton::clicked, this, &StickerWindow::startOcrRecognition);
+    ocrButton_ = annotation_toolbar::makeButton(
+        editMainBar_, QStringLiteral("stickerEditOcrToolButton"),
+        QStringLiteral("取字（文字识别）：拖选文字，再次点击退出"), ToolbarIcon::Ocr, true);
+    connect(ocrButton_, &QPushButton::clicked, this, &StickerWindow::toggleOcrMode);
+    extractAllTextButton_ = annotation_toolbar::makeButton(
+        editMainBar_, QStringLiteral("stickerEditExtractAllTextButton"), QStringLiteral("提取全文"),
+        ToolbarIcon::ExtractAllText);
+    extractAllTextButton_->hide();
+    connect(extractAllTextButton_, &QPushButton::clicked, this, &StickerWindow::openOcrDialog);
     for (auto type : {AnnotationType::Rectangle, AnnotationType::Ellipse, AnnotationType::Line,
                       AnnotationType::Arrow, AnnotationType::Cover, AnnotationType::Mosaic})
     {
@@ -1228,6 +1409,7 @@ void StickerWindow::ensureEditToolbar()
     }
     auto* ocrAction = editMenu_->addAction(ocrButton_->icon(), QStringLiteral("取字"));
     ocrAction->setData(ocrButton_->objectName());
+    ocrAction->setCheckable(true);
     connect(ocrAction, &QAction::triggered, ocrButton_, &QPushButton::click);
     auto* selectAction = editMenu_->addAction(selectButton_->icon(), QStringLiteral("选择"));
     selectAction->setData(selectButton_->objectName());
@@ -1258,6 +1440,8 @@ void StickerWindow::layoutEditMainBar(int availableWidth)
     for (auto* button : toolButtons_)
         tools.append(button);
     tools.append(ocrButton_);
+    if (ocrMode_ && extractAllTextButton_)
+        tools.append(extractAllTextButton_);
     QVector<QWidget*> actions = {undoButton_, redoButton_, saveButton_, copyButton_, doneButton_};
     const int naturalWidth =
         16 + int(tools.size() + actions.size()) * annotation_toolbar::buttonSize +
@@ -1314,7 +1498,7 @@ void StickerWindow::positionEditToolbar()
 {
     if (!editToolbar_)
         return;
-    if (!editing_ || closed_)
+    if (!editing_ || closed_ || ocrDialog_)
     {
         editToolbar_->hide();
         return;
@@ -1354,21 +1538,24 @@ void StickerWindow::updateEditToolbar()
 {
     if (!editToolbar_)
         return;
-    if (!editing_)
+    if (!editing_ || ocrDialog_)
     {
         editToolbar_->hide();
         return;
     }
     const bool available = editing_ && !saveDialogOpen_ && !confirmingClose_ && !quitInteraction_ &&
-                           !draft_ && !ocrDialog_ && !ocrRecognizing_;
+                           !draft_ && !ocrDialog_;
     editToolbar_->setEnabled(available);
-    ocrButton_->setEnabled(available);
-    undoButton_->setEnabled(history_.canUndo());
-    redoButton_->setEnabled(history_.canRedo());
+    ocrButton_->setChecked(ocrMode_);
+    ocrButton_->setEnabled(available && !ocrRecognizing_);
+    extractAllTextButton_->setVisible(ocrMode_);
+    extractAllTextButton_->setEnabled(available && ocrMode_ && !ocrRecognizing_);
+    undoButton_->setEnabled(!ocrMode_ && history_.canUndo());
+    redoButton_->setEnabled(!ocrMode_ && history_.canRedo());
     // AnnotationTextEdit 的 ShortcutOverride 保证输入期间优先使用文本自身的历史。
-    undoShortcut_->setEnabled(available);
-    redoShortcut_->setEnabled(available);
-    selectButton_->setEnabled(available);
+    undoShortcut_->setEnabled(available && !ocrMode_);
+    redoShortcut_->setEnabled(available && !ocrMode_);
+    selectButton_->setEnabled(available && !ocrMode_);
     selectButton_->setChecked(selectMode_);
     for (int index = 0; index < toolButtons_.size(); ++index)
     {
@@ -1383,6 +1570,7 @@ void StickerWindow::updateEditToolbar()
         }
         if (index < editMenu_->actions().size())
             editMenu_->actions()[index]->setText(annotationToolName(type));
+        button->setEnabled(available && !ocrMode_);
     }
     const int activeSlot = activeTool_ ? annotationToolSlot(*activeTool_) : -1;
     const bool grouped = activeSlot == 0 || activeSlot == 1 || activeSlot == 4;
@@ -1403,8 +1591,8 @@ void StickerWindow::updateEditToolbar()
     const bool colorsVisible =
         !selectMode_ && activeTool_ && *activeTool_ != AnnotationType::Mosaic;
     const bool widths = !selectMode_ && activeTool_ && annotationUsesLineWidth(*activeTool_);
-    const bool showTools = !selectMode_ && grouped;
-    const bool showOptions = showTools || colorsVisible || widths || textTool;
+    const bool showTools = !ocrMode_ && !selectMode_ && grouped;
+    const bool showOptions = !ocrMode_ && (showTools || colorsVisible || widths || textTool);
     toolBar_->setEnabled(available);
     toolBar_->setVisible(showTools);
     colors_->setColor(style_.color);
@@ -2006,8 +2194,18 @@ void StickerWindow::contextMenuEvent(QContextMenuEvent* event)
 }
 void StickerWindow::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    if (event->button() != Qt::LeftButton || editing_ || hasPendingInteraction() ||
-        quitInteraction_)
+    if (event->button() != Qt::LeftButton || hasPendingInteraction() || quitInteraction_)
+        return;
+    if (ocrMode_)
+    {
+        ocrAnchor_ = ocrTextAt(event->position(), false);
+        selectingOcr_ = false;
+        ocrSelection_ = text_layout::selectionRange(ocrResult_.lines, ocrAnchor_, ocrAnchor_);
+        update();
+        event->accept();
+        return;
+    }
+    if (editing_)
         return;
     std::optional<bool> preference = false;
     if (actions_.loadDoubleClickClose)
@@ -2051,6 +2249,30 @@ void StickerWindow::mouseDoubleClickEvent(QMouseEvent* event)
 }
 void StickerWindow::keyPressEvent(QKeyEvent* event)
 {
+    if (ocrMode_)
+    {
+        if (ocrDialog_)
+        {
+            if (event->key() == Qt::Key_Escape)
+                ocrDialog_->reject();
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Escape)
+        {
+            exitOcrMode();
+            event->accept();
+            return;
+        }
+        if (event->matches(QKeySequence::Copy))
+        {
+            copySelectedOcrText();
+            event->accept();
+            return;
+        }
+        event->accept();
+        return;
+    }
     if (event->key() == Qt::Key_Space && !editing_ && !hasPendingInteraction() &&
         !quitInteraction_ && !event->isAutoRepeat())
     {

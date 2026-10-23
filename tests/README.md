@@ -1095,3 +1095,13 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 - 测试：`stickerOcrUsesInjectedRecognizer` 验证按钮、注入识别器、后台输入尺寸与结果对话框；`stickerEditingEntrancesGesturesAndCompactTools` 与 `stickerWindowsScaleDragAndCloseIndependently` 更新为空编辑态拖动、工具条跟随、工具激活不拖窗。
 - 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **37/37 CTest**、主冒烟 **507 项**、独立高 DPI 子集 **436 项**、`hotkey_settings` **61 项**；clang-format 18.1.8、`git diff --check` 与双端 CI 以本 PR 为准。
 - 待人工：真实鼠标空编辑拖动与工具条跟随、取字按钮 / 对话框 / 重试 / 复制手感；原地选字暂未实现，作为后续独立能力。
+
+
+## 贴图原地选字与 OCR 弹窗收口（2026-10-23，FEAT-0004）
+
+- 取字按钮不再直接弹结果窗：点击进入原地 OCR 模式，识别后按 `text_layout` 在贴图上绘制选中 token 高亮，支持拖选、双击选词、`⌘/Ctrl+C` 复制、Esc 退出；绘制工具与撤销 / 重做在 OCR 模式禁用。
+- OCR 模式主条显示 `stickerEditExtractAllTextButton`「提取全文」；只有点击它才打开 `OcrDialog`。弹窗打开时隐藏编辑工具条 / 状态浮层，关闭后恢复，避免工具栏与弹窗叠层。
+- `OcrDialog` 新增 `ocrCloseButton`「关闭」，保留 Esc；识别中、失败、无文字、重试、编辑与复制流程不变。
+- `stickerOcrUsesInjectedRecognizer` 更新为：点击取字不弹窗、等待识别、在贴图上拖选 Hello / world、高亮非空、复制注入、双击选词、提取全文后弹窗出现且工具栏隐藏、关闭按钮关闭后工具栏恢复、Esc 退出 OCR。
+- 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **37/37 CTest**、主冒烟 **507 项**、独立高 DPI 子集 **436 项**、`hotkey_settings` **61 项**；clang-format 18.1.8、`git diff --check` 与双端 CI 以本 PR 为准。
+- 待人工：真实鼠标原地拖选 / 双击 / 复制、弹窗层级与关闭按钮观感、OCR 模式工具条禁用状态；Windows 实机。
