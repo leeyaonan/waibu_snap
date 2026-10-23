@@ -2335,9 +2335,13 @@ class StartupSmokeTest final : public QObject
         sticker->setScale(0.25, {30, 40});
         QEnterEvent enter({1, 1}, {1, 1}, sticker->mapToGlobal(QPoint(1, 1)));
         QApplication::sendEvent(sticker, &enter);
-        auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerMoreButton"));
-        QVERIFY(more && more->isVisible());
-        QVERIFY(sticker->rect().contains(more->geometry()));
+        auto* controls = sticker->findChild<QWidget*>(QStringLiteral("stickerControls"));
+        QVERIFY(controls && controls->isVisible());
+        QVERIFY(!controls->frameGeometry().intersects(sticker->frameGeometry()));
+        for (const char* name :
+             {"stickerZoomOutButton", "stickerZoomInButton", "stickerResetButton",
+              "stickerSaveButton", "stickerCopyButton", "stickerEditButton", "stickerCloseButton"})
+            QVERIFY(sticker->findChild<QPushButton*>(QString::fromLatin1(name)));
         QCOMPARE(sticker->actions().size(), qsizetype(7));
         QCOMPARE(sticker->actions().last()->text(), QStringLiteral("关闭贴图"));
         sticker->actions().last()->trigger();
@@ -3585,11 +3589,12 @@ class StartupSmokeTest final : public QObject
         sticker->setScale(0.25, sticker->pos());
         sticker->setEditing(true);
         sizes = sticker->findChild<QComboBox*>(QStringLiteral("stickerEditTextSizeCombo"));
-        auto* more = sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton"));
-        QVERIFY(more && more->isVisible());
+        auto* editToolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+        QVERIFY(editToolbar && editToolbar->isVisible());
+        QVERIFY(!editToolbar->frameGeometry().intersects(sticker->frameGeometry()));
+        QVERIFY(!sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton")));
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
         QCOMPARE(menu->actions().size(), qsizetype(14));
-        QVERIFY(sticker->rect().contains(more->geometry()));
         QCOMPARE(menu->actions().last()->data().toString(),
                  QStringLiteral("stickerEditSelectToolButton"));
         menu->actions().last()->trigger();
@@ -3629,6 +3634,62 @@ class StartupSmokeTest final : public QObject
         QVERIFY(menu->actions()[5]->isEnabled());
         stickerClick(*sticker, "stickerEditDoneButton");
         QVERIFY(!sticker->isEditing());
+    }
+    void stickerFloatingChromePlacementAndHover()
+    {
+        using namespace waibusnap;
+        const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+        StickerManager manager;
+        QImage image(200, 150, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, available.topLeft() + QPoint(40, 40), true).success);
+        auto sticker = manager.windows().first();
+        auto* controls = sticker->findChild<QWidget*>(QStringLiteral("stickerControls"));
+        auto* controlsBar = sticker->findChild<QWidget*>(QStringLiteral("stickerControlsBar"));
+        QVERIFY(controls && controlsBar);
+        QEnterEvent enter({10, 10}, {10, 10}, sticker->mapToGlobal(QPoint(10, 10)));
+        QApplication::sendEvent(sticker, &enter);
+        QVERIFY(controls->isVisible());
+        QVERIFY(!controls->frameGeometry().intersects(sticker->frameGeometry()));
+        const QRect controlGeometry = controls->frameGeometry();
+        sticker->move(sticker->pos() + QPoint(30, 20));
+        QTRY_VERIFY(controls->frameGeometry() != controlGeometry);
+        QVERIFY(!controls->frameGeometry().intersects(sticker->frameGeometry()));
+        QEvent stickerLeave(QEvent::Leave);
+        QApplication::sendEvent(sticker, &stickerLeave);
+        QEnterEvent barEnter({10, 10}, {10, 10}, controlsBar->mapToGlobal(QPoint(10, 10)));
+        QApplication::sendEvent(controlsBar, &barEnter);
+        QTest::qWait(250);
+        QVERIFY(controls->isVisible());
+        QEvent barLeave(QEvent::Leave);
+        QApplication::sendEvent(controlsBar, &barLeave);
+        QTest::qWait(250);
+        QVERIFY(!controls->isVisible());
+
+        sticker->setEditing(true);
+        auto* toolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+        QVERIFY(toolbar && toolbar->isVisible());
+        QVERIFY(!toolbar->frameGeometry().intersects(sticker->frameGeometry()));
+        stickerClick(*sticker, "stickerEditLineToolButton");
+        auto* options = sticker->findChild<QWidget*>(QStringLiteral("stickerEditOptionsBar"));
+        QVERIFY(options && options->isVisible());
+        const QRect toolbarGeometry = toolbar->frameGeometry();
+        sticker->move(sticker->pos() + QPoint(25, 15));
+        QTRY_VERIFY(toolbar->frameGeometry() != toolbarGeometry);
+        QVERIFY(!toolbar->frameGeometry().intersects(sticker->frameGeometry()));
+        sticker->setEditing(false);
+
+        // 四边都没有空间时允许临时覆盖图像底部，但必须仍落在屏幕可用区。
+        const qreal dpr = QGuiApplication::primaryScreen()->devicePixelRatio();
+        QImage fullImage(available.size() * dpr, QImage::Format_ARGB32_Premultiplied);
+        fullImage.fill(Qt::white);
+        QVERIFY(manager.create(fullImage, available.topLeft(), true).success);
+        auto full = manager.windows().last();
+        full->setEditing(true);
+        auto* fullToolbar = full->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+        QVERIFY(fullToolbar && fullToolbar->isVisible());
+        QVERIFY(fullToolbar->frameGeometry().intersects(full->frameGeometry()));
+        QVERIFY(available.contains(fullToolbar->frameGeometry()));
     }
     void stickerDoubleClickCloseAndSpaceEdit()
     {
@@ -4372,8 +4433,7 @@ class StartupSmokeTest final : public QObject
         auto* status = sticker->findChild<QLabel*>(QStringLiteral("stickerStatus"));
         QVERIFY(toolbar->isEnabled());
         QVERIFY(status->text().contains(QStringLiteral("失败")));
-        if (toolbar->isVisible())
-            QVERIFY(status->geometry().bottom() < toolbar->y());
+        QVERIFY(status->isVisible());
         valid = true;
         stickerClick(*sticker, "stickerEditSaveButton");
         QVERIFY(sticker->isSaved());
@@ -5601,7 +5661,25 @@ class StartupSmokeTest final : public QObject
         auto* palette = canvas->findChild<QWidget*>(prefix + QStringLiteral("Palette"));
         QVERIFY(palette && palette->isVisible());
         QCOMPARE(palette->size(), QSize(164, 68));
-        QVERIFY(canvas->rect().contains(QRect(palette->mapTo(canvas, QPoint()), palette->size())));
+        if (sticker)
+        {
+            const QRect paletteGlobal(palette->mapToGlobal(QPoint(0, 0)), palette->size());
+            auto* toolbar = window->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+            const QRect image = window->frameGeometry();
+            const QRect available = window->screen()->availableGeometry();
+            const QSize toolbarSize = toolbar->frameGeometry().size();
+            constexpr int gap = 8;
+            const bool outsidePossible =
+                image.bottom() + gap + toolbarSize.height() <= available.bottom() ||
+                image.top() - gap - toolbarSize.height() >= available.top() ||
+                image.right() + gap + toolbarSize.width() <= available.right() ||
+                image.left() - gap - toolbarSize.width() >= available.left();
+            if (outsidePossible)
+                QVERIFY(!paletteGlobal.intersects(image));
+        }
+        else
+            QVERIFY(
+                canvas->rect().contains(QRect(palette->mapTo(canvas, QPoint()), palette->size())));
         const auto buttons = palette->findChildren<QPushButton*>();
         QCOMPARE(buttons.size(), qsizetype(annotationColors().size()));
         QVERIFY(buttons[0]->isChecked());
@@ -6038,13 +6116,14 @@ class StartupSmokeTest final : public QObject
         sticker->setEditing(true);
         stickerClick(*sticker, "stickerEditRectangleToolButton");
         auto* editToolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+        auto* optionsBar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditOptionsBar"));
         auto* stickerBar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolBar"));
         auto* stickerPalette =
             sticker->findChild<QWidget*>(QStringLiteral("stickerEditColorPalette"));
-        QVERIFY(editToolbar && stickerBar && stickerPalette);
-        QCOMPARE(stickerBar->parentWidget(), editToolbar);
-        QVERIFY(editToolbar->rect().contains(stickerBar->geometry()));
-        QVERIFY(editToolbar->rect().contains(stickerPalette->geometry()));
+        QVERIFY(editToolbar && optionsBar && stickerBar && stickerPalette);
+        QCOMPARE(stickerBar->parentWidget(), optionsBar);
+        QVERIFY(optionsBar->rect().contains(stickerBar->geometry()));
+        QVERIFY(optionsBar->rect().contains(stickerPalette->geometry()));
         QVERIFY(stickerBar->geometry().right() < stickerPalette->x());
         sticker->setSaved(true);
     }
@@ -6215,9 +6294,9 @@ class StartupSmokeTest final : public QObject
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
         auto* bar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolBar"));
         auto* editToolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
-        QVERIFY(menu && bar && editToolbar && !bar->isVisible());
-        QCOMPARE(bar->parentWidget(), editToolbar);
-        QVERIFY(editToolbar->rect().contains(bar->geometry()));
+        auto* optionsBar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditOptionsBar"));
+        QVERIFY(menu && bar && editToolbar && optionsBar && !bar->isVisible());
+        QCOMPARE(bar->parentWidget(), optionsBar);
         const int groupSlots[] = {0, 1, 4};
         const AnnotationType defaults[] = {AnnotationType::Rectangle, AnnotationType::Arrow,
                                            AnnotationType::Mosaic};
@@ -6230,7 +6309,7 @@ class StartupSmokeTest final : public QObject
             QTest::mouseClick(primary, Qt::LeftButton);
             QVERIFY(sticker->activeTool() == defaults[index]);
             QVERIFY(bar->isVisible());
-            QVERIFY(editToolbar->rect().contains(bar->geometry()));
+            QVERIFY(optionsBar->rect().contains(bar->geometry()));
             auto* variant = action->menu()->actions()[index == 2 ? 0 : index == 1 ? 0 : 1];
             variant->trigger();
             QVERIFY(sticker->activeTool() == variants[index]);

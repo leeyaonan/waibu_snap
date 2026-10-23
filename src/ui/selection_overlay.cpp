@@ -8,6 +8,7 @@
 #include "session/session_metrics.h"
 #include "ui/annotation_color_palette.h"
 #include "ui/annotation_text_edit.h"
+#include "ui/annotation_toolbar_style.h"
 #include "ui/ocr_dialog.h"
 #include "ui/scroll_capture_windows.h"
 #include "ui/text_recognition_task.h"
@@ -130,41 +131,14 @@ void SelectionOverlay::ensureToolbar()
         "padding: 0 8px; font-size: 12px; }"
         "QPushButton:hover { background: #3a3a3a; }"
         "QPushButton:checked { background: #a65316; color: white; }"));
-    const QString buttonsStyle =
-        QStringLiteral("QPushButton { background: transparent; color: #f2f2f2; padding: 0; border: "
-                       "none; border-radius: 6px; }"
-                       "QPushButton:hover { background: #3a3a3a; }"
-                       "QPushButton:checked { background: #a65316; }"
-                       "QPushButton:disabled { background: transparent; }");
-    toolbar_->setStyleSheet(
-        QStringLiteral("QWidget#selectionToolbar { background: #202020; border: 1px solid "
-                       "#3a3a3a; border-radius: 10px; }") +
-        buttonsStyle);
+    toolbar_->setStyleSheet(annotation_toolbar::pillStyle(QStringLiteral("selectionToolbar"), 10));
     optionsBar_->setStyleSheet(
-        QStringLiteral("QWidget#annotationOptionsBar { background: #202020; border: 1px solid "
-                       "#3a3a3a; border-radius: 8px; }") +
-        buttonsStyle);
+        annotation_toolbar::pillStyle(QStringLiteral("annotationOptionsBar"), 8));
     const auto makeButton =
         [](QWidget* parent, const QString& object, const QString& tip, ToolbarIcon icon)
-    {
-        auto* button = new QPushButton(parent);
-        button->setText(QString());
-        button->setObjectName(object);
-        button->setToolTip(tip);
-        button->setAccessibleName(tip);
-        button->setIcon(toolbarIcon(icon));
-        button->setIconSize(QSize(18, 18));
-        button->setFixedSize(28, 28);
-        button->setFocusPolicy(Qt::NoFocus);
-        return button;
-    };
+    { return annotation_toolbar::makeButton(parent, object, tip, icon); };
     const auto makeSeparator = [](QWidget* parent)
-    {
-        auto* separator = new QLabel(parent);
-        separator->setStyleSheet(QStringLiteral("background: #4a4a4a; border: none;"));
-        separator->setFixedSize(1, 22);
-        return separator;
-    };
+    { return annotation_toolbar::makeSeparator(parent); };
     for (int index = 0; index < 3; ++index)
         separators_.append(makeSeparator(toolbar_));
     // 二级变体按钮与颜色 / 线宽同处一条参数栏：toolBar_ 只作为透明内层容器，
@@ -173,7 +147,7 @@ void SelectionOverlay::ensureToolbar()
     toolBar_->setObjectName(QStringLiteral("annotationToolBar"));
     toolBar_->setStyleSheet(
         QStringLiteral("QWidget#annotationToolBar { background: transparent; border: none; }") +
-        buttonsStyle);
+        annotation_toolbar::flatButtonStyle());
     toolBar_->setFixedSize(68, 36);
     toolBar_->hide();
     selectButton_ = makeButton(toolbar_, QStringLiteral("selectToolButton"),

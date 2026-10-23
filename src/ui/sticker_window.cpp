@@ -4,6 +4,7 @@
 #include "output/annotation_renderer.h"
 #include "ui/annotation_color_palette.h"
 #include "ui/annotation_text_edit.h"
+#include "ui/annotation_toolbar_style.h"
 #include <QAction>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -13,6 +14,7 @@
 #include <QFocusEvent>
 #include <QGridLayout>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QInputMethod>
 #include <QKeyEvent>
 #include <QLabel>
@@ -34,6 +36,64 @@
 #include <cmath>
 namespace waibusnap
 {
+namespace
+{
+QRect stickerImageRect(const QWidget* sticker)
+{
+    return QRect(sticker->mapToGlobal(QPoint(0, 0)), sticker->size());
+}
+QRect stickerAvailableRect(const QWidget* sticker, const QRect& image)
+{
+    QScreen* screen = QGuiApplication::screenAt(image.center());
+    if (!screen && sticker->windowHandle())
+        screen = sticker->windowHandle()->screen();
+    return screen ? screen->availableGeometry() : image;
+}
+QPoint placeStickerChrome(const QSize& size, const QRect& image, const QRect& available, int gap)
+{
+    const int left = available.left();
+    const int top = available.top();
+    const int right = available.right();
+    const int bottom = available.bottom();
+    const auto clampX = [&](int x)
+    { return std::clamp(x, left, std::max(left, right - size.width() + 1)); };
+    const auto clampY = [&](int y)
+    { return std::clamp(y, top, std::max(top, bottom - size.height() + 1)); };
+    int x = clampX(image.center().x() - size.width() / 2);
+    int y = image.bottom() + 1 + gap;
+    if (y + size.height() - 1 <= bottom)
+        return {x, y};
+    y = image.top() - gap - size.height();
+    if (y >= top)
+        return {x, y};
+    x = image.right() + 1 + gap;
+    y = clampY(image.center().y() - size.height() / 2);
+    if (x + size.width() - 1 <= right)
+        return {x, y};
+    x = image.left() - gap - size.width();
+    if (x >= left)
+        return {x, y};
+    // 四边都没有空间时与截图全屏一致：临时落在图像内部底侧。
+    x = clampX(image.center().x() - size.width() / 2);
+    y = clampY(image.bottom() + 1 - size.height() - gap);
+    return {x, y};
+}
+QPoint placeStatusPill(const QSize& size, const QRect& anchor, const QRect& available, int gap)
+{
+    const int left = available.left();
+    const int top = available.top();
+    const int right = available.right();
+    const int bottom = available.bottom();
+    const auto clampX = [&](int x)
+    { return std::clamp(x, left, std::max(left, right - size.width() + 1)); };
+    int x = clampX(anchor.right() + 1 - size.width());
+    int y = anchor.bottom() + 1 + gap;
+    if (y + size.height() - 1 > bottom)
+        y = anchor.top() - gap - size.height();
+    y = std::clamp(y, top, std::max(top, bottom - size.height() + 1));
+    return {x, y};
+}
+}
 StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerActions actions,
                              qreal initialScale)
     : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
@@ -101,21 +161,25 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
         windowHandle()->setScreen(target);
     resize(stickerWindowSize(image_.size(), scale_, screenDpr()));
     move(position);
-    controls_ = new QWidget(this);
+    const Qt::WindowFlags chromeFlags = Qt::Tool | Qt::FramelessWindowHint |
+                                        Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus;
+    controls_ = new QWidget(this, chromeFlags);
     controls_->setObjectName(QStringLiteral("stickerControls"));
+    controls_->setAttribute(Qt::WA_ShowWithoutActivating);
+    controls_->setAttribute(Qt::WA_MacAlwaysShowToolWindow);
+    controls_->setAttribute(Qt::WA_TranslucentBackground);
     controls_->setCursor(Qt::ArrowCursor);
-    controls_->setStyleSheet(QStringLiteral(
-        "QWidget#stickerControls { background: #202020; border-radius: 4px; }"
-        "QPushButton { color: white; background: #404040; padding: 2px; border-radius: 3px; }"
-        "QPushButton:hover { background: #705030; }"
-        "QPushButton:disabled { color: #888888; }"));
-    auto* layout = new QGridLayout(controls_);
-    layout->setContentsMargins(2, 2, 2, 2);
-    layout->setSpacing(2);
-    const QString labels[] = {QStringLiteral("－"),   QStringLiteral("＋"),
-                              QStringLiteral("100%"), QStringLiteral("保存"),
-                              QStringLiteral("复制"), QStringLiteral("编辑"),
-                              QStringLiteral("×")};
+    auto* controlsWindowLayout = new QVBoxLayout(controls_);
+    controlsWindowLayout->setContentsMargins(0, 0, 0, 0);
+    controlsWindowLayout->setSpacing(0);
+    controlsBar_ = new QWidget(controls_);
+    controlsBar_->setObjectName(QStringLiteral("stickerControlsBar"));
+    controlsBar_->setStyleSheet(
+        annotation_toolbar::pillStyle(QStringLiteral("stickerControlsBar"), 10));
+    controlsWindowLayout->addWidget(controlsBar_);
+    auto* layout = new QHBoxLayout(controlsBar_);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(annotation_toolbar::gap);
     const QString names[] = {
         QStringLiteral("stickerZoomOutButton"), QStringLiteral("stickerZoomInButton"),
         QStringLiteral("stickerResetButton"),   QStringLiteral("stickerSaveButton"),
@@ -125,23 +189,38 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
                             QStringLiteral("恢复 100%"), QStringLiteral("保存原图"),
                             QStringLiteral("复制原图"),  QStringLiteral("编辑"),
                             QStringLiteral("关闭贴图")};
+    const ToolbarIcon icons[] = {ToolbarIcon::ZoomOut, ToolbarIcon::ZoomIn, ToolbarIcon::Save,
+                                 ToolbarIcon::Save,    ToolbarIcon::Copy,   ToolbarIcon::Edit,
+                                 ToolbarIcon::Cancel};
     auto* menu = new QMenu(this);
     setContextMenuPolicy(Qt::ActionsContextMenu);
     for (int index = 0; index < 7; ++index)
     {
-        auto* button = new QPushButton(labels[index], controls_);
-        button->setObjectName(names[index]);
-        button->setFocusPolicy(Qt::NoFocus);
+        QPushButton* button = nullptr;
+        if (index == 2)
+        {
+            button = new QPushButton(QStringLiteral("100%"), controlsBar_);
+            button->setObjectName(names[index]);
+            button->setFocusPolicy(Qt::NoFocus);
+            button->setFixedSize(54, annotation_toolbar::buttonSize);
+            button->setStyleSheet(QStringLiteral(
+                "QPushButton { background: transparent; color: #f2f2f2; border: none; "
+                "border-radius: 6px; }"
+                "QPushButton:hover { background: #3a3a3a; }"));
+            scaleButton_ = button;
+        }
+        else
+            button =
+                annotation_toolbar::makeButton(controls_, names[index], tips[index], icons[index]);
         button->setToolTip(tips[index]);
         button->setAccessibleName(tips[index]);
-        if (index == 2)
-            scaleButton_ = button;
         auto* action = new QAction(tips[index], this);
         addAction(action);
         menu->addAction(action);
         connect(action, &QAction::triggered, button, &QPushButton::click);
-        // 窄图自动分行；控制条覆盖显示层，不改变图片窗口尺寸和输出。
-        layout->addWidget(button, index / 7, index % 7);
+        layout->addWidget(button);
+        if (index == 2)
+            layout->addWidget(annotation_toolbar::makeSeparator(controlsBar_));
         connect(button, &QPushButton::clicked, this,
                 [this, index]
                 {
@@ -158,29 +237,51 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
                         close();
                 });
     }
-    // 极小贴图容不下七个控件时，用可发现的操作菜单保留全部入口。
-    moreButton_ = new QPushButton(QStringLiteral("⋯"), this);
-    moreButton_->setObjectName(QStringLiteral("stickerMoreButton"));
-    moreButton_->setFocusPolicy(Qt::NoFocus);
-    moreButton_->setToolTip(
-        QStringLiteral("贴图操作：缩放、100%、保存、复制、编辑、关闭；也可右键打开"));
-    moreButton_->setAccessibleName(QStringLiteral("贴图操作"));
-    moreButton_->hide();
-    connect(moreButton_, &QPushButton::clicked, this,
-            [this, menu] { menu->popup(mapToGlobal(QPoint(0, moreButton_->height()))); });
-    status_ = new QLabel(this);
+    controls_->installEventFilter(this);
+    controlsBar_->installEventFilter(this);
+    for (auto* child : controlsBar_->findChildren<QWidget*>())
+        child->installEventFilter(this);
+    controlsHideTimer_.setSingleShot(true);
+    connect(&controlsHideTimer_, &QTimer::timeout, this,
+            [this]
+            {
+                if (!controlsHovered_ && !hovered_)
+                    hideControls();
+            });
+    statusWindow_ = new QWidget(this, chromeFlags);
+    statusWindow_->setObjectName(QStringLiteral("stickerStatusWindow"));
+    statusWindow_->setAttribute(Qt::WA_ShowWithoutActivating);
+    statusWindow_->setAttribute(Qt::WA_MacAlwaysShowToolWindow);
+    statusWindow_->setAttribute(Qt::WA_TranslucentBackground);
+    auto* statusWindowLayout = new QVBoxLayout(statusWindow_);
+    statusWindowLayout->setContentsMargins(0, 0, 0, 0);
+    statusWindowLayout->setSpacing(0);
+    status_ = new QLabel(statusWindow_);
     status_->setObjectName(QStringLiteral("stickerStatus"));
     status_->setTextFormat(Qt::PlainText);
     status_->setAttribute(Qt::WA_TransparentForMouseEvents);
     status_->setWordWrap(true);
-    status_->setStyleSheet(QStringLiteral("color: white; background: #202020; padding: 3px;"));
+    status_->setStyleSheet(QStringLiteral(
+        "background: #202020; color: #e8e8e8; border-radius: 8px; padding: 0 10px;"));
+    statusWindowLayout->addWidget(status_);
+    statusWindow_->hide();
     status_->hide();
     statusTimeout_.setSingleShot(true);
-    connect(&statusTimeout_, &QTimer::timeout, status_, &QWidget::hide);
+    connect(&statusTimeout_, &QTimer::timeout, this,
+            [this]
+            {
+                if (status_)
+                    status_->hide();
+                if (statusWindow_)
+                    statusWindow_->hide();
+            });
     updateScaleLabel();
-    positionControls();
     controls_->hide();
     connect(windowHandle(), &QWindow::screenChanged, this, &StickerWindow::refreshScreenGeometry);
+    controls_->winId();
+    statusWindow_->winId();
+    configureStickerWindowBehavior(controls_->windowHandle(), false);
+    configureStickerWindowBehavior(statusWindow_->windowHandle(), false);
 }
 qreal StickerWindow::screenDpr() const
 {
@@ -193,6 +294,12 @@ void StickerWindow::setEditing(bool editing)
         return;
     if (!editing)
         finishText(true, false);
+    if (editing)
+    {
+        hideControls();
+        if (statusWindow_)
+            statusWindow_->hide();
+    }
     clearAnnotationSelection();
     selectMode_ = false;
     widthWheel_.reset();
@@ -263,6 +370,9 @@ void StickerWindow::moveEvent(QMoveEvent* event)
 {
     if (event->pos() != geometryPosition_.toPoint())
         geometryPosition_ = event->pos();
+    positionControls();
+    if (editing_)
+        positionEditToolbar();
 }
 void StickerWindow::setCenteredScale(qreal scale)
 {
@@ -306,6 +416,9 @@ void StickerWindow::refreshScreenGeometry()
         return;
     const QPointF center = geometryPosition_ + QPointF(width() / 2.0, height() / 2.0);
     applyGeometry(anchoredStickerPosition(geometryPosition_, size(), nextSize, center), nextSize);
+    positionControls();
+    if (editing_)
+        positionEditToolbar();
     update();
 }
 bool StickerWindow::event(QEvent* event)
@@ -341,29 +454,29 @@ void StickerWindow::positionControls()
 {
     if (!controls_)
         return;
-    auto* layout = static_cast<QGridLayout*>(controls_->layout());
-    const auto buttons = controls_->findChildren<QPushButton*>();
-    const int columns = std::clamp(width() / 44, 1, 7);
-    for (int index = 0; index < buttons.size(); ++index)
-        layout->addWidget(buttons[index], index / columns, index % columns);
     controls_->adjustSize();
-    controls_->move(std::max(0, (width() - controls_->width()) / 2), 0);
-    if (moreButton_)
-    {
-        const bool compact = controls_->width() > width() || controls_->height() > height();
-        controls_->setVisible(hovered_ && !compact && !editing_);
-        moreButton_->setGeometry(0, 0, std::min(44, width()), std::min(22, height()));
-        moreButton_->setVisible(hovered_ && compact && !editing_);
-    }
-    if (status_)
-    {
-        status_->setFixedWidth(width());
-        status_->adjustSize();
-        const int bottom =
-            editing_ && editToolbar_ && editToolbar_->isVisible() ? editToolbar_->y() : height();
-        const int top = toolBar_ && toolBar_->isVisible() ? toolBar_->y() : bottom;
-        status_->move(0, std::max(0, top - status_->height()));
-    }
+    const QRect image = stickerImageRect(this);
+    const QRect available = stickerAvailableRect(this, image);
+    controls_->move(placeStickerChrome(controls_->size(), image, available, 8));
+    if (editing_ || closed_)
+        controls_->hide();
+    if (statusWindow_ && statusWindow_->isVisible())
+        positionStatus();
+}
+void StickerWindow::showControls()
+{
+    if (!controls_ || editing_ || closed_)
+        return;
+    controlsHideTimer_.stop();
+    controls_->show();
+    controls_->raise();
+    positionControls();
+}
+void StickerWindow::hideControls()
+{
+    controlsHideTimer_.stop();
+    if (controls_)
+        controls_->hide();
 }
 void StickerWindow::resizeEvent(QResizeEvent*)
 {
@@ -374,16 +487,14 @@ void StickerWindow::resizeEvent(QResizeEvent*)
 void StickerWindow::enterEvent(QEnterEvent*)
 {
     hovered_ = true;
-    positionControls();
+    showControls();
 }
 void StickerWindow::leaveEvent(QEvent*)
 {
     hovered_ = false;
-    if (!saveDialogOpen_)
-    {
-        controls_->hide();
-        moreButton_->hide();
-    }
+    if (editing_)
+        return;
+    controlsHideTimer_.start(180);
 }
 void StickerWindow::mousePressEvent(QMouseEvent* event)
 {
@@ -575,13 +686,6 @@ void StickerWindow::wheelEvent(QWheelEvent* event)
     if (closed_ || saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_ ||
         quitInteraction_)
         return;
-    for (QWidget* panel : {controls_, static_cast<QWidget*>(moreButton_), editToolbar_, toolBar_,
-                           static_cast<QWidget*>(editMoreButton_)})
-        if (panel && panel->isVisible() && panel->geometry().contains(event->position().toPoint()))
-        {
-            event->accept();
-            return;
-        }
     if (editing_ && activeTool_ && annotationUsesLineWidth(*activeTool_))
     {
         if (!rect().contains(event->position().toPoint()))
@@ -645,6 +749,7 @@ void StickerWindow::showStatus(const QString& text, bool temporary)
     status_->setText(text);
     status_->setToolTip(text);
     setToolTip(text);
+    statusWindow_->show();
     status_->show();
     positionControls();
     if (temporary)
@@ -673,7 +778,6 @@ bool StickerWindow::saveImage()
     saveDialogOpen_ = true;
     dragging_ = false;
     controls_->setEnabled(false);
-    moreButton_->setEnabled(false);
     updateEditToolbar();
     QPointer<StickerWindow> self(this);
     const ImageSaveActions actions = actions_;
@@ -690,7 +794,6 @@ bool StickerWindow::saveImage()
     if (closed_)
         return false;
     controls_->setEnabled(!quitInteraction_);
-    moreButton_->setEnabled(!quitInteraction_);
     updateEditToolbar();
     if (target.path.isEmpty())
     {
@@ -718,6 +821,15 @@ bool StickerWindow::finishSave(const ImageFileResult& output)
     saved_ = true;
     showStatus(QStringLiteral("已保存：%1").arg(output.path), true);
     return true;
+}
+void StickerWindow::hideEvent(QHideEvent* event)
+{
+    hideControls();
+    if (editToolbar_)
+        editToolbar_->hide();
+    if (statusWindow_)
+        statusWindow_->hide();
+    QWidget::hideEvent(event);
 }
 void StickerWindow::forceClose()
 {
@@ -777,6 +889,12 @@ void StickerWindow::closeEvent(QCloseEvent* event)
     closed_ = true;
     dragging_ = false;
     statusTimeout_.stop();
+    if (controls_)
+        controls_->hide();
+    if (editToolbar_)
+        editToolbar_->hide();
+    if (statusWindow_)
+        statusWindow_->hide();
     focusSession_.reset();
     event->accept();
     emit closed();
@@ -786,69 +904,81 @@ void StickerWindow::ensureEditToolbar()
     if (editToolbar_)
         return;
     style_.fontFamily = font().family();
-    editToolbar_ = new QWidget(this);
+    const Qt::WindowFlags chromeFlags = Qt::Tool | Qt::FramelessWindowHint |
+                                        Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus;
+    editToolbar_ = new QWidget(this, chromeFlags);
     editToolbar_->setObjectName(QStringLiteral("stickerEditToolbar"));
+    editToolbar_->setAttribute(Qt::WA_ShowWithoutActivating);
+    editToolbar_->setAttribute(Qt::WA_MacAlwaysShowToolWindow);
+    editToolbar_->setAttribute(Qt::WA_TranslucentBackground);
     editToolbar_->setCursor(Qt::ArrowCursor);
     editToolbar_->setStyleSheet(
-        QStringLiteral("QWidget#stickerEditToolbar { background: #202020; border-radius: 4px; }"
-                       "QPushButton, QComboBox { color: white; background: #404040; padding: 3px; }"
-                       "QPushButton:checked { background: #a65316; }"
-                       "QPushButton:disabled { color: #888888; }"
-                       "QComboBox QAbstractItemView { color: white; background: #303030; }"));
+        QStringLiteral("QWidget#stickerEditToolbar { background: transparent; }"));
     auto* layout = new QVBoxLayout(editToolbar_);
-    layout->setContentsMargins(2, 2, 2, 2);
-    layout->setSpacing(2);
-    auto* tools = new QGridLayout;
-    tools->setSpacing(2);
-    layout->addLayout(tools);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
+
+    editMainBar_ = new QWidget(editToolbar_);
+    editMainBar_->setObjectName(QStringLiteral("stickerEditMainBar"));
+    editMainBar_->setStyleSheet(
+        annotation_toolbar::pillStyle(QStringLiteral("stickerEditMainBar"), 10));
+    editMainLayout_ = new QGridLayout(editMainBar_);
+    editMainLayout_->setContentsMargins(8, 8, 8, 8);
+    editMainLayout_->setSpacing(annotation_toolbar::gap);
+    layout->addWidget(editMainBar_);
+
+    editOptionsBar_ = new QWidget(editToolbar_);
+    editOptionsBar_->setObjectName(QStringLiteral("stickerEditOptionsBar"));
+    editOptionsBar_->setStyleSheet(
+        annotation_toolbar::pillStyle(QStringLiteral("stickerEditOptionsBar"), 8) +
+        QStringLiteral("QComboBox { color: #f2f2f2; background: #404040; padding: 3px; "
+                       "border: none; border-radius: 4px; }"
+                       "QComboBox QAbstractItemView { color: #f2f2f2; background: #303030; }"));
+    editOptionsLayout_ = new QHBoxLayout(editOptionsBar_);
+    editOptionsLayout_->setContentsMargins(4, 4, 4, 4);
+    editOptionsLayout_->setSpacing(annotation_toolbar::gap);
+    layout->addWidget(editOptionsBar_);
+    editOptionsBar_->hide();
+
     editMenu_ = new QMenu(this);
     editMenu_->setObjectName(QStringLiteral("stickerEditMenu"));
-    // 二级变体与颜色 / 线宽 / 字号同处参数行；内层只做透明布局容器，
-    // 背景仍由 editToolbar_ 提供，避免主栏上方再浮一条独立黑条。
-    toolBar_ = new QWidget(editToolbar_);
+    toolBar_ = new QWidget(editOptionsBar_);
     toolBar_->setObjectName(QStringLiteral("stickerEditToolBar"));
     toolBar_->setCursor(Qt::ArrowCursor);
     toolBar_->setStyleSheet(
-        QStringLiteral("QWidget#stickerEditToolBar { background: transparent; border: none; }"
-                       "QPushButton { background: transparent; border: none; border-radius: 6px; }"
-                       "QPushButton:hover { background: #3a3a3a; }"
-                       "QPushButton:checked { background: #a65316; }"));
+        QStringLiteral("QWidget#stickerEditToolBar { background: transparent; border: none; }") +
+        annotation_toolbar::flatButtonStyle());
     toolBar_->setFixedSize(68, 36);
     toolBar_->hide();
+    editOptionsLayout_->addWidget(toolBar_);
+
     const auto stickerName = [](QString name)
     {
         name[0] = name[0].toUpper();
         return QStringLiteral("stickerEdit") + name;
     };
-    selectButton_ = new QPushButton(QStringLiteral("选择"), editToolbar_);
-    selectButton_->setObjectName(QStringLiteral("stickerEditSelectToolButton"));
-    selectButton_->setToolTip(QStringLiteral("选择标注：点击选中，拖动移动，拖动上方圆点旋转"));
-    selectButton_->setAccessibleName(selectButton_->toolTip());
-    selectButton_->setIcon(toolbarIcon(ToolbarIcon::Select));
-    selectButton_->setFocusPolicy(Qt::NoFocus);
-    selectButton_->setCheckable(true);
+    selectButton_ = annotation_toolbar::makeButton(
+        editMainBar_, QStringLiteral("stickerEditSelectToolButton"),
+        QStringLiteral("选择标注：点击选中，拖动移动，拖动上方圆点旋转"), ToolbarIcon::Select,
+        true);
     connect(selectButton_, &QPushButton::clicked, this, &StickerWindow::toggleSelectMode);
     for (int slot = 0; slot < int(toolTypes_.size()); ++slot)
     {
         const auto type = toolTypes_[slot];
-        auto* button = new QPushButton(annotationToolName(type), editToolbar_);
-        button->setObjectName(stickerName(annotationGroupObject(slot)));
-        button->setToolTip(annotationToolTip(type));
-        button->setAccessibleName(button->toolTip());
-        button->setIcon(toolbarIcon(static_cast<ToolbarIcon>(type)));
-        button->setFocusPolicy(Qt::NoFocus);
-        button->setCheckable(true);
+        auto* button = annotation_toolbar::makeButton(
+            editMainBar_, stickerName(annotationGroupObject(slot)), annotationToolTip(type),
+            static_cast<ToolbarIcon>(type), true);
         toolButtons_.append(button);
-        tools->addWidget(button, 0, slot);
         connect(button, &QPushButton::clicked, this,
                 [this, slot] { activateTool(toolTypes_[slot]); });
-        auto* action = editMenu_->addAction(button->icon(), button->text());
+        auto* action = editMenu_->addAction(button->icon(), annotationToolName(type));
         action->setData(button->objectName());
         action->setCheckable(true);
         if (slot == 0 || slot == 1 || slot == 4)
         {
             auto* menu = new QMenu(editMenu_);
             action->setMenu(menu);
+            action->setText(annotationToolName(type));
         }
         else
             connect(action, &QAction::triggered, button, &QPushButton::click);
@@ -864,8 +994,8 @@ void StickerWindow::ensureEditToolbar()
                                : QStringLiteral("使用%1").arg(annotationToolName(type)));
         button->setAccessibleName(button->toolTip());
         button->setIcon(toolbarIcon(static_cast<ToolbarIcon>(type)));
-        button->setIconSize(QSize(18, 18));
-        button->setFixedSize(28, 28);
+        button->setIconSize(QSize(annotation_toolbar::iconSize, annotation_toolbar::iconSize));
+        button->setFixedSize(annotation_toolbar::buttonSize, annotation_toolbar::buttonSize);
         button->setFocusPolicy(Qt::NoFocus);
         button->setCheckable(true);
         subtoolButtons_.append(button);
@@ -877,17 +1007,14 @@ void StickerWindow::ensureEditToolbar()
         action->setCheckable(true);
         connect(action, &QAction::triggered, this, [this, type] { activateTool(type, false); });
     }
-    auto* options = new QHBoxLayout;
-    layout->addLayout(options);
-    options->addWidget(toolBar_);
-    colors_ = new AnnotationColorPalette(editToolbar_, QStringLiteral("stickerEditColor"),
+    colors_ = new AnnotationColorPalette(editOptionsBar_, QStringLiteral("stickerEditColor"),
                                          [this](int index)
                                          {
                                              finishText(true);
                                              style_.color = annotationColors()[index];
                                              updateEditToolbar();
                                          });
-    options->addWidget(colors_);
+    editOptionsLayout_->addWidget(colors_);
     auto* colorMenu = editMenu_->addMenu(QStringLiteral("标注颜色"));
     colorMenu->menuAction()->setData(colors_->objectName());
     for (auto* button : colors_->findChildren<QPushButton*>())
@@ -897,18 +1024,18 @@ void StickerWindow::ensureEditToolbar()
         action->setCheckable(true);
         connect(action, &QAction::triggered, button, &QPushButton::click);
     }
-    widthLabel_ = new QLabel(editToolbar_);
+    widthLabel_ = new QLabel(editOptionsBar_);
     widthLabel_->setObjectName(QStringLiteral("stickerEditWidthLabel"));
-    widthLabel_->setStyleSheet(QStringLiteral("color: white;"));
-    options->addWidget(widthLabel_);
+    widthLabel_->setStyleSheet(QStringLiteral("color: #e8e8e8; background: transparent;"));
+    editOptionsLayout_->addWidget(widthLabel_);
     const auto makeFormatButton =
         [this](const QString& text, const QString& object, const QString& tip, int style)
     {
-        auto* button = new QPushButton(text, editToolbar_);
+        auto* button = new QPushButton(text, editOptionsBar_);
         button->setObjectName(object);
         button->setToolTip(tip);
         button->setAccessibleName(tip);
-        button->setFixedSize(28, 28);
+        button->setFixedSize(annotation_toolbar::buttonSize, annotation_toolbar::buttonSize);
         button->setCheckable(true);
         button->setFocusPolicy(Qt::NoFocus);
         QFont font = button->font();
@@ -928,15 +1055,31 @@ void StickerWindow::ensureEditToolbar()
     underlineButton_ =
         makeFormatButton(QStringLiteral("U"), QStringLiteral("stickerEditTextUnderlineButton"),
                          QStringLiteral("下划线（%1）").arg(shortcutText(Qt::Key_U)), 2);
-    options->addWidget(boldButton_);
-    options->addWidget(italicButton_);
-    options->addWidget(underlineButton_);
-    textSizeLabel_ = new QLabel(editToolbar_);
+    editOptionsLayout_->addWidget(boldButton_);
+    editOptionsLayout_->addWidget(italicButton_);
+    editOptionsLayout_->addWidget(underlineButton_);
+    textSizeLabel_ = new QLabel(editOptionsBar_);
     textSizeLabel_->setObjectName(QStringLiteral("stickerEditTextSizeLabel"));
-    textSizeLabel_->setStyleSheet(QStringLiteral("color: white;"));
+    textSizeLabel_->setStyleSheet(
+        QStringLiteral("color: #e8e8e8; background: transparent; font-size: 12px;"));
     textSizeLabel_->setAlignment(Qt::AlignCenter);
-    options->addWidget(textSizeLabel_);
-    sizes_ = new QComboBox(editToolbar_);
+    editOptionsLayout_->addWidget(textSizeLabel_);
+    const QString sizeNames[] = {QStringLiteral("小"), QStringLiteral("中"), QStringLiteral("大")};
+    for (int index = 0; index < int(annotationTextSizes.size()); ++index)
+    {
+        auto* button = annotation_toolbar::makeButton(
+            editOptionsBar_, QStringLiteral("stickerEditTextSize%1Button").arg(index),
+            QStringLiteral("%1 %2 像素").arg(sizeNames[index]).arg(annotationTextSizes[index]),
+            ToolbarIcon::TextSize, true);
+        const qreal scales[] = {0.72, 0.86, 1.0};
+        button->setIcon(toolbarIcon(ToolbarIcon::TextSize, {}, scales[index]));
+        button->hide();
+        textSizeButtons_.append(button);
+        editOptionsLayout_->addWidget(button);
+        connect(button, &QPushButton::clicked, this,
+                [this, index] { setTextSize(annotationTextSizes[index]); });
+    }
+    sizes_ = new QComboBox(editOptionsBar_);
     sizes_->setObjectName(QStringLiteral("stickerEditTextSizeCombo"));
     for (const int size : annotationTextSizes)
         sizes_->addItem(QStringLiteral("字 %1px").arg(size));
@@ -944,7 +1087,7 @@ void StickerWindow::ensureEditToolbar()
     sizes_->setFocusPolicy(Qt::NoFocus);
     sizes_->setToolTip(QStringLiteral("文本字号（物理像素）"));
     sizes_->setAccessibleName(sizes_->toolTip());
-    options->addWidget(sizes_);
+    sizes_->hide();
     auto* sizeMenu = editMenu_->addMenu(sizes_->toolTip());
     sizeMenu->menuAction()->setData(sizes_->objectName());
     for (int index = 0; index < sizes_->count(); ++index)
@@ -970,32 +1113,48 @@ void StickerWindow::ensureEditToolbar()
             [this] { toggleTextStyle(TextStyleToggle::Italic); });
     connect(underlineButton_, &QPushButton::clicked, this,
             [this] { toggleTextStyle(TextStyleToggle::Underline); });
-    auto* outputs = new QHBoxLayout;
-    layout->addLayout(outputs);
-    const auto makeButton = [&](const QString& label, const QString& name)
-    {
-        auto* button = new QPushButton(label, editToolbar_);
-        button->setObjectName(name);
-        button->setFocusPolicy(Qt::NoFocus);
-        outputs->addWidget(button);
-        auto* action = editMenu_->addAction(label);
-        action->setData(name);
-        connect(action, &QAction::triggered, button, &QPushButton::click);
-        return button;
-    };
-    undoButton_ =
-        makeButton(QStringLiteral("撤销"), QStringLiteral("stickerEditUndoAnnotationButton"));
-    redoButton_ =
-        makeButton(QStringLiteral("重做"), QStringLiteral("stickerEditRedoAnnotationButton"));
-    auto* save = makeButton(QStringLiteral("保存"), QStringLiteral("stickerEditSaveButton"));
-    auto* copy = makeButton(QStringLiteral("复制"), QStringLiteral("stickerEditCopyButton"));
-    auto* done = makeButton(QStringLiteral("完成"), QStringLiteral("stickerEditDoneButton"));
+
+    editSeparator1_ = annotation_toolbar::makeSeparator(editMainBar_);
+    editSeparator2_ = annotation_toolbar::makeSeparator(editMainBar_);
+    undoButton_ = annotation_toolbar::makeButton(
+        editMainBar_, QStringLiteral("stickerEditUndoAnnotationButton"),
+        QStringLiteral("撤销标注（%1）")
+            .arg(QKeySequence(QKeySequence::Undo).toString(QKeySequence::NativeText)),
+        ToolbarIcon::Undo);
+    redoButton_ = annotation_toolbar::makeButton(
+        editMainBar_, QStringLiteral("stickerEditRedoAnnotationButton"),
+        QStringLiteral("重做标注（%1）")
+            .arg(QKeySequence(QKeySequence::Redo).toString(QKeySequence::NativeText)),
+        ToolbarIcon::Redo);
+    saveButton_ =
+        annotation_toolbar::makeButton(editMainBar_, QStringLiteral("stickerEditSaveButton"),
+                                       QStringLiteral("保存（快速保存）"), ToolbarIcon::Save);
+    copyButton_ = annotation_toolbar::makeButton(
+        editMainBar_, QStringLiteral("stickerEditCopyButton"),
+        QStringLiteral("复制（%1）")
+            .arg(QKeySequence(QKeySequence::Copy).toString(QKeySequence::NativeText)),
+        ToolbarIcon::Copy);
+    doneButton_ =
+        annotation_toolbar::makeButton(editMainBar_, QStringLiteral("stickerEditDoneButton"),
+                                       QStringLiteral("完成编辑"), ToolbarIcon::Done);
     connect(undoButton_, &QPushButton::clicked, this, &StickerWindow::undoAnnotation);
     connect(redoButton_, &QPushButton::clicked, this, &StickerWindow::redoAnnotation);
-    connect(save, &QPushButton::clicked, this, &StickerWindow::saveImage);
-    connect(copy, &QPushButton::clicked, this, &StickerWindow::copyImage);
-    connect(done, &QPushButton::clicked, this, [this] { setEditing(false); });
-    auto* selectAction = editMenu_->addAction(selectButton_->icon(), selectButton_->text());
+    connect(saveButton_, &QPushButton::clicked, this, &StickerWindow::saveImage);
+    connect(copyButton_, &QPushButton::clicked, this, &StickerWindow::copyImage);
+    connect(doneButton_, &QPushButton::clicked, this, [this] { setEditing(false); });
+    const QList<QPair<QString, QPushButton*>> outputActions = {
+        {QStringLiteral("撤销"), undoButton_},
+        {QStringLiteral("重做"), redoButton_},
+        {QStringLiteral("保存"), saveButton_},
+        {QStringLiteral("复制"), copyButton_},
+        {QStringLiteral("完成"), doneButton_}};
+    for (const auto& item : outputActions)
+    {
+        auto* action = editMenu_->addAction(item.second->icon(), item.first);
+        action->setData(item.second->objectName());
+        connect(action, &QAction::triggered, item.second, &QPushButton::click);
+    }
+    auto* selectAction = editMenu_->addAction(selectButton_->icon(), QStringLiteral("选择"));
     selectAction->setData(selectButton_->objectName());
     selectAction->setCheckable(true);
     selectAction->setToolTip(selectButton_->toolTip());
@@ -1004,64 +1163,136 @@ void StickerWindow::ensureEditToolbar()
     redoShortcut_ = new QShortcut(QKeySequence::Redo, this);
     connect(undoShortcut_, &QShortcut::activated, this, &StickerWindow::undoAnnotation);
     connect(redoShortcut_, &QShortcut::activated, this, &StickerWindow::redoAnnotation);
-    editMoreButton_ = new QPushButton(QStringLiteral("⋯"), this);
-    editMoreButton_->setObjectName(QStringLiteral("stickerEditMoreButton"));
-    editMoreButton_->setFocusPolicy(Qt::NoFocus);
-    editMoreButton_->setToolTip(QStringLiteral(
-        "编辑工具：图形、文本、遮盖、马赛克、文字格式、样式、撤销、重做、保存、复制、完成"));
-    connect(editMoreButton_, &QPushButton::clicked, this,
-            [this]
-            {
-                finishText(true);
-                updateEditToolbar();
-                editMenu_->popup(mapToGlobal(QPoint(0, editMoreButton_->height())));
-            });
-    for (auto* panel : {editToolbar_, toolBar_})
+    for (auto* panel : {editToolbar_, editMainBar_, editOptionsBar_, toolBar_})
     {
         panel->installEventFilter(this);
         for (auto* child : panel->findChildren<QWidget*>())
             child->installEventFilter(this);
     }
+    editToolbar_->winId();
+    configureStickerWindowBehavior(editToolbar_->windowHandle(), false);
+    editToolbar_->hide();
+}
+void StickerWindow::layoutEditMainBar(int availableWidth)
+{
+    if (!editMainLayout_)
+        return;
+    while (QLayoutItem* item = editMainLayout_->takeAt(0))
+        delete item;
+    QVector<QWidget*> tools = {selectButton_};
+    for (auto* button : toolButtons_)
+        tools.append(button);
+    QVector<QWidget*> actions = {undoButton_, redoButton_, saveButton_, copyButton_, doneButton_};
+    const int naturalWidth =
+        16 + int(tools.size() + actions.size()) * annotation_toolbar::buttonSize +
+        int(tools.size() + actions.size() + 1) * annotation_toolbar::gap + 2 * 1;
+    const bool singleRow = naturalWidth <= availableWidth;
+    editSeparator1_->setVisible(singleRow);
+    editSeparator2_->setVisible(singleRow);
+    if (singleRow)
+    {
+        int column = 0;
+        for (auto* button : tools)
+            editMainLayout_->addWidget(button, 0, column++);
+        editMainLayout_->addWidget(editSeparator1_, 0, column++);
+        editMainLayout_->addWidget(undoButton_, 0, column++);
+        editMainLayout_->addWidget(redoButton_, 0, column++);
+        editMainLayout_->addWidget(editSeparator2_, 0, column++);
+        editMainLayout_->addWidget(saveButton_, 0, column++);
+        editMainLayout_->addWidget(copyButton_, 0, column++);
+        editMainLayout_->addWidget(doneButton_, 0, column++);
+        editMainBar_->setFixedSize(naturalWidth, annotation_toolbar::barHeight);
+        return;
+    }
+    const int columns = std::clamp((availableWidth - 16 + annotation_toolbar::gap) /
+                                       (annotation_toolbar::buttonSize + annotation_toolbar::gap),
+                                   1, int(tools.size() + actions.size()));
+    const int rows = (int(tools.size() + actions.size()) + columns - 1) / columns;
+    int index = 0;
+    for (auto* button : tools)
+    {
+        editMainLayout_->addWidget(button, index / columns, index % columns);
+        ++index;
+    }
+    for (auto* button : actions)
+    {
+        editMainLayout_->addWidget(button, index / columns, index % columns);
+        ++index;
+    }
+    const int width =
+        16 + columns * annotation_toolbar::buttonSize + (columns - 1) * annotation_toolbar::gap;
+    const int height =
+        16 + rows * annotation_toolbar::buttonSize + (rows - 1) * annotation_toolbar::gap;
+    editMainBar_->setFixedSize(width, height);
+}
+void StickerWindow::layoutEditOptions(int availableWidth)
+{
+    if (!editOptionsBar_)
+        return;
+    const bool textTool = !selectMode_ && activeTool_ && *activeTool_ == AnnotationType::Text;
+    textSizeLabel_->setVisible(textTool && availableWidth >= 340);
+    editOptionsBar_->setMaximumWidth(std::max(240, availableWidth));
+    editOptionsBar_->adjustSize();
+}
+void StickerWindow::positionEditToolbar()
+{
+    if (!editToolbar_)
+        return;
+    if (!editing_ || closed_)
+    {
+        editToolbar_->hide();
+        return;
+    }
+    editToolbar_->adjustSize();
+    const QRect image = stickerImageRect(this);
+    const QRect available = stickerAvailableRect(this, image);
+    editToolbar_->move(placeStickerChrome(editToolbar_->size(), image, available, 8));
+    editToolbar_->show();
+    editToolbar_->raise();
+    // 工具条是独立的无焦点浮层；重新确认主窗口为 active，避免浮层成为激活窗口。
+    if (!textEditor_ || !textEditor_->isVisible())
+        activateWindow();
+    positionStatus();
+}
+void StickerWindow::positionStatus()
+{
+    if (!status_ || !statusWindow_ || statusWindow_->isHidden())
+        return;
+    const QRect image = stickerImageRect(this);
+    const QRect available = stickerAvailableRect(this, image);
+    const int maximumWidth = std::max(160, available.width() - 20);
+    const int naturalWidth = status_->fontMetrics().horizontalAdvance(status_->text()) + 20;
+    const int width = std::clamp(naturalWidth, 160, std::min(maximumWidth, 520));
+    status_->setFixedWidth(width);
+    status_->setFixedHeight(std::max(26, status_->heightForWidth(width) + 8));
+    statusWindow_->adjustSize();
+    QRect anchor = image;
+    if (editing_ && editToolbar_ && editToolbar_->isVisible())
+        anchor = editToolbar_->frameGeometry();
+    else if (controls_ && controls_->isVisible())
+        anchor = controls_->frameGeometry();
+    statusWindow_->move(placeStatusPill(statusWindow_->size(), anchor, available, 8));
+    statusWindow_->raise();
 }
 void StickerWindow::updateEditToolbar()
 {
     if (!editToolbar_)
         return;
+    if (!editing_)
+    {
+        editToolbar_->hide();
+        return;
+    }
     const bool available =
         editing_ && !saveDialogOpen_ && !confirmingClose_ && !quitInteraction_ && !draft_;
     editToolbar_->setEnabled(available);
-    editMoreButton_->setEnabled(available);
     undoButton_->setEnabled(history_.canUndo());
     redoButton_->setEnabled(history_.canRedo());
     // AnnotationTextEdit 的 ShortcutOverride 保证输入期间优先使用文本自身的历史。
     undoShortcut_->setEnabled(available);
     redoShortcut_->setEnabled(available);
-    widthLabel_->setVisible(!selectMode_ && activeTool_ && annotationUsesLineWidth(*activeTool_));
-    widthLabel_->setText(QStringLiteral("线宽 %1px").arg(style_.lineWidth));
-    widthLabel_->setToolTip(QStringLiteral("画布上滚轮调整线宽（1–24px，每格 1px）"));
-    widthLabel_->setAccessibleName(widthLabel_->text() + QStringLiteral("；") +
-                                   widthLabel_->toolTip());
-    colors_->setColor(style_.color);
-    colors_->setEnabled(!selectMode_ && activeTool_ != AnnotationType::Mosaic);
-    const bool textTool = !selectMode_ && activeTool_ && *activeTool_ == AnnotationType::Text;
-    sizes_->setEnabled(textTool);
-    sizes_->setVisible(textTool);
-    textSizeLabel_->setVisible(textTool);
-    textSizeLabel_->setText(QStringLiteral("字号 %1px").arg(style_.textSize));
-    textSizeLabel_->setToolTip(QStringLiteral("画布上滚轮调整字号（9–96px，每格 1px）"));
-    textSizeLabel_->setAccessibleName(textSizeLabel_->text() + QStringLiteral("；") +
-                                      textSizeLabel_->toolTip());
-    for (auto* button : {boldButton_, italicButton_, underlineButton_})
-        button->setVisible(textTool);
-    boldButton_->setChecked(style_.bold);
-    italicButton_->setChecked(style_.italic);
-    underlineButton_->setChecked(style_.underline);
-    auto* grid = static_cast<QGridLayout*>(
-        static_cast<QVBoxLayout*>(editToolbar_->layout())->itemAt(0)->layout());
-    const int columns = std::clamp(width() / 44, 1, 5);
     selectButton_->setEnabled(available);
     selectButton_->setChecked(selectMode_);
-    grid->addWidget(selectButton_, 0, 0);
     for (int index = 0; index < toolButtons_.size(); ++index)
     {
         const auto type = toolTypes_[index];
@@ -1069,12 +1300,12 @@ void StickerWindow::updateEditToolbar()
         button->setChecked(!selectMode_ && activeTool_ == type);
         if (button->toolTip() != annotationToolTip(type))
         {
-            button->setText(annotationToolName(type));
             button->setToolTip(annotationToolTip(type));
             button->setAccessibleName(button->toolTip());
             button->setIcon(toolbarIcon(static_cast<ToolbarIcon>(type)));
         }
-        grid->addWidget(toolButtons_[index], (index + 1) / columns, (index + 1) % columns);
+        if (index < editMenu_->actions().size())
+            editMenu_->actions()[index]->setText(annotationToolName(type));
     }
     const int activeSlot = activeTool_ ? annotationToolSlot(*activeTool_) : -1;
     const bool grouped = activeSlot == 0 || activeSlot == 1 || activeSlot == 4;
@@ -1091,15 +1322,54 @@ void StickerWindow::updateEditToolbar()
             x += 32;
         }
     }
+    const bool textTool = !selectMode_ && activeTool_ && *activeTool_ == AnnotationType::Text;
+    const bool colorsVisible =
+        !selectMode_ && activeTool_ && *activeTool_ != AnnotationType::Mosaic;
+    const bool widths = !selectMode_ && activeTool_ && annotationUsesLineWidth(*activeTool_);
+    const bool showTools = !selectMode_ && grouped;
+    const bool showOptions = showTools || colorsVisible || widths || textTool;
     toolBar_->setEnabled(available);
-    toolBar_->setVisible(available && grouped);
+    toolBar_->setVisible(showTools);
+    colors_->setColor(style_.color);
+    colors_->setEnabled(!selectMode_ && activeTool_ != AnnotationType::Mosaic);
+    colors_->setVisible(colorsVisible);
+    widthLabel_->setVisible(widths);
+    widthLabel_->setText(QStringLiteral("线宽 %1px").arg(style_.lineWidth));
+    widthLabel_->setToolTip(QStringLiteral("画布上滚轮调整线宽（1–24px，每格 1px）"));
+    widthLabel_->setAccessibleName(widthLabel_->text() + QStringLiteral("；") +
+                                   widthLabel_->toolTip());
+    widthLabel_->setAlignment(Qt::AlignCenter);
+    widthLabel_->setFixedWidth(64);
+    sizes_->setEnabled(textTool);
+    sizes_->setVisible(false);
+    textSizeLabel_->setVisible(textTool);
+    const QRect image = stickerImageRect(this);
+    const QRect availableRect = stickerAvailableRect(this, image);
+    const bool showSizePresets = textTool && availableRect.width() - 20 >= 440;
+    for (int index = 0; index < textSizeButtons_.size(); ++index)
+    {
+        auto* button = textSizeButtons_[index];
+        button->setVisible(showSizePresets);
+        button->setEnabled(textTool);
+        button->setChecked(style_.textSize == annotationTextSizes[index]);
+    }
+    textSizeLabel_->setText(QStringLiteral("字号 %1px").arg(style_.textSize));
+    textSizeLabel_->setToolTip(QStringLiteral("画布上滚轮调整字号（9–96px，每格 1px）"));
+    textSizeLabel_->setAccessibleName(textSizeLabel_->text() + QStringLiteral("；") +
+                                      textSizeLabel_->toolTip());
+    for (auto* button : {boldButton_, italicButton_, underlineButton_})
+    {
+        button->setVisible(textTool);
+        button->setEnabled(textTool);
+    }
+    boldButton_->setChecked(style_.bold);
+    italicButton_->setChecked(style_.italic);
+    underlineButton_->setChecked(style_.underline);
+    editOptionsBar_->setVisible(showOptions);
+    layoutEditMainBar(availableRect.width() - 20);
+    layoutEditOptions(availableRect.width() - 20);
     editToolbar_->adjustSize();
-    const bool compact = editToolbar_->width() > width() || editToolbar_->height() > height();
-    editToolbar_->move(std::max(0, (width() - editToolbar_->width()) / 2),
-                       std::max(0, height() - editToolbar_->height()));
-    editToolbar_->setVisible(editing_ && !compact);
-    editMoreButton_->setGeometry(0, 0, std::min(44, width()), std::min(22, height()));
-    editMoreButton_->setVisible(editing_ && compact);
+    positionEditToolbar();
     const auto syncMenu = [&](const auto& self, QMenu* menu) -> void
     {
         for (QAction* action : menu->actions())
@@ -1132,7 +1402,6 @@ void StickerWindow::updateEditToolbar()
     syncMenu(syncMenu, editMenu_);
     if (formatMenu_)
         formatMenu_->menuAction()->setEnabled(available && textTool);
-    positionControls();
 }
 void StickerWindow::activateTool(AnnotationType type, bool toggle)
 {
@@ -1332,7 +1601,10 @@ void StickerWindow::markDirty()
 {
     saved_ = false;
     statusTimeout_.stop();
-    status_->hide();
+    if (status_)
+        status_->hide();
+    if (statusWindow_)
+        statusWindow_->hide();
 }
 QPointF StickerWindow::physicalPoint(QPointF point) const
 {
@@ -1542,6 +1814,22 @@ void StickerWindow::adjustTextSize(QPoint angleDelta, QPoint pixelDelta, Qt::Scr
 }
 bool StickerWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    auto* watchedWidget = qobject_cast<QWidget*>(watched);
+    if (watchedWidget && controls_ &&
+        (watchedWidget == controls_ || controls_->isAncestorOf(watchedWidget)))
+    {
+        if (event->type() == QEvent::Enter)
+        {
+            controlsHovered_ = true;
+            controlsHideTimer_.stop();
+        }
+        else if (event->type() == QEvent::Leave)
+        {
+            controlsHovered_ = false;
+            if (!hovered_ && !editing_)
+                controlsHideTimer_.start(180);
+        }
+    }
     // 格式按钮按下即应用；不抢编辑框焦点，避免 FocusOut 提前提交文本。
     if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
     {
@@ -1731,7 +2019,6 @@ void StickerWindow::setQuitInteraction(bool busy)
     dragging_ = false;
     draft_.reset();
     controls_->setEnabled(!busy && !saveDialogOpen_);
-    moreButton_->setEnabled(!busy && !saveDialogOpen_);
     for (QAction* action : actions())
         action->setEnabled(!busy && !saveDialogOpen_);
     updateEditToolbar();

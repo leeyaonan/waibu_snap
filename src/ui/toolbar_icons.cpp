@@ -185,6 +185,32 @@ static void drawIcon(QPainter& p, int id, const QRectF& box, const QColor& fg, c
         p.drawRect(QRectF(11.5, 2.5, 4, 4));
         break;
     }
+    case 23: // 缩小（放大镜 -）
+    case 24: // 放大（放大镜 +）
+        p.drawEllipse(QRectF(3.2, 3.2, 9.2, 9.2));
+        p.drawLine(QPointF(11, 11), QPointF(15.2, 15.2));
+        p.drawLine(QPointF(5.6, 7.8), QPointF(10, 7.8));
+        if (id == 24)
+            p.drawLine(QPointF(7.8, 5.6), QPointF(7.8, 10));
+        break;
+    case 25: // 编辑（铅笔）
+    {
+        QPainterPath pencil;
+        pencil.moveTo(3.2, 14.2);
+        pencil.lineTo(4.2, 10.7);
+        pencil.lineTo(11.6, 3.3);
+        pencil.cubicTo(12.3, 2.6, 13.4, 2.6, 14.1, 3.3);
+        pencil.cubicTo(14.8, 4, 14.8, 5.1, 14.1, 5.8);
+        pencil.lineTo(6.7, 13.2);
+        pencil.closeSubpath();
+        p.drawPath(pencil);
+        p.drawLine(QPointF(10.5, 4.4), QPointF(13.0, 6.9));
+        break;
+    }
+    case 26: // 完成（对勾）
+        p.setPen(QPen(fg, 2.0));
+        p.drawPolyline(QPolygonF({QPointF(3.5, 9.2), QPointF(7.2, 13), QPointF(14.8, 4.8)}));
+        break;
     }
     p.restore();
 }

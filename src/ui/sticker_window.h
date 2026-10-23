@@ -14,6 +14,9 @@ class QPainter;
 class QScreen;
 class QPushButton;
 class QComboBox;
+class QGridLayout;
+class QHideEvent;
+class QHBoxLayout;
 class QMenu;
 class QShortcut;
 namespace waibusnap
@@ -102,6 +105,7 @@ class StickerWindow final : public QWidget
     void resizeEvent(QResizeEvent*) override;
     void moveEvent(QMoveEvent*) override;
     void closeEvent(QCloseEvent*) override;
+    void hideEvent(QHideEvent*) override;
 
   private:
     enum class AnnotationGesture
@@ -116,6 +120,12 @@ class StickerWindow final : public QWidget
     void copyImage();
     void ensureEditToolbar();
     void updateEditToolbar();
+    void layoutEditMainBar(int availableWidth);
+    void layoutEditOptions(int availableWidth);
+    void positionEditToolbar();
+    void positionStatus();
+    void showControls();
+    void hideControls();
     void activateTool(AnnotationType type, bool toggle = true);
     void toggleSelectMode();
     bool beginAnnotationGesture(QPointF point, Qt::KeyboardModifiers modifiers);
@@ -155,12 +165,21 @@ class StickerWindow final : public QWidget
     QImage image_;
     StickerActions actions_;
     QWidget* controls_ = nullptr;
+    QWidget* controlsBar_ = nullptr;
     QWidget* editToolbar_ = nullptr;
+    QWidget* editMainBar_ = nullptr;
+    QWidget* editOptionsBar_ = nullptr;
+    QGridLayout* editMainLayout_ = nullptr;
+    QHBoxLayout* editOptionsLayout_ = nullptr;
+    QLabel* editSeparator1_ = nullptr;
+    QLabel* editSeparator2_ = nullptr;
     QMenu* editMenu_ = nullptr;
     QMenu* formatMenu_ = nullptr;
-    QPushButton* editMoreButton_ = nullptr;
     QPushButton* undoButton_ = nullptr;
     QPushButton* redoButton_ = nullptr;
+    QPushButton* saveButton_ = nullptr;
+    QPushButton* copyButton_ = nullptr;
+    QPushButton* doneButton_ = nullptr;
     QShortcut* undoShortcut_ = nullptr;
     QShortcut* redoShortcut_ = nullptr;
     QVector<QPushButton*> toolButtons_;
@@ -175,6 +194,7 @@ class StickerWindow final : public QWidget
     QPushButton* underlineButton_ = nullptr;
     AnnotationWidthWheel widthWheel_;
     QComboBox* sizes_ = nullptr;
+    QVector<QPushButton*> textSizeButtons_;
     AnnotationHistory history_;
     AnnotationRenderCache renderCache_;
     AnnotationStyle style_;
@@ -197,10 +217,11 @@ class StickerWindow final : public QWidget
     AnnotationTextEdit* textEditor_ = nullptr;
     Annotation textDraft_;
     std::unique_ptr<StickerFocusSession> focusSession_;
+    QWidget* statusWindow_ = nullptr;
     QLabel* status_ = nullptr;
     QPushButton* scaleButton_ = nullptr;
-    QPushButton* moreButton_ = nullptr;
     QTimer statusTimeout_;
+    QTimer controlsHideTimer_;
     QPointF dragFraction_;
     QPointF pressGlobal_;
     QPointF geometryPosition_;
@@ -219,5 +240,6 @@ class StickerWindow final : public QWidget
     bool quitInteraction_ = false;
     bool closed_ = false;
     bool hovered_ = false;
+    bool controlsHovered_ = false;
 };
 }
