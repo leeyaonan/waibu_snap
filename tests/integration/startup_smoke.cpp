@@ -8370,15 +8370,17 @@ class StartupSmokeTest final : public QObject
         dialog.show();
         auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
         QVERIFY(tabs);
-        QCOMPARE(tabs->count(), 6);
+        QCOMPARE(tabs->count(), 7);
         QCOMPARE(tabs->currentIndex(), 0);
         const QStringList titles = {QStringLiteral("通用"), QStringLiteral("保存"),
                                     QStringLiteral("截图"), QStringLiteral("贴图"),
-                                    QStringLiteral("历史"), QStringLiteral("分组")};
+                                    QStringLiteral("历史"), QStringLiteral("分组"),
+                                    QStringLiteral("水印")};
         const QStringList pages = {
-            QStringLiteral("settingsGeneralPage"), QStringLiteral("settingsSavePage"),
-            QStringLiteral("settingsCapturePage"), QStringLiteral("settingsStickerPage"),
-            QStringLiteral("settingsHistoryPage"), QStringLiteral("settingsGroupsPage")};
+            QStringLiteral("settingsGeneralPage"),  QStringLiteral("settingsSavePage"),
+            QStringLiteral("settingsCapturePage"),  QStringLiteral("settingsStickerPage"),
+            QStringLiteral("settingsHistoryPage"),  QStringLiteral("settingsGroupsPage"),
+            QStringLiteral("settingsWatermarkPage")};
         const QList<QStringList> controls = {
             {QStringLiteral("hotkeyEditor"), QStringLiteral("hotkeyHelp"),
              QStringLiteral("autostartCheck"), QStringLiteral("autostartHelp")},
@@ -8400,11 +8402,21 @@ class StartupSmokeTest final : public QObject
             {QStringLiteral("settingsGroupsHelp"), QStringLiteral("settingsGroupList"),
              QStringLiteral("settingsGroupNew"), QStringLiteral("settingsGroupRename"),
              QStringLiteral("settingsGroupDirectory"), QStringLiteral("settingsGroupSettings"),
-             QStringLiteral("settingsGroupSetCurrent"), QStringLiteral("settingsGroupDelete")}};
+             QStringLiteral("settingsGroupSetCurrent"), QStringLiteral("settingsGroupDelete")},
+            {QStringLiteral("watermarkHelp"), QStringLiteral("watermarkAssetsList"),
+             QStringLiteral("watermarkAddTextButton"), QStringLiteral("watermarkAddImageButton"),
+             QStringLiteral("watermarkEditAssetButton"),
+             QStringLiteral("watermarkDeleteAssetButton"), QStringLiteral("watermarkPresetsList"),
+             QStringLiteral("watermarkAddPresetButton"),
+             QStringLiteral("watermarkEditPresetButton"),
+             QStringLiteral("watermarkDuplicatePresetButton"),
+             QStringLiteral("watermarkDeletePresetButton"),
+             QStringLiteral("watermarkSetDefaultButton"), QStringLiteral("watermarkAutoCheck"),
+             QStringLiteral("watermarkRetainOriginalCheck")}};
         dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
         // 最小宽度下，长状态提示和两个列表仍不挤占公共底栏。
         dialog.resize(dialog.minimumSize());
-        for (int page = 0; page < 6; ++page)
+        for (int page = 0; page < 7; ++page)
         {
             QCOMPARE(tabs->tabText(page), titles[page]);
             QCOMPARE(tabs->widget(page)->objectName(), pages[page]);
@@ -8476,7 +8488,7 @@ class StartupSmokeTest final : public QObject
                     QVERIFY(label->height() >= label->heightForWidth(label->width()));
             }
         }
-        tabs->setCurrentIndex(5);
+        tabs->setCurrentIndex(6);
         QTest::keyClick(tabs, Qt::Key_Tab, Qt::ControlModifier);
         QCOMPARE(tabs->currentIndex(), 0);
         QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("autostartHelp"))
@@ -8486,7 +8498,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(startup.requests.isEmpty());
         const QString evidence = qEnvironmentVariable("WAIBUSNAP_SETTINGS_EVIDENCE_DIR");
         if (!evidence.isEmpty())
-            for (int page = 0; page < 6; ++page)
+            for (int page = 0; page < 7; ++page)
             {
                 tabs->setCurrentIndex(page);
                 QApplication::processEvents();
@@ -8500,7 +8512,7 @@ class StartupSmokeTest final : public QObject
     {
         QTest::addColumn<int>("decision");
         QTest::addColumn<int>("lastPage");
-        for (int page = 0; page < 6; ++page)
+        for (int page = 0; page < 7; ++page)
         {
             QTest::newRow(qPrintable(QStringLiteral("save-page-%1").arg(page))) << 0 << page;
             QTest::newRow(qPrintable(QStringLiteral("cancel-page-%1").arg(page))) << 1 << page;

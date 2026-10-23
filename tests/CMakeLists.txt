@@ -332,6 +332,13 @@ add_test(NAME history_missing_webp COMMAND history_missing_webp_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/history_missing_webp-output.txt,txt")
 set_tests_properties(history_missing_webp PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
+qt_add_executable(watermark_settings_test integration/watermark_settings_test.cpp)
+target_link_libraries(watermark_settings_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(watermark_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME watermark_settings COMMAND watermark_settings_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/watermark_settings-output.txt,txt")
+set_tests_properties(watermark_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
 qt_add_executable(history_settings_test integration/history_settings_test.cpp)
 target_link_libraries(history_settings_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
 set_target_properties(history_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)

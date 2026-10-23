@@ -177,9 +177,10 @@ class HistorySettingsTest final : public QObject
             startup(), f.actions());
         historyPage(dialog);
         auto* tabs = child<QTabWidget>(&dialog, "settingsTabs");
-        QCOMPARE(tabs->count(), 6);
+        QCOMPARE(tabs->count(), 7);
         QCOMPARE(tabs->widget(4)->objectName(), QStringLiteral("settingsHistoryPage"));
         QCOMPARE(tabs->widget(5)->objectName(), QStringLiteral("settingsGroupsPage"));
+        QCOMPARE(tabs->widget(6)->objectName(), QStringLiteral("settingsWatermarkPage"));
         QVERIFY(child<QLineEdit>(&dialog, "historyRootDirectory")->isReadOnly());
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxAgeDays")->value(), 30);
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxCount")->value(), 100);

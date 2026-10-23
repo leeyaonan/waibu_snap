@@ -23,6 +23,7 @@ add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp u
     ui/clipboard_sticker_toast.cpp ui/clipboard_sticker_toast.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h
+    ui/watermark_settings_page.cpp ui/watermark_settings_page.h
     app/scroll_capture.cpp app/scroll_capture.h
     app/application_controller.cpp app/application_controller.h
     app/sticker_manager.cpp app/sticker_manager.h ui/sticker_window.cpp ui/sticker_window.h)

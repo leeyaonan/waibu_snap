@@ -30,10 +30,11 @@ namespace waibusnap
 SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, const QString& notice,
                                QWidget* parent, SaveSettingsActions saveSettings,
                                AutostartActions autostartActions,
-                               HistorySettingsActions historySettings)
+                               HistorySettingsActions historySettings,
+                               WatermarkSettingsActions watermarkSettings)
     : QDialog(parent), saveHotkey_(std::move(save)), originalSequence_(current),
       saveSettings_(std::move(saveSettings)), autostartActions_(std::move(autostartActions)),
-      historySettings_(std::move(historySettings))
+      historySettings_(std::move(historySettings)), watermarkSettings_(std::move(watermarkSettings))
 {
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
@@ -64,6 +65,17 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     auto* stickerPage = addPage(QStringLiteral("贴图"), QStringLiteral("settingsStickerPage"));
     buildHistoryPage(addPage(QStringLiteral("历史"), QStringLiteral("settingsHistoryPage")));
     buildGroupsPage(addPage(QStringLiteral("分组"), QStringLiteral("settingsGroupsPage")));
+    watermarkSettings_.historyEnabled = historyEnabledCheck_->isChecked();
+    watermarkPage_ = new WatermarkSettingsPage(watermarkSettings_, this);
+    tabs->addTab(watermarkPage_, QStringLiteral("水印"));
+    connect(historyEnabledCheck_, &QCheckBox::toggled, watermarkPage_,
+            &WatermarkSettingsPage::setHistoryEnabled);
+    connect(this, &QDialog::finished, this,
+            [this](int result)
+            {
+                if (result != QDialog::Accepted && watermarkPage_)
+                    watermarkPage_->discardPendingAssets();
+            });
     auto* stickerLayout = new QVBoxLayout(stickerPage);
     stickerCloseReminderCheck_ = new QCheckBox(QStringLiteral("关闭未保存贴图前提醒"), stickerPage);
     stickerCloseReminderCheck_->setObjectName(QStringLiteral("stickerCloseReminderCheck"));
@@ -892,6 +904,8 @@ void SettingsDialog::save()
     const auto historyPreferences = collectHistoryPreferences();
     if (error.isEmpty())
         error = cleanupPolicyError(historyPreferences.defaultCleanup);
+    if (error.isEmpty() && watermarkPage_)
+        error = watermarkPage_->validationError(historyPreferences.enabled);
     if (error.isEmpty() && sequence != originalSequence_)
     {
         error = saveHotkey_(sequence);
@@ -931,6 +945,16 @@ void SettingsDialog::save()
         error = historySettings_.savePreferences(historyPreferences);
         if (error.isEmpty())
             historySettings_.enabled = historyPreferences.enabled;
+    }
+    if (error.isEmpty() && watermarkPage_ && watermarkSettings_.savePreferences)
+    {
+        error = watermarkSettings_.savePreferences(watermarkPage_->collect());
+        if (error.isEmpty())
+        {
+            const QString cleanup = watermarkPage_->commitPendingAssets();
+            if (!cleanup.isEmpty())
+                qWarning().noquote() << "水印资产清理失败：" << cleanup;
+        }
     }
     if (!error.isEmpty())
     {

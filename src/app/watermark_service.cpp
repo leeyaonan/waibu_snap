@@ -63,7 +63,24 @@ QImage WatermarkService::assetImage(const QString& assetId, QString* error) cons
     const auto cached = imageCache_.constFind(assetId);
     if (cached != imageCache_.cend())
         return *cached;
-    QImageReader reader(assetPath(*asset));
+    QImage image = loadManagedImage(asset->imageFileName, error);
+    if (image.isNull())
+        return {};
+    imageCache_.insert(assetId, image);
+    return image;
+}
+QImage WatermarkService::loadManagedImage(const QString& managedFileName, QString* error) const
+{
+    if (error)
+        error->clear();
+    if (managedFileName.isEmpty() || managedFileName.contains(QLatin1Char('/')) ||
+        managedFileName.contains(QLatin1Char('\\')))
+    {
+        if (error)
+            *error = QStringLiteral("水印图片文件名无效。");
+        return {};
+    }
+    QImageReader reader(QDir(assetDirectory_).filePath(managedFileName));
     reader.setAutoTransform(true);
     QImage image = reader.read();
     if (image.isNull())
@@ -74,7 +91,6 @@ QImage WatermarkService::assetImage(const QString& assetId, QString* error) cons
     }
     image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     image.setDevicePixelRatio(1);
-    imageCache_.insert(assetId, image);
     return image;
 }
 QString WatermarkService::importImage(const QString& sourcePath, QString* managedFileName,

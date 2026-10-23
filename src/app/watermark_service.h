@@ -27,6 +27,7 @@ class WatermarkService final : public QObject
     QString assetPath(const WatermarkAsset& asset) const;
     // 失败返回空 QImage，并在 error 中给出可展示原因。
     QImage assetImage(const QString& assetId, QString* error = nullptr) const;
+    QImage loadManagedImage(const QString& managedFileName, QString* error = nullptr) const;
     // 导入并规范化图片资产；成功时 managedFileName 为受管相对文件名。
     QString importImage(const QString& sourcePath, QString* managedFileName = nullptr,
                         QString* error = nullptr) const;
