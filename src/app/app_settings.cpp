@@ -34,6 +34,8 @@ QString sequenceKey(HotkeyAction action)
 }
 const QString stickerCloseReminderKey = QStringLiteral("sticker/confirmUnsavedClose");
 const QString stickerDoubleClickCloseKey = QStringLiteral("sticker/doubleClickClose");
+const QString watermarkPreferencesKey = QStringLiteral("watermark/preferences");
+const QString watermarkAutoEnabledKey = QStringLiteral("watermark/autoEnabled");
 }
 AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
 {
@@ -334,6 +336,78 @@ QString AppSettings::saveStickerCloseReminder(bool enabled) const
         return error;
     }
     stickerCloseReminderWriteFailed_ = false;
+    return {};
+}
+WatermarkPreferences AppSettings::loadWatermarkPreferences(QString* notice) const
+{
+    WatermarkPreferences result;
+    if (notice)
+        notice->clear();
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (watermarkWriteFailed_ || settings.status() != QSettings::NoError)
+    {
+        if (notice && (watermarkWriteFailed_ || QFileInfo::exists(filePath_)))
+            *notice = QStringLiteral("水印设置无法读取或上次写入失败，已回退为空设置。");
+        return result;
+    }
+    const auto value = settings.value(watermarkPreferencesKey);
+    if (!value.isValid())
+        return result;
+    if (value.metaType().id() != QMetaType::QString)
+    {
+        if (notice)
+            *notice = QStringLiteral("水印设置格式无效，已回退为空设置；原文件未修复。");
+        return result;
+    }
+    const auto document = QJsonDocument::fromJson(value.toString().toUtf8());
+    QString error;
+    if (!document.isObject() || !watermarkPreferencesFromJson(document.object(), result, &error))
+    {
+        if (notice)
+            *notice = QStringLiteral("水印设置损坏，已回退为空设置：%1").arg(error);
+        result = {};
+        return result;
+    }
+    const auto automatic = settings.value(watermarkAutoEnabledKey);
+    if (automatic.isValid() && automatic.metaType().id() == QMetaType::Bool)
+        result.autoEnabled = automatic.toBool();
+    return result;
+}
+QString AppSettings::saveWatermarkPreferences(const WatermarkPreferences& preferences) const
+{
+    const QString validation = watermarkPreferencesError(preferences);
+    if (!validation.isEmpty())
+        return validation;
+    watermarkWriteFailed_ = true;
+    const QString error = QStringLiteral("水印设置写入失败，重启后可能无法保留，请重试保存。");
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()) || QFileInfo(filePath_).isDir())
+        return error;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    const auto previousPreferences = settings.value(watermarkPreferencesKey);
+    const auto previousAuto = settings.value(watermarkAutoEnabledKey);
+    settings.setValue(
+        watermarkPreferencesKey,
+        QString::fromUtf8(
+            QJsonDocument(watermarkPreferencesToJson(preferences)).toJson(QJsonDocument::Compact)));
+    settings.setValue(watermarkAutoEnabledKey, preferences.autoEnabled);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        if (previousPreferences.isValid())
+            settings.setValue(watermarkPreferencesKey, previousPreferences);
+        else
+            settings.remove(watermarkPreferencesKey);
+        if (previousAuto.isValid())
+            settings.setValue(watermarkAutoEnabledKey, previousAuto);
+        else
+            settings.remove(watermarkAutoEnabledKey);
+        return error;
+    }
+    watermarkWriteFailed_ = false;
     return {};
 }
 CaptureRatioSettings AppSettings::loadCaptureRatios() const

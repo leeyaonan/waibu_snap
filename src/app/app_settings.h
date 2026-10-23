@@ -2,6 +2,7 @@
 #include "core/aspect_ratio.h"
 #include "core/history_types.h"
 #include "core/shape_mask.h"
+#include "core/watermark.h"
 #include "interfaces/global_hotkey.h"
 #include "output/image_output.h"
 #include <QKeySequence>
@@ -48,6 +49,8 @@ class AppSettings
     // nullopt 表示从未配置过（首次双击提示的触发条件）；false / true 为显式选择。
     std::optional<bool> loadStickerDoubleClickClose() const;
     QString saveStickerDoubleClickClose(bool enabled) const;
+    WatermarkPreferences loadWatermarkPreferences(QString* notice = nullptr) const;
+    QString saveWatermarkPreferences(const WatermarkPreferences& preferences) const;
     CaptureRatioSettings loadCaptureRatios() const;
     QString shapeTemplateDir() const;
     QVector<ShapeTemplateEntry> loadShapeTemplates(QString* notice = nullptr) const;
@@ -66,6 +69,7 @@ class AppSettings
     mutable bool stickerDoubleClickCloseWriteFailed_ = false;
     mutable bool historyWriteFailed_ = false;
     mutable bool historyWindowWriteFailed_ = false;
+    mutable bool watermarkWriteFailed_ = false;
 };
 struct HotkeyStartup
 {

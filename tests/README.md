@@ -1105,3 +1105,9 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 - `stickerOcrUsesInjectedRecognizer` 更新为：点击取字不弹窗、等待识别、在贴图上拖选 Hello / world、高亮非空、复制注入、双击选词、提取全文后弹窗出现且工具栏隐藏、关闭按钮关闭后工具栏恢复、Esc 退出 OCR。
 - 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **37/37 CTest**、主冒烟 **507 项**、独立高 DPI 子集 **436 项**、`hotkey_settings` **61 项**；clang-format 18.1.8、`git diff --check` 与双端 CI 以本 PR 为准。
 - 待人工：真实鼠标原地拖选 / 双击 / 复制、弹窗层级与关闭按钮观感、OCR 模式工具条禁用状态；Windows 实机。
+
+## 水印核心（v007 批次 1，2026-10-23）
+
+- 新增 `watermark_test` 9 项与 `watermark_service_test` 6 项；`watermark_test` 覆盖资产 / 预设 JSON 往返、校验（名称 / ID 重复、引用、默认、透明度 / 缩放、10 套上限）、7 种排布、单点初始中心、图片 / 文字 / 透明度 / 缩放、正反斜铺、隐藏态与输出尺寸；`watermark_service_test` 覆盖设置保存 / 损坏回退、默认启动 / 当前会话 / 常驻持久化、图片导入规范化（2000×1000 → 1024×512）、资产缺失拒绝、删除资产文件与 10 套上限。
+- 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **39/39 CTest** 通过；主冒烟 **507 项**、独立高 DPI 子集 **436 项**、`hotkey_settings` **61 项**；clang-format 18.1.8、lint 与 `git diff --check` 通过。
+- 本批只含核心类型、渲染器、设置服务与 AppSettings 持久化；设置页、截图按钮、手动 / 常驻、长图和历史双版本尚未接入，不能把本批视为用户可见功能完成。
