@@ -2724,6 +2724,10 @@ class StartupSmokeTest final : public QObject
         QVERIFY(action("openHistoryAction"));
         QCOMPARE(action("openHistoryAction")->text(), QStringLiteral("打开历史…"));
         QVERIFY(action("openHistoryAction")->isEnabled());
+        QVERIFY(action("watermarkMenuAction"));
+        QVERIFY(action("watermarkAutoAction"));
+        QVERIFY(!action("watermarkAutoAction")->isEnabled());
+        QVERIFY(action("watermarkPresetMenuAction"));
         auto* hide = action("hideAllStickersAction");
         auto* restore = action("restoreAllStickersAction");
         QVERIFY(hide);

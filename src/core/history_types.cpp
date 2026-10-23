@@ -100,7 +100,7 @@ GroupUsage historyUsage(const QVector<HistoryItem>& items)
         if (item.managed)
         {
             ++usage.managedCount;
-            usage.managedBytes += item.bytes;
+            usage.managedBytes += item.bytes + item.originalBytes;
         }
         else
         {

@@ -4,6 +4,7 @@
 #include "core/window_snapping.h"
 #include "interfaces/overlay_window_behavior.h"
 #include "interfaces/tray_icon.h"
+#include "output/watermark_renderer.h"
 #include "session/monotonic_clock.h"
 #include "ui/group_settings_dialog.h"
 #include "ui/settings_dialog.h"
@@ -143,6 +144,29 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     settingsAction_ =
         menu_.addAction(QStringLiteral("设置…"), this, &ApplicationController::openSettings);
     settingsAction_->setObjectName(QStringLiteral("settingsAction"));
+    watermarkMenu_ = menu_.addMenu(QStringLiteral("水印"));
+    watermarkMenu_->setObjectName(QStringLiteral("watermarkMenu"));
+    watermarkMenu_->menuAction()->setObjectName(QStringLiteral("watermarkMenuAction"));
+    watermarkAutoAction_ = watermarkMenu_->addAction(QStringLiteral("常驻水印"));
+    watermarkAutoAction_->setObjectName(QStringLiteral("watermarkAutoAction"));
+    watermarkAutoAction_->setCheckable(true);
+    connect(watermarkAutoAction_, &QAction::triggered, this,
+            [this](bool enabled)
+            {
+                const QString error = watermarks_.setAutoEnabled(enabled);
+                if (!error.isEmpty() && !options_.testMode && !options_.smokeTest)
+                    tray_.showMessage(QStringLiteral("水印"), error, QSystemTrayIcon::Warning);
+                rebuildWatermarkMenu();
+            });
+    watermarkPresetMenu_ = watermarkMenu_->addMenu(QStringLiteral("预设"));
+    watermarkPresetMenu_->setObjectName(QStringLiteral("watermarkPresetMenu"));
+    watermarkPresetMenu_->menuAction()->setObjectName(QStringLiteral("watermarkPresetMenuAction"));
+    const auto refreshWatermarkMenu = [this]
+    { QTimer::singleShot(0, this, &ApplicationController::rebuildWatermarkMenu); };
+    connect(&watermarks_, &WatermarkService::preferencesChanged, this, refreshWatermarkMenu);
+    connect(&watermarks_, &WatermarkService::currentPresetChanged, this, refreshWatermarkMenu);
+    connect(&watermarks_, &WatermarkService::autoChanged, this, refreshWatermarkMenu);
+    rebuildWatermarkMenu();
     historyMenu_ = menu_.addMenu(QStringLiteral("历史"));
     historyMenu_->setObjectName(QStringLiteral("historyMenu"));
     historyMenu_->menuAction()->setObjectName(QStringLiteral("historyMenuAction"));
@@ -292,6 +316,46 @@ void ApplicationController::refreshStickerActions()
         }
     hideAllStickersAction_->setEnabled(visible);
     restoreAllStickersAction_->setEnabled(hidden);
+}
+void ApplicationController::rebuildWatermarkMenu()
+{
+    if (!watermarkMenu_ || !watermarkAutoAction_ || !watermarkPresetMenu_)
+        return;
+    const auto& preferences = watermarks_.preferences();
+    const bool hasPresets = !preferences.presets.isEmpty();
+    {
+        const QSignalBlocker blocker(watermarkAutoAction_);
+        watermarkAutoAction_->setChecked(watermarks_.autoEnabled());
+    }
+    watermarkAutoAction_->setEnabled(hasPresets);
+    watermarkPresetMenu_->clear();
+    watermarkPresetMenu_->setEnabled(hasPresets);
+    if (!hasPresets)
+    {
+        auto* placeholder =
+            watermarkPresetMenu_->addAction(QStringLiteral("请先在设置 → 水印中创建预设"));
+        placeholder->setEnabled(false);
+        watermarkMenu_->setToolTip(QStringLiteral("请先在设置 → 水印中创建预设"));
+        return;
+    }
+    for (const auto& preset : preferences.presets)
+    {
+        auto* action = watermarkPresetMenu_->addAction(preset.name);
+        action->setObjectName(QStringLiteral("watermarkPresetAction-%1").arg(preset.id));
+        action->setCheckable(true);
+        action->setChecked(preset.id == watermarks_.currentPresetId());
+        connect(action, &QAction::triggered, this,
+                [this, id = preset.id]
+                {
+                    const QString error = watermarks_.setCurrentPreset(id);
+                    if (!error.isEmpty() && !options_.testMode && !options_.smokeTest)
+                        tray_.showMessage(QStringLiteral("水印"), error, QSystemTrayIcon::Warning);
+                    QTimer::singleShot(0, this, &ApplicationController::rebuildWatermarkMenu);
+                });
+    }
+    watermarkMenu_->setToolTip(
+        QStringLiteral("当前预设：%1")
+            .arg(watermarks_.currentPreset() ? watermarks_.currentPreset()->name : QString()));
 }
 void ApplicationController::rebuildCurrentGroupMenu()
 {
@@ -750,6 +814,17 @@ void ApplicationController::captureCompleted(quint64 token, CaptureResult result
         const auto result = history_.record(session, image, HistorySource::Overlay);
         return {result.success, result.error};
     };
+    actions.recordHistoryPair = [this, session](const QImage& image,
+                                                const std::optional<QImage>& original,
+                                                const QString&) -> HistoryStatus
+    {
+        if (!historyEnabled_ || session.id.isEmpty())
+            return {true, {}};
+        const auto result = watermarks_.retainOriginal() && original
+                                ? history_.record(session, image, HistorySource::Overlay, *original)
+                                : history_.record(session, image, HistorySource::Overlay);
+        return {result.success, result.error};
+    };
     actions.ratios = settings_.loadCaptureRatios();
     actions.shapeTemplates = settings_.loadShapeTemplates(&actions.shapeTemplateNotice);
     actions.shapeTemplateDir = settings_.shapeTemplateDir();
@@ -913,8 +988,37 @@ void ApplicationController::finishScrollCapture()
         return;
     QImage image = scrollSession_->takeResult();
     const auto session = historySession_;
+    QImage recorded = image;
+    bool recordedHasWatermark = false;
+    if (!image.isNull() && watermarks_.autoEnabled())
+    {
+        const auto* preset = watermarks_.currentPreset();
+        const auto* asset = preset ? watermarks_.asset(preset->assetId) : nullptr;
+        if (preset && asset)
+        {
+            QString error;
+            const QImage assetImage = watermarks_.assetImage(asset->id, &error);
+            if (asset->kind == WatermarkKind::Text || !assetImage.isNull())
+            {
+                WatermarkInstance instance;
+                instance.presetId = preset->id;
+                instance.layout = preset->layout;
+                instance.opacity = preset->opacity;
+                instance.scale = preset->scale;
+                instance.normalizedCenter = watermarkInitialCenter(
+                    preset->layout, watermarkBaseSize(*asset, assetImage), image.size());
+                recorded = composeWatermark(image, *asset, assetImage, instance);
+                recordedHasWatermark = true;
+            }
+        }
+    }
     if (!image.isNull() && historyEnabled_ && !session.id.isEmpty())
-        history_.record(session, image, HistorySource::Scroll);
+    {
+        if (watermarks_.retainOriginal() && recordedHasWatermark)
+            history_.record(session, recorded, HistorySource::Scroll, image);
+        else
+            history_.record(session, recorded, HistorySource::Scroll);
+    }
     const auto stats = scrollSession_->stats();
     if (image.isNull() && stats.limitReached)
     {
@@ -932,9 +1036,21 @@ void ApplicationController::finishScrollCapture()
     if (image.isNull() || quitting_ || !display)
         return;
     ScrollResultActions actions;
+    actions.watermarks = &watermarks_;
+    actions.watermarkEnabled = watermarks_.autoEnabled();
     actions.historyUpdated = [this, session](const QImage& image)
     {
         if (historyEnabled_ && !session.id.isEmpty())
+            history_.record(session, image, HistorySource::Scroll);
+    };
+    actions.historyUpdatedPair =
+        [this, session](const QImage& image, const std::optional<QImage>& original)
+    {
+        if (!historyEnabled_ || session.id.isEmpty())
+            return;
+        if (watermarks_.retainOriginal() && original)
+            history_.record(session, image, HistorySource::Scroll, *original);
+        else
             history_.record(session, image, HistorySource::Scroll);
     };
     actions.loadSavePreferences = [this] { return settings_.loadSavePreferences(); };
@@ -1347,10 +1463,13 @@ void ApplicationController::startSmokeTest()
                             const auto windows = QApplication::topLevelWidgets();
                             if (!windows.contains(&menu_) ||
                                 std::any_of(windows.cbegin(), windows.cend(),
-                                            [this](QWidget* window) {
+                                            [this](QWidget* window)
+                                            {
                                                 return window != &menu_ &&
                                                        window != currentGroupMenu_ &&
-                                                       window != historyMenu_;
+                                                       window != historyMenu_ &&
+                                                       window != watermarkMenu_ &&
+                                                       window != watermarkPresetMenu_;
                                             }))
                             {
                                 application_.exit(22);

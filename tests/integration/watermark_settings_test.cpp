@@ -1,14 +1,17 @@
 #include "app/app_settings.h"
+#include "app/application_controller.h"
 #include "app/hotkey_rules.h"
 #include "app/watermark_service.h"
 #include "ui/settings_dialog.h"
 #include "ui/watermark_settings_page.h"
+#include <QAction>
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTabWidget>
@@ -164,6 +167,58 @@ class WatermarkSettingsTest final : public QObject
         QCOMPARE(presets->count(), 2);
         QCOMPARE(page.collect().presets.size(), 2);
         QCOMPARE(page.collect().defaultPresetId, QStringLiteral("preset"));
+    }
+    void controllerTrayPresetAndAuto()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString settingsPath = directory.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(settingsPath);
+        WatermarkService seed(settings, directory.filePath(QStringLiteral("watermark-assets")));
+        QVERIFY(seed.initialize());
+        auto preferences = samplePreferences();
+        WatermarkPreset second;
+        second.id = QStringLiteral("preset-2");
+        second.name = QStringLiteral("第二预设");
+        second.assetId = QStringLiteral("text");
+        second.layout = WatermarkLayout::TopLeft;
+        second.opacity = 50;
+        second.scale = 80;
+        preferences.presets.append(second);
+        QVERIFY(seed.savePreferences(preferences).isEmpty());
+
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = settingsPath;
+        options.historyRoot = directory.filePath(QStringLiteral("history"));
+        ApplicationController controller(*qApp, options);
+        auto* autoAction =
+            controller.menu()->findChild<QAction*>(QStringLiteral("watermarkAutoAction"));
+        QVERIFY(autoAction);
+        QVERIFY(autoAction->isEnabled());
+        QVERIFY(!autoAction->isChecked());
+        autoAction->trigger();
+        QCoreApplication::processEvents();
+        QVERIFY(AppSettings(settingsPath).loadWatermarkPreferences().autoEnabled);
+
+        auto* presetMenu =
+            controller.menu()->findChild<QMenu*>(QStringLiteral("watermarkPresetMenu"));
+        QVERIFY(presetMenu);
+        const auto actions = presetMenu->actions();
+        QCOMPARE(actions.size(), 2);
+        QAction* secondAction = nullptr;
+        for (auto* action : actions)
+            if (action->text() == QStringLiteral("第二预设"))
+                secondAction = action;
+        QVERIFY(secondAction);
+        QVERIFY(!secondAction->isChecked());
+        secondAction->trigger();
+        QCoreApplication::processEvents();
+        presetMenu = controller.menu()->findChild<QMenu*>(QStringLiteral("watermarkPresetMenu"));
+        QVERIFY(presetMenu);
+        for (auto* action : presetMenu->actions())
+            if (action->text() == QStringLiteral("第二预设"))
+                QVERIFY(action->isChecked());
     }
     void historyOffDisablesRetain()
     {

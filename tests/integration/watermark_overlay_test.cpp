@@ -27,7 +27,7 @@ int bluePixels(const QImage& image)
                 ++count;
     return count;
 }
-WatermarkPreferences preferences(const QString& fileName)
+WatermarkPreferences samplePreferences(const QString& fileName)
 {
     WatermarkPreferences result;
     WatermarkAsset asset;
@@ -73,11 +73,20 @@ class WatermarkOverlayTest final : public QObject
         QString error;
         QCOMPARE(service.importImage(sourcePath, &managed, &error), QString());
         QVERIFY(!managed.isEmpty());
-        QVERIFY(service.savePreferences(preferences(managed)).isEmpty());
+        QVERIFY(service.savePreferences(samplePreferences(managed)).isEmpty());
         QCOMPARE(service.currentPresetId(), QStringLiteral("preset"));
 
         OverlayActions actions;
         actions.watermarks = &service;
+        bool pairRecorded = false;
+        std::optional<QImage> recordedOriginal;
+        actions.recordHistoryPair =
+            [&](const QImage&, const std::optional<QImage>& original, const QString&)
+        {
+            pairRecorded = true;
+            recordedOriginal = original;
+            return HistoryStatus{true, {}};
+        };
         SelectionOverlay overlay(frame(), actions);
         overlay.show();
         QTest::qWait(10);
@@ -95,8 +104,50 @@ class WatermarkOverlayTest final : public QObject
         QVERIFY(!output.isNull());
         QCOMPARE(output.size(), overlay.selection().size());
         QVERIFY(bluePixels(output) > 100);
-        tool->click();
+        QVERIFY(pairRecorded);
+        QVERIFY(recordedOriginal.has_value());
+        QCOMPARE(bluePixels(*recordedOriginal), 0);
+        auto* conceal = overlay.findChild<QPushButton*>(QStringLiteral("concealToolButton"));
+        auto* cover = overlay.findChild<QPushButton*>(QStringLiteral("coverToolButton"));
+        QVERIFY(conceal && cover);
+        QTest::mouseClick(conceal, Qt::LeftButton);
+        QTest::mouseClick(cover, Qt::LeftButton);
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, {60, 60});
+        QTest::mouseMove(&overlay, {240, 140});
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, {240, 140});
+        const QString topmostPath = directory.filePath(QStringLiteral("topmost.png"));
+        QVERIFY(overlay.exportToPath(topmostPath));
+        QVERIFY(bluePixels(QImage(topmostPath)) > 100);
         QVERIFY(!overlay.isWatermarkToolActive());
+        QVERIFY(overlay.hasWatermark());
+    }
+    void autoWatermarkAppliesAfterSelection()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+        WatermarkService service(settings, directory.filePath(QStringLiteral("assets")));
+        QVERIFY(service.initialize());
+        const QString sourcePath = directory.filePath(QStringLiteral("blue.png"));
+        QImage source(40, 20, QImage::Format_ARGB32_Premultiplied);
+        source.fill(QColor(20, 80, 240));
+        QVERIFY(source.save(sourcePath, "PNG"));
+        QString managed;
+        QVERIFY(service.importImage(sourcePath, &managed).isEmpty());
+        auto preferences = samplePreferences(managed);
+        preferences.autoEnabled = true;
+        QVERIFY(service.savePreferences(preferences).isEmpty());
+        OverlayActions actions;
+        actions.watermarks = &service;
+        SelectionOverlay overlay(frame(), actions);
+        overlay.show();
+        QTest::qWait(10);
+        selectRegion(overlay);
+        QTRY_VERIFY(overlay.hasWatermark());
+        const QString outputPath = directory.filePath(QStringLiteral("auto-output.png"));
+        QVERIFY(overlay.exportToPath(outputPath));
+        QVERIFY(bluePixels(QImage(outputPath)) > 100);
+        QVERIFY(service.setAutoEnabled(false).isEmpty());
         QVERIFY(overlay.hasWatermark());
     }
     void noPresetDisablesTool()

@@ -63,14 +63,16 @@ class HistoryManager final : public QObject
     // 浏览刷新不修改入库错误、当前分组或会话去重表。
     HistorySnapshot refresh();
     HistorySnapshot snapshot() const;
-    HistoryImageResult loadImage(const QString& itemId, QSize bounds = {}) const;
+    HistoryImageResult
+    loadImage(const QString& itemId, QSize bounds = {},
+              HistoryImageVariant variant = HistoryImageVariant::Watermarked) const;
     std::optional<HistoryItem> findItem(const QString& itemId) const;
     HistoryStatus setStarred(const QString& itemId, bool starred);
     HistoryStatus deleteItem(const QString& itemId, const HistoryTrash& trash);
     HistoryStatus revealItem(const QString& itemId, const HistoryTrash& reveal) const;
     HistorySession beginSession() const;
     HistoryWriteResult record(const HistorySession& session, const QImage& image,
-                              HistorySource source);
+                              HistorySource source, const QImage& original = {});
   signals:
     void errorChanged(QString error);
     void currentGroupChanged(QString groupId);

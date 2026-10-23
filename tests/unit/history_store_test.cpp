@@ -293,6 +293,59 @@ class HistoryStoreTest final : public QObject
             !store.writeManagedPng(group.id, original, HistorySource::Scroll, written.item.fileName)
                  .success);
     }
+    void managedOriginalPairUsageAndDelete()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        HistoryStore store(temporary.path());
+        const auto initial = store.initialize();
+        QVERIFY(initial.error.isEmpty());
+        const auto group = initial.groups[0].group;
+        const QImage watermarked = image(qRgba(30, 80, 200, 255));
+        const QImage original = image(qRgba(200, 30, 40, 255));
+        auto written =
+            store.writeManagedPng(group.id, watermarked, HistorySource::Overlay, {}, original);
+        QVERIFY2(written.success, qPrintable(written.error));
+        QVERIFY(written.item.hasOriginal);
+        QVERIFY(written.item.originalBytes > 0);
+        QVERIFY(QFileInfo::exists(written.item.originalPath));
+        auto queried = store.itemsForGroup(group.id);
+        QVERIFY(queried.success);
+        QCOMPARE(queried.items.size(), 1);
+        QVERIFY(queried.items[0].hasOriginal);
+        QVERIFY(store.setStarred(group.id, written.item.fileName, true).success);
+        queried = store.itemsForGroup(group.id);
+        QVERIFY(queried.items[0].starred);
+        QVERIFY(queried.items[0].hasOriginal);
+        QCOMPARE(queried.usage.managedBytes,
+                 queried.items[0].bytes + queried.items[0].originalBytes);
+
+        const auto plain = store.writeManagedPng(group.id, watermarked, HistorySource::Overlay,
+                                                 written.item.fileName);
+        QVERIFY2(plain.success, qPrintable(plain.error));
+        QVERIFY(!plain.item.hasOriginal);
+        QVERIFY(!QFileInfo::exists(written.item.originalPath));
+        QCOMPARE(store.itemsForGroup(group.id).usage.managedBytes, plain.item.bytes);
+
+        auto paired = store.writeManagedPng(group.id, watermarked, HistorySource::Overlay,
+                                            plain.item.fileName, original);
+        QVERIFY2(paired.success, qPrintable(paired.error));
+        QVERIFY(paired.item.hasOriginal);
+        QVERIFY(QFileInfo::exists(paired.item.originalPath));
+        int removed = 0;
+        const auto deleted = store.deleteManagedItem(
+            paired.item,
+            [&](const QString& path)
+            {
+                const bool ok = QFile::remove(path);
+                removed += ok ? 1 : 0;
+                return HistoryStatus{ok, ok ? QString() : QStringLiteral("删除失败")};
+            });
+        QVERIFY2(deleted.success, qPrintable(deleted.error));
+        QCOMPARE(removed, 2);
+        QVERIFY(!QFileInfo::exists(paired.item.absolutePath));
+        QVERIFY(!QFileInfo::exists(paired.item.originalPath));
+    }
     void externalScanStarsUsageAndNoOverwrite()
     {
         QTemporaryDir temporary;

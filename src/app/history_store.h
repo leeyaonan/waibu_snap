@@ -55,7 +55,8 @@ class HistoryStore
     HistoryStatus deleteGroup(const QString& groupId, const HistoryTrash& trash = {});
     HistoryStatus saveCleanupPolicy(const QString& groupId, const CleanupPolicy& policy);
     HistoryWriteResult writeManagedPng(const QString& groupId, const QImage& image,
-                                       HistorySource source, const QString& existingFileName = {});
+                                       HistorySource source, const QString& existingFileName = {},
+                                       const QImage& original = {});
     HistoryStatus setStarred(const QString& groupId, const QString& fileName, bool starred);
     HistoryStatus deleteManagedItem(const HistoryItem& item, const HistoryTrash& trash);
     // 自动清理永久删除：锁内重扫并重新核对策略 / 保护；失败保留恢复信息。

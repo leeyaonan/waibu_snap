@@ -34,6 +34,9 @@ struct OverlayActions : ImageSaveActions
     QString historySessionId;
     QString historyGroupId;
     std::function<HistoryStatus(const QImage&, const QString& savedPath)> recordHistory;
+    std::function<HistoryStatus(const QImage&, const std::optional<QImage>& original,
+                                const QString& savedPath)>
+        recordHistoryPair;
     CaptureRatioSettings ratios{defaultCaptureRatios(), {}, AspectRatio{1, 1}};
     QVector<ShapeTemplateEntry> shapeTemplates;
     QString shapeTemplateDir;
@@ -125,6 +128,8 @@ class SelectionOverlay final : public QWidget
     void toggleTextMode();
     void toggleWatermarkTool();
     void applyWatermarkPreset();
+    void maybeApplyAutoWatermark();
+    void refreshWatermarkFromService();
     void removeWatermark();
     void resetWatermark();
     void updateWatermarkBar();
@@ -279,6 +284,8 @@ class SelectionOverlay final : public QWidget
     QPushButton* watermarkVisibilityButton_ = nullptr;
     QPushButton* watermarkResetButton_ = nullptr;
     QPushButton* watermarkRemoveButton_ = nullptr;
+    QPushButton* watermarkAutoButton_ = nullptr;
+    bool watermarkAutoAttempted_ = false;
     std::optional<WatermarkInstance> watermark_;
     bool watermarkToolActive_ = false;
     bool watermarkSelected_ = false;

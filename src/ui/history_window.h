@@ -95,6 +95,7 @@ class HistoryWindow final : public QWidget
     QToolButton* star_;
     QToolButton* pin_;
     QToolButton* copy_;
+    QToolButton* original_;
     QToolButton* reveal_;
     QToolButton* delete_;
     QSplitter* splitter_;
@@ -103,6 +104,7 @@ class HistoryWindow final : public QWidget
     QLabel* empty_;
     QLabel* notice_;
     QLabel* status_;
+    bool showOriginal_ = false;
     bool thumbnailsPending_ = false;
     bool narrow_ = false;
     bool groupActionsEnabled_ = true;

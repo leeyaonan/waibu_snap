@@ -450,7 +450,8 @@ HistoryStatus HistoryManager::revealItem(const QString& itemId, const HistoryTra
     return reveal ? reveal(item->absolutePath)
                   : HistoryStatus{false, QStringLiteral("文件管理器服务不可用，请稍后重试。")};
 }
-HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds) const
+HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds,
+                                             HistoryImageVariant variant) const
 {
     // 路径只能来自本次扫描的记录；视图不传入任意文件路径。
     for (const auto& group : snapshot_.groups)
@@ -460,15 +461,26 @@ HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds
                 const auto checked = store_->validateItem(item);
                 if (!checked.success)
                     return {checked, {}};
-                if (QFileInfo(item.fileName)
-                            .suffix()
-                            .compare(QLatin1String("webp"), Qt::CaseInsensitive) == 0 &&
-                    !QImageReader::supportedImageFormats().contains("webp"))
+                QString path = item.absolutePath;
+                if (variant == HistoryImageVariant::Original)
+                {
+                    if (!item.hasOriginal || item.originalPath.isEmpty())
+                        return {{false, QStringLiteral("这条历史记录没有保留水印原图。")}, {}};
+                    const QFileInfo original(item.originalPath);
+                    if (!original.isFile() || original.isSymLink() || original.isJunction())
+                        return {{false, QStringLiteral("水印原图已丢失或路径不安全，请刷新历史。")},
+                                {}};
+                    path = item.originalPath;
+                }
+                else if (QFileInfo(item.fileName)
+                                 .suffix()
+                                 .compare(QLatin1String("webp"), Qt::CaseInsensitive) == 0 &&
+                         !QImageReader::supportedImageFormats().contains("webp"))
                     return {
                         {false, QStringLiteral("缺少 Qt WebP 图片插件（qtimageformats），请安装 "
                                                "Qt 6.11.2 的 Qt Image Formats 后重试。")},
                         {}};
-                QImageReader reader(item.absolutePath);
+                QImageReader reader(path);
                 reader.setAutoTransform(true);
                 if (bounds.isValid() && reader.size().isValid())
                     reader.setScaledSize(reader.size().scaled(bounds, Qt::KeepAspectRatio));
@@ -483,7 +495,7 @@ HistoryImageResult HistoryManager::loadImage(const QString& itemId, QSize bounds
     return {{false, QStringLiteral("历史记录已不存在，请刷新历史。")}, {}};
 }
 HistoryWriteResult HistoryManager::record(const HistorySession& session, const QImage& image,
-                                          HistorySource source)
+                                          HistorySource source, const QImage& original)
 {
     if (!ready_ || session.id.isEmpty() || session.groupId.isEmpty())
         return {status(QStringLiteral("历史库未就绪或截图会话无效，本次输出未写入历史。")), {}};
@@ -491,9 +503,9 @@ HistoryWriteResult HistoryManager::record(const HistorySession& session, const Q
     if (existing != sessions_.cend() &&
         (existing->groupId != session.groupId || existing->source != source))
         return {status(QStringLiteral("截图历史会话的分组或来源不一致，已拒绝写入。")), {}};
-    auto result =
-        store_->writeManagedPng(session.groupId, image, source,
-                                existing == sessions_.cend() ? QString() : existing->fileName);
+    auto result = store_->writeManagedPng(
+        session.groupId, image, source,
+        existing == sessions_.cend() ? QString() : existing->fileName, original);
     // 图片已发布但索引失败时也记住目标，重试不能产生第二张孤立 PNG。
     if (!result.item.fileName.isEmpty())
         sessions_.insert(session.id, result.item);

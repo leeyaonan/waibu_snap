@@ -91,6 +91,7 @@ class ApplicationController final : public QObject
     void setHistoryMenusInstalled(bool installed);
     void rebuildCurrentGroupMenu();
     void updateCurrentGroupMenu();
+    void rebuildWatermarkMenu();
     void pinClipboardImage();
     ImageOutputResult pinHistoryImage(const QImage& image);
     QString changeHotkey(const QKeySequence& sequence,
@@ -104,6 +105,9 @@ class ApplicationController final : public QObject
     QAction* historyPreviousAction_ = nullptr;
     QAction* historyNextAction_ = nullptr;
     QMenu* historyMenu_ = nullptr;
+    QMenu* watermarkMenu_ = nullptr;
+    QMenu* watermarkPresetMenu_ = nullptr;
+    QAction* watermarkAutoAction_ = nullptr;
     QAction* historyDisabledAction_ = nullptr;
     QAction* currentGroupDisabledAction_ = nullptr;
     bool historyMenusInstalled_ = true;
