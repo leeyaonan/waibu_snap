@@ -811,7 +811,10 @@ void WatermarkSettingsPage::updatePreviews()
         return;
     const auto* asset = findWatermarkAsset(draft_, selectedAssetId());
     if (!asset)
+    {
         assetPreview_->clear();
+        assetPreview_->setText(QStringLiteral("尚无资产"));
+    }
     else
     {
         QString error;
@@ -825,12 +828,14 @@ void WatermarkSettingsPage::updatePreviews()
     if (!preset || !asset)
     {
         presetPreview_->clear();
+        presetPreview_->setText(QStringLiteral("尚无预设"));
         return;
     }
     const auto* presetAsset = findWatermarkAsset(draft_, preset->assetId);
     if (!presetAsset)
     {
         presetPreview_->clear();
+        presetPreview_->setText(QStringLiteral("预设资产不可用"));
         return;
     }
     QString error;
