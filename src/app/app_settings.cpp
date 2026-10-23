@@ -33,6 +33,7 @@ QString sequenceKey(HotkeyAction action)
     return {};
 }
 const QString stickerCloseReminderKey = QStringLiteral("sticker/confirmUnsavedClose");
+const QString stickerDoubleClickCloseKey = QStringLiteral("sticker/doubleClickClose");
 }
 AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
 {
@@ -276,6 +277,43 @@ bool AppSettings::loadStickerCloseReminder() const
     const QString value = settings.value(stickerCloseReminderKey, true).toString();
     // 不用 toBool() 容忍任意字符串；只有明确 false 才允许跳过确认。
     return settings.status() != QSettings::NoError || value != QStringLiteral("false");
+}
+std::optional<bool> AppSettings::loadStickerDoubleClickClose() const
+{
+    if (stickerDoubleClickCloseWriteFailed_)
+        return false;
+    QFile file(filePath_);
+    if (!file.open(QIODevice::ReadOnly))
+        return std::nullopt;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return std::nullopt;
+    if (!settings.contains(stickerDoubleClickCloseKey))
+        return std::nullopt;
+    const QString value = settings.value(stickerDoubleClickCloseKey).toString();
+    if (value == QStringLiteral("true"))
+        return true;
+    if (value == QStringLiteral("false"))
+        return false;
+    return std::nullopt;
+}
+QString AppSettings::saveStickerDoubleClickClose(bool enabled) const
+{
+    stickerDoubleClickCloseWriteFailed_ = true;
+    const QString error = QStringLiteral("双击关闭贴图设置写入失败，请重试保存。");
+    if (!QDir().mkpath(QFileInfo(filePath_).absolutePath()))
+        return error;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    settings.setValue(stickerDoubleClickCloseKey, enabled);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    stickerDoubleClickCloseWriteFailed_ = false;
+    return {};
 }
 QString AppSettings::saveStickerCloseReminder(bool enabled) const
 {

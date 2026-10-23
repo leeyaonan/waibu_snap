@@ -23,6 +23,13 @@ class WindowsStickerFocusSession final : public StickerFocusSession
 };
 }
 bool configureStickerWindowBehavior(QWindow* window, bool) { return window != nullptr; }
+bool makeStickerWindowKeyForKeyboard(QWindow* window)
+{
+    if (!window)
+        return false;
+    window->requestActivate();
+    return true;
+}
 std::unique_ptr<StickerFocusSession> activateStickerEditing(QWindow* window)
 {
     if (!window || QGuiApplication::platformName() != QStringLiteral("windows"))

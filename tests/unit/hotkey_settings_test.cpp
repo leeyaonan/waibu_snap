@@ -68,6 +68,65 @@ class HotkeySettingsTest final : public QObject
         QVERIFY(settings.saveHotkey(defaultScreenshotHotkey()).isEmpty());
         QVERIFY(!settings.loadStickerCloseReminder());
     }
+    void stickerDoubleClickCloseUnsetRoundTripAndIsolation()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("中文 设置/settings.ini"));
+        AppSettings settings(path);
+        QVERIFY(!settings.loadStickerDoubleClickClose().has_value());
+        QVERIFY(!QFile::exists(path));
+        QVERIFY(settings.saveHotkey(QKeySequence(Qt::Key_F2)).isEmpty());
+        for (bool enabled : {true, false})
+        {
+            QVERIFY(settings.saveStickerDoubleClickClose(enabled).isEmpty());
+            QCOMPARE(settings.loadStickerDoubleClickClose(), std::optional<bool>(enabled));
+            QCOMPARE(AppSettings(path).loadStickerDoubleClickClose(), std::optional<bool>(enabled));
+            QSettings ini(path, QSettings::IniFormat);
+            QCOMPARE(ini.value(QStringLiteral("sticker/doubleClickClose")).toBool(), enabled);
+            QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+        }
+        QVERIFY(settings.saveStickerDoubleClickClose(true).isEmpty());
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray before = file.readAll();
+        file.close();
+        QVERIFY(!before.isEmpty());
+    }
+    void stickerDoubleClickCloseInvalidValues_data()
+    {
+        QTest::addColumn<QByteArray>("contents");
+        QTest::addColumn<bool>("hasValue");
+        QTest::addColumn<bool>("enabled");
+        QTest::newRow("true") << QByteArray("[sticker]\ndoubleClickClose=true\n") << true << true;
+        QTest::newRow("false") << QByteArray("[sticker]\ndoubleClickClose=false\n") << true
+                               << false;
+        QTest::newRow("missing") << QByteArray("[hotkey]\nsequence=F2\n") << false << false;
+        QTest::newRow("empty") << QByteArray("[sticker]\ndoubleClickClose=\n") << false << false;
+        QTest::newRow("garbage") << QByteArray("[sticker]\ndoubleClickClose=garbage\n") << false
+                                 << false;
+        QTest::newRow("number") << QByteArray("[sticker]\ndoubleClickClose=0\n") << false << false;
+        QTest::newRow("malformed")
+            << QByteArray("[sticker]\ndoubleClickClose=true\n[broken\n") << false << false;
+    }
+    void stickerDoubleClickCloseInvalidValues()
+    {
+        QFETCH(QByteArray, contents);
+        QFETCH(bool, hasValue);
+        QFETCH(bool, enabled);
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(contents);
+        file.close();
+        const auto value = waibusnap::AppSettings(path).loadStickerDoubleClickClose();
+        QCOMPARE(value.has_value(), hasValue);
+        if (hasValue)
+            QCOMPARE(value.value(), enabled);
+    }
     void stickerCloseReminderInvalidValues_data()
     {
         QTest::addColumn<QByteArray>("contents");

@@ -7,6 +7,7 @@
 #include <QDialog>
 #include <QKeySequence>
 #include <functional>
+#include <optional>
 class QComboBox;
 class QDoubleSpinBox;
 class QScrollArea;
@@ -33,6 +34,9 @@ struct SaveSettingsActions
     std::function<QStringList(QWidget*)> chooseShapeTemplatePaths;
     bool stickerCloseReminder = true;
     std::function<QString(bool)> saveStickerCloseReminder;
+    // nullopt = 从未配置；关闭设置页时不应把未配置误写成 false。
+    std::optional<bool> stickerDoubleClickClose;
+    std::function<QString(bool)> saveStickerDoubleClickClose;
 };
 struct HistorySettingsActions
 {
@@ -111,6 +115,7 @@ class SettingsDialog final : public QDialog
     AutostartActions autostartActions_;
     QCheckBox* autostartCheck_ = nullptr;
     QCheckBox* stickerCloseReminderCheck_ = nullptr;
+    QCheckBox* stickerDoubleClickCloseCheck_ = nullptr;
     HistorySettingsActions historySettings_;
     QLineEdit* historyDirectory_ = nullptr;
     QCheckBox* historyEnabledCheck_ = nullptr;

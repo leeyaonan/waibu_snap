@@ -2124,7 +2124,8 @@ class StartupSmokeTest final : public QObject
         QVERIFY(first->testAttribute(Qt::WA_ShowWithoutActivating));
         QVERIFY(first->windowFlags().testFlag(Qt::FramelessWindowHint));
         QVERIFY(first->windowFlags().testFlag(Qt::WindowStaysOnTopHint));
-        QVERIFY(first->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        QVERIFY(!first->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        QCOMPARE(first->focusPolicy(), Qt::ClickFocus);
         auto* controls = first->findChild<QWidget*>(QStringLiteral("stickerControls"));
         QVERIFY(!controls->isVisible());
         auto* scaleButton = first->findChild<QPushButton*>(QStringLiteral("stickerResetButton"));
@@ -2438,7 +2439,8 @@ class StartupSmokeTest final : public QObject
                 compareAnnotations(window->annotations(), annotations[index]);
                 QCOMPARE(window->isSaved(), index == 0);
                 QVERIFY(window->testAttribute(Qt::WA_ShowWithoutActivating));
-                QVERIFY(window->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+                QVERIFY(!window->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+                QCOMPARE(window->focusPolicy(), Qt::ClickFocus);
             }
         };
         for (int repeat = 0; repeat < 3; ++repeat)
@@ -3566,7 +3568,8 @@ class StartupSmokeTest final : public QObject
         stickerClick(*sticker, "stickerEditDoneButton");
         QVERIFY(!sticker->isEditing());
         QCOMPARE(sticker->geometry(), scaled);
-        QVERIFY(sticker->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        QVERIFY(!sticker->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+        QCOMPARE(sticker->focusPolicy(), Qt::ClickFocus);
         QVERIFY(sticker->testAttribute(Qt::WA_ShowWithoutActivating));
         QCOMPARE(sticker->annotations().size(), count);
         stickerDrag(*sticker, {80, 80}, {120, 110});
@@ -3626,6 +3629,101 @@ class StartupSmokeTest final : public QObject
         QVERIFY(menu->actions()[5]->isEnabled());
         stickerClick(*sticker, "stickerEditDoneButton");
         QVERIFY(!sticker->isEditing());
+    }
+    void stickerDoubleClickCloseAndSpaceEdit()
+    {
+        using namespace waibusnap;
+        std::optional<bool> preference;
+        int prompts = 0;
+        int saves = 0;
+        int closeConfirmations = 0;
+        bool promptResult = true;
+        StickerActions actions;
+        actions.confirmClose = [&](QWidget*)
+        {
+            ++closeConfirmations;
+            return StickerCloseConfirmation{StickerCloseDecision::Cancel, false};
+        };
+        actions.loadDoubleClickClose = [&] { return preference; };
+        actions.saveDoubleClickClose = [&](bool enabled)
+        {
+            ++saves;
+            preference = enabled;
+            return QString();
+        };
+        actions.confirmDoubleClickClose = [&](QWidget*)
+        {
+            ++prompts;
+            return promptResult;
+        };
+        StickerManager manager(nullptr, actions);
+        QImage image(400, 300, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        const auto addSticker = [&]() -> QPointer<StickerWindow>
+        {
+            if (!manager.create(image, {40, 50}, true).success)
+                return {};
+            return manager.windows().last();
+        };
+
+        // 未配置 + 取消：记住关闭，并继续原有的双击进入编辑。
+        promptResult = false;
+        auto sticker = addSticker();
+        QVERIFY(sticker);
+        QTest::mouseDClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        QCOMPARE(prompts, 1);
+        QCOMPARE(saves, 1);
+        QVERIFY(preference.has_value() && !*preference);
+        QVERIFY(sticker->isEditing());
+        sticker->setEditing(false);
+        QTest::mouseDClick(sticker, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        QCOMPARE(prompts, 1);
+        QVERIFY(sticker->isEditing());
+        sticker->setEditing(false);
+
+        // 未配置 + 开启并关闭：保存偏好，按正常关闭路径关闭当前贴图。
+        preference.reset();
+        prompts = 0;
+        saves = 0;
+        promptResult = true;
+        QPointer<StickerWindow> closing = addSticker();
+        QVERIFY(closing);
+        QTest::mouseDClick(closing, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        QCOMPARE(prompts, 1);
+        QCOMPARE(saves, 1);
+        QVERIFY(preference.has_value() && *preference);
+        QTRY_VERIFY(!closing || !closing->isVisible());
+
+        // 已开启：不再提示，双击直接关闭。
+        prompts = 0;
+        QPointer<StickerWindow> closingEnabled = addSticker();
+        QVERIFY(closingEnabled);
+        QTest::mouseDClick(closingEnabled, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        QCOMPARE(prompts, 0);
+        QTRY_VERIFY(!closingEnabled || !closingEnabled->isVisible());
+
+        // 开启后仍遵守未保存贴图的关闭确认；取消则保留窗口。
+        QVERIFY(manager.create(image, {40, 50}, false).success);
+        QPointer<StickerWindow> unsaved = manager.windows().last();
+        QVERIFY(unsaved);
+        QTest::mouseDClick(unsaved, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        QCOMPARE(closeConfirmations, 1);
+        QVERIFY(unsaved->isVisible() && !unsaved->isSaved());
+
+        // 已关闭：双击仍进入编辑。
+        preference = false;
+        auto disabled = addSticker();
+        QVERIFY(disabled);
+        QTest::mouseDClick(disabled, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        QVERIFY(disabled->isEditing());
+        disabled->setEditing(false);
+
+        // 单击贴图获得键盘焦点，空格打开编辑工具栏。
+        QTest::mouseClick(disabled, Qt::LeftButton, Qt::NoModifier, {100, 100});
+        if (QGuiApplication::platformName() == QStringLiteral("cocoa"))
+            QCOMPARE(QApplication::focusWidget(), disabled.data());
+        QTest::keyClick(disabled, Qt::Key_Space);
+        QVERIFY(disabled->isEditing());
     }
     void stickerTextImeEscapeAndCommitBoundaries()
     {
@@ -4103,6 +4201,57 @@ class StartupSmokeTest final : public QObject
         save->click();
         QCOMPARE(dialog.result(), int(QDialog::Accepted));
         QVERIFY(AppSettings(path).loadStickerCloseReminder());
+    }
+    void stickerDoubleClickCloseSettings()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        int writes = 0;
+        SaveSettingsActions actions;
+        actions.stickerDoubleClickClose = settings.loadStickerDoubleClickClose();
+        actions.saveStickerDoubleClickClose = [&](bool enabled)
+        {
+            ++writes;
+            return settings.saveStickerDoubleClickClose(enabled);
+        };
+        AutostartStub startup;
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions, startup.actions());
+        dialog.show();
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(3);
+        auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("stickerDoubleClickCloseCheck"));
+        QVERIFY(check);
+        QVERIFY(!check->isChecked());
+        QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("stickerDoubleClickCloseHelp")));
+        // 从未配置且未勾选时保存设置，不应把“未配置”误写成 false，首次双击提示仍应保留。
+        dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"))->click();
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QCOMPARE(writes, 0);
+        QVERIFY(!settings.loadStickerDoubleClickClose().has_value());
+
+        SaveSettingsActions enabledActions;
+        enabledActions.stickerDoubleClickClose = settings.loadStickerDoubleClickClose();
+        enabledActions.saveStickerDoubleClickClose = [&](bool enabled)
+        {
+            ++writes;
+            return settings.saveStickerDoubleClickClose(enabled);
+        };
+        SettingsDialog enabledDialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            enabledActions, startup.actions());
+        enabledDialog.show();
+        enabledDialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(3);
+        auto* enabledCheck =
+            enabledDialog.findChild<QCheckBox*>(QStringLiteral("stickerDoubleClickCloseCheck"));
+        enabledCheck->setChecked(true);
+        enabledDialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"))->click();
+        QCOMPARE(enabledDialog.result(), int(QDialog::Accepted));
+        QCOMPARE(writes, 1);
+        QCOMPARE(settings.loadStickerDoubleClickClose(), std::optional<bool>(true));
     }
     void stickerCloseDecisionsAndSaveRetries_data()
     {

@@ -36,8 +36,7 @@ namespace waibusnap
 {
 StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerActions actions,
                              qreal initialScale)
-    : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool |
-                           Qt::WindowDoesNotAcceptFocus),
+    : QWidget(nullptr, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool),
       image_(std::move(image)), actions_(std::move(actions)), geometryPosition_(position),
       saved_(saved)
 {
@@ -51,7 +50,7 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
         setAttribute(Qt::WA_TranslucentBackground);
     else
         setAttribute(Qt::WA_OpaquePaintEvent);
-    setFocusPolicy(Qt::NoFocus);
+    setFocusPolicy(Qt::ClickFocus);
     setMouseTracking(true);
     setCursor(Qt::SizeAllCursor);
     // 正常钉图输入已为 DPR=1，保持隐式共享，避免再次分配整图像素。
@@ -79,6 +78,21 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
                                       ? StickerCloseDecision::Cancel
                                       : StickerCloseDecision::Discard;
             return StickerCloseConfirmation{decision, doNotRemind->isChecked()};
+        };
+    if (!actions_.confirmDoubleClickClose)
+        actions_.confirmDoubleClickClose = [](QWidget* parent)
+        {
+            QMessageBox dialog(QMessageBox::Question, QStringLiteral("双击关闭贴图"),
+                               QStringLiteral("开启后，双击非编辑状态的贴图即可关闭。\n"
+                                              "未保存贴图仍会按关闭提醒处理。\n"
+                                              "可在「设置 → 贴图」中随时修改。"),
+                               QMessageBox::NoButton, parent);
+            auto* enable = dialog.addButton(QStringLiteral("开启并关闭"), QMessageBox::AcceptRole);
+            auto* cancel = dialog.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+            dialog.setDefaultButton(cancel);
+            dialog.setEscapeButton(cancel);
+            dialog.exec();
+            return dialog.clickedButton() == enable;
         };
     scale_ =
         std::isfinite(initialScale) && initialScale > 0 && initialScale <= 1 ? initialScale : 1;
@@ -194,10 +208,9 @@ void StickerWindow::setEditing(bool editing)
     hide();
     destroy();
     editing_ = editing;
-    setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool |
-                   (editing ? Qt::WindowFlags() : Qt::WindowDoesNotAcceptFocus));
+    setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
     setAttribute(Qt::WA_ShowWithoutActivating);
-    setFocusPolicy(editing ? Qt::StrongFocus : Qt::NoFocus);
+    setFocusPolicy(editing ? Qt::StrongFocus : Qt::ClickFocus);
     winId();
     if (screen)
         windowHandle()->setScreen(screen);
@@ -375,7 +388,7 @@ void StickerWindow::leaveEvent(QEvent*)
 void StickerWindow::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton || closed_ || saveDialogOpen_ || confirmingClose_ ||
-        quitInteraction_)
+        confirmingDoubleClickClose_ || quitInteraction_)
         return;
     if (editing_)
     {
@@ -434,8 +447,18 @@ void StickerWindow::mousePressEvent(QMouseEvent* event)
         return;
     }
     dragging_ = true;
+    clickCandidate_ = true;
+    pressGlobal_ = event->globalPosition();
     dragFraction_ = {event->position().x() / width(), event->position().y() / height()};
     event->accept();
+}
+void StickerWindow::focusForKeyboard()
+{
+    if (!windowHandle())
+        return;
+    if (!makeStickerWindowKeyForKeyboard(windowHandle()))
+        windowHandle()->requestActivate();
+    setFocus(Qt::MouseFocusReason);
 }
 void StickerWindow::moveDrag(QPointF globalPosition)
 {
@@ -489,7 +512,11 @@ void StickerWindow::mouseMoveEvent(QMouseEvent* event)
         update();
     }
     if (dragging_ && !editing_ && !saveDialogOpen_ && !quitInteraction_)
+    {
+        if ((event->globalPosition() - pressGlobal_).manhattanLength() > 2)
+            clickCandidate_ = false;
         moveDrag(event->globalPosition());
+    }
 }
 void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
 {
@@ -537,11 +564,16 @@ void StickerWindow::mouseReleaseEvent(QMouseEvent* event)
     {
         moveDrag(event->globalPosition());
         dragging_ = false;
+        const bool clicked = clickCandidate_;
+        clickCandidate_ = false;
+        if (clicked)
+            focusForKeyboard();
     }
 }
 void StickerWindow::wheelEvent(QWheelEvent* event)
 {
-    if (closed_ || saveDialogOpen_ || confirmingClose_ || quitInteraction_)
+    if (closed_ || saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_ ||
+        quitInteraction_)
         return;
     for (QWidget* panel : {controls_, static_cast<QWidget*>(moreButton_), editToolbar_, toolBar_,
                            static_cast<QWidget*>(editMoreButton_)})
@@ -1609,15 +1641,58 @@ void StickerWindow::contextMenuEvent(QContextMenuEvent* event)
 }
 void StickerWindow::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && !editing_ && !hasPendingInteraction() &&
-        !quitInteraction_)
+    if (event->button() != Qt::LeftButton || editing_ || hasPendingInteraction() ||
+        quitInteraction_)
+        return;
+    std::optional<bool> preference = false;
+    if (actions_.loadDoubleClickClose)
+        preference = actions_.loadDoubleClickClose();
+    if (preference.value_or(false))
     {
-        setEditing(true);
+        close();
         event->accept();
+        return;
     }
+    if (!preference.has_value() && actions_.confirmDoubleClickClose)
+    {
+        confirmingDoubleClickClose_ = true;
+        const bool enable = actions_.confirmDoubleClickClose(this);
+        confirmingDoubleClickClose_ = false;
+        if (enable)
+        {
+            if (actions_.saveDoubleClickClose)
+            {
+                const QString error = actions_.saveDoubleClickClose(true);
+                if (!error.isEmpty())
+                {
+                    showStatus(error, false);
+                    event->accept();
+                    return;
+                }
+            }
+            close();
+            event->accept();
+            return;
+        }
+        if (actions_.saveDoubleClickClose)
+        {
+            const QString error = actions_.saveDoubleClickClose(false);
+            if (!error.isEmpty())
+                qWarning().noquote() << error;
+        }
+    }
+    setEditing(true);
+    event->accept();
 }
 void StickerWindow::keyPressEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_Space && !editing_ && !hasPendingInteraction() &&
+        !quitInteraction_ && !event->isAutoRepeat())
+    {
+        setEditing(true);
+        event->accept();
+        return;
+    }
     if (event->key() == Qt::Key_Escape && editing_ && !hasPendingInteraction() && !quitInteraction_)
     {
         if (selectMode_ && selectedAnnotation_ >= 0)

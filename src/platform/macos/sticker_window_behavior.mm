@@ -56,6 +56,8 @@ bool configureStickerWindowBehavior(QWindow* window, bool editing)
     {
         if (!native)
             return false;
+        if ([native isKindOfClass:[NSPanel class]])
+            static_cast<NSPanel*>(native).becomesKeyOnlyIfNeeded = NO;
         setPreventsActivation(native, false);
         return !(native.styleMask & NSWindowStyleMaskNonactivatingPanel);
     }
@@ -63,8 +65,22 @@ bool configureStickerWindowBehavior(QWindow* window, bool editing)
         return false;
     native.styleMask |= NSWindowStyleMaskNonactivatingPanel;
     native.hidesOnDeactivate = NO;
+    // 非编辑态不因普通点击自动成为 key；只有单击且未拖动时由显式入口接管。
+    static_cast<NSPanel*>(native).becomesKeyOnlyIfNeeded = YES;
     setPreventsActivation(native, true);
     return (native.styleMask & NSWindowStyleMaskNonactivatingPanel) != 0;
+}
+bool makeStickerWindowKeyForKeyboard(QWindow* window)
+{
+    if (!window || QGuiApplication::platformName() != QStringLiteral("cocoa"))
+        return false;
+    NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
+    NSWindow* native = view.window;
+    if (!native)
+        return false;
+    [native makeKeyWindow];
+    [native makeFirstResponder:view];
+    return native.isKeyWindow;
 }
 std::unique_ptr<StickerFocusSession> activateStickerEditing(QWindow* window)
 {
