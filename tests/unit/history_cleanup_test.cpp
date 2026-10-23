@@ -62,6 +62,25 @@ class HistoryCleanupTest final : public QObject
         QCOMPARE(result.releasedBytes, 20);
         QVERIFY(!result.protectedOverLimit);
     }
+    void originalBytesCountTowardQuota()
+    {
+        CleanupPolicy policy;
+        policy.maxCount = 10;
+        policy.maxBytes = 25;
+        policy.ageEnabled = false;
+        auto old = item(QStringLiteral("old"), day, 10);
+        old.originalBytes = 10;
+        const auto latest = item(QStringLiteral("latest"), 2 * day, 10);
+        auto result = selectCleanupCandidates(policy, {old, latest}, 40 * day);
+        QVERIFY(result.error.isEmpty());
+        QCOMPARE(result.candidates.size(), 1);
+        QCOMPARE(result.candidates[0].fileName, old.fileName);
+        QCOMPARE(result.releasedBytes, 20);
+        QVERIFY(!result.protectedOverLimit);
+        old.originalBytes = std::numeric_limits<qint64>::max();
+        result = selectCleanupCandidates(policy, {old, latest}, 40 * day);
+        QVERIFY(!result.error.isEmpty());
+    }
     void protectionsAndExternalNeverCandidates()
     {
         CleanupPolicy policy;
