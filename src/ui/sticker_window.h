@@ -1,13 +1,17 @@
 #pragma once
 #include "core/annotation.h"
 #include "interfaces/sticker_window_behavior.h"
+#include "interfaces/text_recognizer.h"
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include "output/image_save.h"
+#include "ui/ocr_dialog.h"
 #include "ui/toolbar_icons.h"
+#include <QPointer>
 #include <QTimer>
 #include <QWidget>
 #include <functional>
+#include <memory>
 #include <optional>
 class QLabel;
 class QPainter;
@@ -57,6 +61,7 @@ struct StickerActions : ImageSaveActions
     std::function<QString(bool)> saveDoubleClickClose;
     // 返回 true 表示用户选择“开启并关闭”。
     std::function<bool(QWidget*)> confirmDoubleClickClose;
+    std::shared_ptr<const TextRecognizer> recognizer;
 };
 class StickerWindow final : public QWidget
 {
@@ -78,7 +83,7 @@ class StickerWindow final : public QWidget
     void forceClose();
     bool hasPendingInteraction() const
     {
-        return saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_;
+        return saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_ || ocrDialog_;
     }
     void setQuitInteraction(bool busy);
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
@@ -147,6 +152,7 @@ class StickerWindow final : public QWidget
     void finishText(bool commit, bool restoreFocus = true);
     void positionTextEditor();
     void focusForKeyboard();
+    void startOcrRecognition();
     enum class TextStyleToggle
     {
         Bold,
@@ -180,6 +186,7 @@ class StickerWindow final : public QWidget
     QPushButton* saveButton_ = nullptr;
     QPushButton* copyButton_ = nullptr;
     QPushButton* doneButton_ = nullptr;
+    QPushButton* ocrButton_ = nullptr;
     QShortcut* undoShortcut_ = nullptr;
     QShortcut* redoShortcut_ = nullptr;
     QVector<QPushButton*> toolButtons_;
@@ -217,6 +224,9 @@ class StickerWindow final : public QWidget
     AnnotationTextEdit* textEditor_ = nullptr;
     Annotation textDraft_;
     std::unique_ptr<StickerFocusSession> focusSession_;
+    QPointer<OcrDialog> ocrDialog_;
+    bool ocrRecognizing_ = false;
+    quint64 ocrToken_ = 0;
     QWidget* statusWindow_ = nullptr;
     QLabel* status_ = nullptr;
     QPushButton* scaleButton_ = nullptr;

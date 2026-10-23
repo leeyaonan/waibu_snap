@@ -2199,7 +2199,8 @@ class StartupSmokeTest final : public QObject
         sendMouse(QEvent::MouseButtonPress, press, Qt::LeftButton);
         sendMouse(QEvent::MouseMove, release, Qt::LeftButton);
         sendMouse(QEvent::MouseButtonRelease, release, Qt::NoButton);
-        QCOMPARE(first->geometry(), editingGeometry);
+        // 编辑态未选择绘制工具时允许拖动贴图；工具条由 moveEvent 跟随。
+        QCOMPARE(first->geometry(), editingGeometry.translated(70, 40));
         first->setEditing(false);
         QEvent leave(QEvent::Leave);
         QApplication::sendEvent(first, &leave);
@@ -3518,10 +3519,16 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(sticker->geometry(), before);
         QVERIFY(!sticker->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
         QCOMPARE(sticker->contextMenuPolicy(), Qt::DefaultContextMenu);
+        auto* editingToolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
+        QVERIFY(editingToolbar && editingToolbar->isVisible());
+        const QRect toolbarBefore = editingToolbar->frameGeometry();
         stickerDrag(*sticker, {80, 80}, {150, 150});
-        QCOMPARE(sticker->geometry(), before);
+        QCOMPARE(sticker->pos(), before.topLeft() + QPoint(70, 70));
+        QVERIFY(editingToolbar->frameGeometry() != toolbarBefore);
+        QVERIFY(!editingToolbar->frameGeometry().intersects(sticker->frameGeometry()));
         QVERIFY(sticker->annotations().isEmpty());
         QVERIFY(sticker->isSaved());
+        sticker->move(before.topLeft());
         const char* names[] = {"stickerEditRectangleToolButton", "stickerEditEllipseToolButton",
                                "stickerEditLineToolButton",      "stickerEditArrowToolButton",
                                "stickerEditFreehandToolButton",  "stickerEditTextToolButton",
@@ -3594,7 +3601,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!editToolbar->frameGeometry().intersects(sticker->frameGeometry()));
         QVERIFY(!sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton")));
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
-        QCOMPARE(menu->actions().size(), qsizetype(14));
+        QCOMPARE(menu->actions().size(), qsizetype(15));
         QCOMPARE(menu->actions().last()->data().toString(),
                  QStringLiteral("stickerEditSelectToolButton"));
         menu->actions().last()->trigger();
@@ -3634,6 +3641,31 @@ class StartupSmokeTest final : public QObject
         QVERIFY(menu->actions()[5]->isEnabled());
         stickerClick(*sticker, "stickerEditDoneButton");
         QVERIFY(!sticker->isEditing());
+    }
+    void stickerOcrUsesInjectedRecognizer()
+    {
+        using namespace waibusnap;
+        auto engine = std::make_shared<OcrStub>();
+        StickerActions actions;
+        actions.recognizer = engine;
+        StickerManager manager(nullptr, actions);
+        QImage image(640, 480, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QVERIFY(manager.create(image, {60, 60}, true).success);
+        auto sticker = manager.windows().first();
+        sticker->setEditing(true);
+        QVERIFY(sticker->findChild<QPushButton*>(QStringLiteral("stickerEditOcrToolButton")));
+        stickerClick(*sticker, "stickerEditOcrToolButton");
+        QTRY_VERIFY(sticker->findChild<OcrDialog*>(QStringLiteral("ocrDialog")));
+        auto* dialog = sticker->findChild<OcrDialog*>(QStringLiteral("ocrDialog"));
+        auto* editor = dialog->findChild<QTextEdit*>(QStringLiteral("ocrTextEdit"));
+        QTRY_VERIFY(editor && editor->isVisible());
+        QVERIFY(editor->toPlainText().contains(QStringLiteral("Hello")));
+        QVERIFY(editor->toPlainText().contains(QString::fromUtf8("你好")));
+        QCOMPARE(engine->calls.load(), 1);
+        QCOMPARE(engine->input().size(), image.size());
+        dialog->reject();
+        QTRY_VERIFY(!sticker->findChild<OcrDialog*>(QStringLiteral("ocrDialog")));
     }
     void stickerFloatingChromePlacementAndHover()
     {
