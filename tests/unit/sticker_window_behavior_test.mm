@@ -49,6 +49,27 @@ class StickerWindowBehaviorTest final : public QObject
                            "prevents-activation tag，否则点击贴图会激活应用。");
         window.destroy();
     }
+    void keyboardEntryMakesPanelKey()
+    {
+        if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
+        {
+            QTest::qSkip("当前不是 Cocoa 后端，无法核对 NSPanel key 状态。", __FILE__, __LINE__);
+            return;
+        }
+        if (QGuiApplication::screens().isEmpty())
+        {
+            QTest::qSkip("当前环境没有可用屏幕，无法创建贴图 NSPanel。", __FILE__, __LINE__);
+            return;
+        }
+        QWindow window;
+        window.setFlags(Qt::Tool | Qt::FramelessWindowHint);
+        window.resize(160, 100);
+        window.show();
+        QTest::qWait(10);
+        QVERIFY(waibusnap::configureStickerWindowBehavior(&window, false));
+        QVERIFY(waibusnap::makeStickerWindowKeyForKeyboard(&window));
+        window.destroy();
+    }
 };
 QTEST_MAIN(StickerWindowBehaviorTest)
 #include "sticker_window_behavior_test.moc"

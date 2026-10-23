@@ -75,6 +75,19 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     stickerHelp->setObjectName(QStringLiteral("stickerCloseReminderHelp"));
     stickerHelp->setWordWrap(true);
     stickerLayout->addWidget(stickerHelp);
+    stickerDoubleClickCloseCheck_ =
+        new QCheckBox(QStringLiteral("双击非编辑状态贴图关闭"), stickerPage);
+    stickerDoubleClickCloseCheck_->setObjectName(QStringLiteral("stickerDoubleClickCloseCheck"));
+    stickerDoubleClickCloseCheck_->setChecked(
+        saveSettings_.stickerDoubleClickClose.value_or(false));
+    stickerLayout->addWidget(stickerDoubleClickCloseCheck_);
+    auto* doubleClickHelp =
+        new QLabel(QStringLiteral("开启后双击已保存贴图直接关闭；未保存贴图仍按上方提醒处理。"
+                                  "关闭时双击仍进入编辑。单击贴图后按空格也可打开编辑工具栏。"),
+                   stickerPage);
+    doubleClickHelp->setObjectName(QStringLiteral("stickerDoubleClickCloseHelp"));
+    doubleClickHelp->setWordWrap(true);
+    stickerLayout->addWidget(doubleClickHelp);
     stickerLayout->addStretch();
     auto* generalLayout = new QVBoxLayout(generalPage);
     auto* savePageLayout = new QVBoxLayout(savePage);
@@ -904,6 +917,15 @@ void SettingsDialog::save()
         error = saveSettings_.saveShapeTemplates(shapeTemplates_);
     if (error.isEmpty() && saveSettings_.saveStickerCloseReminder)
         error = saveSettings_.saveStickerCloseReminder(stickerCloseReminderCheck_->isChecked());
+    if (error.isEmpty() && saveSettings_.saveStickerDoubleClickClose)
+    {
+        const bool checked = stickerDoubleClickCloseCheck_->isChecked();
+        const bool changed = saveSettings_.stickerDoubleClickClose.has_value()
+                                 ? *saveSettings_.stickerDoubleClickClose != checked
+                                 : checked;
+        if (changed)
+            error = saveSettings_.saveStickerDoubleClickClose(checked);
+    }
     if (error.isEmpty() && historySettings_.savePreferences)
     {
         error = historySettings_.savePreferences(historyPreferences);

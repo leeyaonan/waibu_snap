@@ -49,6 +49,11 @@ struct StickerActions : ImageSaveActions
     std::function<StickerQuitDecision(int)> confirmQuit;
     std::function<bool()> loadCloseReminder;
     std::function<QString(bool)> saveCloseReminder;
+    // nullopt = 从未配置；true / false = 已显式选择。
+    std::function<std::optional<bool>()> loadDoubleClickClose;
+    std::function<QString(bool)> saveDoubleClickClose;
+    // 返回 true 表示用户选择“开启并关闭”。
+    std::function<bool(QWidget*)> confirmDoubleClickClose;
 };
 class StickerWindow final : public QWidget
 {
@@ -68,7 +73,10 @@ class StickerWindow final : public QWidget
     bool exportToPath(const QString& path);
     bool saveImage();
     void forceClose();
-    bool hasPendingInteraction() const { return saveDialogOpen_ || confirmingClose_; }
+    bool hasPendingInteraction() const
+    {
+        return saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_;
+    }
     void setQuitInteraction(bool busy);
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
     std::optional<AnnotationType> activeTool() const { return activeTool_; }
@@ -128,6 +136,7 @@ class StickerWindow final : public QWidget
     void startText(QPointF point);
     void finishText(bool commit, bool restoreFocus = true);
     void positionTextEditor();
+    void focusForKeyboard();
     enum class TextStyleToggle
     {
         Bold,
@@ -193,6 +202,7 @@ class StickerWindow final : public QWidget
     QPushButton* moreButton_ = nullptr;
     QTimer statusTimeout_;
     QPointF dragFraction_;
+    QPointF pressGlobal_;
     QPointF geometryPosition_;
     qreal wheelRemainder_ = 0;
     qreal scale_ = 1;
@@ -201,8 +211,10 @@ class StickerWindow final : public QWidget
     bool mosaicNoticeShown_ = false;
     bool editing_ = false;
     bool dragging_ = false;
+    bool clickCandidate_ = false;
     bool saveDialogOpen_ = false;
     bool confirmingClose_ = false;
+    bool confirmingDoubleClickClose_ = false;
     bool forceClosing_ = false;
     bool quitInteraction_ = false;
     bool closed_ = false;

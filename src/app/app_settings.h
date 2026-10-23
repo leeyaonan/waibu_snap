@@ -6,6 +6,7 @@
 #include "output/image_output.h"
 #include <QKeySequence>
 #include <QString>
+#include <optional>
 namespace waibusnap
 {
 struct LoadedHotkey
@@ -44,6 +45,9 @@ class AppSettings
     SavePreferences loadSavePreferences() const;
     bool loadStickerCloseReminder() const;
     QString saveStickerCloseReminder(bool enabled) const;
+    // nullopt 表示从未配置过（首次双击提示的触发条件）；false / true 为显式选择。
+    std::optional<bool> loadStickerDoubleClickClose() const;
+    QString saveStickerDoubleClickClose(bool enabled) const;
     CaptureRatioSettings loadCaptureRatios() const;
     QString shapeTemplateDir() const;
     QVector<ShapeTemplateEntry> loadShapeTemplates(QString* notice = nullptr) const;
@@ -59,6 +63,7 @@ class AppSettings
   private:
     QString filePath_;
     mutable bool stickerCloseReminderWriteFailed_ = false;
+    mutable bool stickerDoubleClickCloseWriteFailed_ = false;
     mutable bool historyWriteFailed_ = false;
     mutable bool historyWindowWriteFailed_ = false;
 };

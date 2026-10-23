@@ -41,6 +41,10 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                     { return settings_.loadStickerCloseReminder(); };
                     stickerActions.saveCloseReminder = [this](bool enabled)
                     { return settings_.saveStickerCloseReminder(enabled); };
+                    stickerActions.loadDoubleClickClose = [this]
+                    { return settings_.loadStickerDoubleClickClose(); };
+                    stickerActions.saveDoubleClickClose = [this](bool enabled)
+                    { return settings_.saveStickerDoubleClickClose(enabled); };
                     return std::move(stickerActions);
                 }()),
       clipboardActions_(std::move(clipboardActions)),
@@ -547,7 +551,9 @@ void ApplicationController::openSettings()
          [this](const QStringList& paths) { return settings_.importShapeTemplates(paths); },
          {},
          settings_.loadStickerCloseReminder(),
-         [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); }},
+         [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); },
+         settings_.loadStickerDoubleClickClose(),
+         [this](bool enabled) { return settings_.saveStickerDoubleClickClose(enabled); }},
         autostartActions_, std::move(historySettings));
     connect(&history_, &HistoryManager::groupsChanged, &dialog,
             [this, &dialog]
