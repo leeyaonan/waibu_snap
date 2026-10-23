@@ -580,6 +580,10 @@ void WatermarkSettingsPage::rebuildAssets(const QString& selected)
     const bool hasSelection = assets_->currentRow() >= 0;
     editAssetButton_->setEnabled(hasSelection);
     deleteAssetButton_->setEnabled(hasSelection);
+    if (addPresetButton_)
+        addPresetButton_->setEnabled(!draft_.assets.isEmpty() &&
+                                     draft_.presets.size() < watermarkMaximumPresets);
+    updatePreviews();
 }
 void WatermarkSettingsPage::rebuildPresets(const QString& selected)
 {
