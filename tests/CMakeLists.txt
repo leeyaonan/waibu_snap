@@ -186,6 +186,18 @@ add_test(NAME text_recognizer_real_engine COMMAND text_recognizer_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/text-recognizer-output.txt,txt")
 set_tests_properties(text_recognizer_real_engine PROPERTIES TIMEOUT 120)
 
+qt_add_executable(watermark_test unit/watermark_test.cpp)
+target_link_libraries(watermark_test PRIVATE waibusnap_output Qt6::Test waibusnap_options)
+set_target_properties(watermark_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME watermark COMMAND watermark_test)
+set_tests_properties(watermark PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(watermark_service_test unit/watermark_service_test.cpp)
+target_link_libraries(watermark_service_test PRIVATE waibusnap_settings Qt6::Test waibusnap_options)
+set_target_properties(watermark_service_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME watermark_service COMMAND watermark_service_test)
+set_tests_properties(watermark_service PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 qt_add_executable(aspect_ratio_test unit/aspect_ratio_test.cpp)
 target_link_libraries(aspect_ratio_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(aspect_ratio_test PROPERTIES WIN32_EXECUTABLE FALSE)
