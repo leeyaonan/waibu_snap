@@ -173,7 +173,10 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
     star_->setCheckable(true);
     pin_ = actionButton("historyPin", QStringLiteral("钉住"),
                         QStringLiteral("钉住并关闭（Enter）；Shift+Enter 钉住并留窗"));
-    copy_ = actionButton("historyCopy", QStringLiteral("复制"), QStringLiteral("复制原图"));
+    copy_ = actionButton("historyCopy", QStringLiteral("复制"), QStringLiteral("复制当前版本"));
+    original_ = actionButton("historyOriginalToggle", QStringLiteral("原图"),
+                             QStringLiteral("切换水印版 / 原图"));
+    original_->setCheckable(true);
     reveal_ = actionButton("historyReveal", QStringLiteral("在文件夹中显示"),
                            QStringLiteral("在文件夹中显示当前图片"));
     delete_ = actionButton("historyDelete", QStringLiteral("删除"),
@@ -182,6 +185,12 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
     layout->addLayout(actionBar);
     connect(star_, &QToolButton::clicked, this, &HistoryWindow::toggleStar);
     connect(copy_, &QToolButton::clicked, this, [this] { outputImage(false); });
+    connect(original_, &QToolButton::toggled, this,
+            [this](bool original)
+            {
+                showOriginal_ = original;
+                showSelection();
+            });
     connect(pin_, &QToolButton::clicked, this, [this] { outputImage(true, true); });
     connect(delete_, &QToolButton::clicked, this, &HistoryWindow::deleteSelection);
     connect(reveal_, &QToolButton::clicked, this,
@@ -525,6 +534,8 @@ void HistoryWindow::rebuildItems(const QString& selected)
             label += QStringLiteral(" · 长图");
         if (item.source == HistorySource::External)
             label += QStringLiteral(" · 外部图片");
+        if (item.hasOriginal)
+            label += QStringLiteral(" · 水印/原图");
         auto* entry = new QListWidgetItem(label, thumbnails_);
         entry->setSizeHint({210, 92});
         entry->setData(Qt::UserRole, historyItemId(item));
@@ -544,6 +555,9 @@ HistoryWindow::~HistoryWindow() { manager_.setProtectedItem({}); }
 void HistoryWindow::showSelection()
 {
     manager_.setProtectedItem(selectedId());
+    const auto selected = manager_.findItem(selectedId());
+    if (!selected || !selected->hasOriginal)
+        showOriginal_ = false;
     updateStatus();
     updateActions();
     const auto* entry = thumbnails_->currentItem();
@@ -560,7 +574,9 @@ void HistoryWindow::showSelection()
     }
     // 切图前释放上一张主图，避免两个大图的解码内存长期重叠。
     imageView_->setImage({});
-    const auto result = manager_.loadImage(entry->data(Qt::UserRole).toString());
+    const auto result = manager_.loadImage(entry->data(Qt::UserRole).toString(), {},
+                                           showOriginal_ ? HistoryImageVariant::Original
+                                                         : HistoryImageVariant::Watermarked);
     imageView_->setImage(result.image);
     imageView_->setVisible(result.success);
     empty_->setText(result.error);
@@ -578,6 +594,15 @@ void HistoryWindow::updateActions()
     star_->setChecked(item && item->starred);
     star_->setText(item && item->starred ? QStringLiteral("★ 星标") : QStringLiteral("☆ 星标"));
     copy_->setEnabled(item && bool(actions_.copyImage));
+    if (original_)
+    {
+        const QSignalBlocker blocker(original_);
+        original_->setVisible(item && item->hasOriginal);
+        original_->setChecked(showOriginal_ && item && item->hasOriginal);
+        original_->setText(showOriginal_ ? QStringLiteral("水印版") : QStringLiteral("原图"));
+        original_->setToolTip(item && item->hasOriginal ? QStringLiteral("切换水印版 / 原图")
+                                                        : QStringLiteral("这条记录没有保留原图"));
+    }
     pin_->setEnabled(item && bool(actions_.pinImage));
     reveal_->setEnabled(item && bool(actions_.reveal));
     delete_->setEnabled(item && item->managed && bool(actions_.trash));
@@ -608,7 +633,7 @@ void HistoryWindow::updateStatus()
             protectedBytes += group.usage.protectedBytes;
         }
     for (const auto& item : items_)
-        bytes += item.bytes;
+        bytes += item.bytes + item.originalBytes;
     status_->setText(
         QStringLiteral("%1 张 · %2 MiB · 受保护 %3 张 / %4 MiB%5")
             .arg(items_.size())
@@ -641,7 +666,9 @@ void HistoryWindow::outputImage(bool pin, bool closeAfter)
 {
     if (selectedId().isEmpty())
         return;
-    const auto loaded = manager_.loadImage(selectedId());
+    const auto loaded = manager_.loadImage(selectedId(), {},
+                                           showOriginal_ ? HistoryImageVariant::Original
+                                                         : HistoryImageVariant::Watermarked);
     if (!loaded.success)
     {
         showActionResult(loaded);

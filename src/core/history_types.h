@@ -16,6 +16,11 @@ enum class HistorySort
     OldestFirst,
     NewestFirst
 };
+enum class HistoryImageVariant
+{
+    Watermarked,
+    Original
+};
 struct CleanupPolicy
 {
     bool enabled = true;
@@ -44,6 +49,9 @@ struct HistoryItem
     bool managed = false;
     bool starred = false;
     qint64 bytes = 0;
+    qint64 originalBytes = 0;
+    bool hasOriginal = false;
+    QString originalPath;
     qint64 createdAtMs = 0;
     QSize pixelSize;
 };

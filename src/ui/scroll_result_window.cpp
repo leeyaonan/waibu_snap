@@ -1,4 +1,6 @@
 #include "ui/scroll_result_window.h"
+#include "app/watermark_service.h"
+#include "output/watermark_renderer.h"
 #include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -217,11 +219,12 @@ ScrollResultWindow::ScrollResultWindow(QImage image, ScrollStitchStats stats,
                     return;
                 emit retryRequested();
             });
+    updateWatermarkForImage();
     scrollArea_ = new QScrollArea(this);
     view_ = new ScrollResultView(scrollArea_);
     view_->setVertical(stats.motionDetected ? stats.axis == ScrollAxis::Vertical
                                             : image_.height() >= image_.width());
-    view_->setImage(image_);
+    view_->setImage(outputImage());
     scrollArea_->setWidget(view_);
     scrollArea_->setAlignment(Qt::AlignHCenter);
     layout->addWidget(scrollArea_, 1);
@@ -252,6 +255,21 @@ ScrollResultWindow::ScrollResultWindow(QImage image, ScrollStitchStats stats,
     auto* outputs = new QHBoxLayout(outputBar_);
     outputs->setContentsMargins(0, 0, 0, 0);
     outputs->addStretch();
+    watermarkButton_ =
+        button(outputs, QStringLiteral("scrollResultWatermarkButton"), QStringLiteral("水印"));
+    watermarkButton_->setCheckable(true);
+    watermarkButton_->setChecked(watermarkVisible_);
+    watermarkButton_->setVisible(watermark_.has_value());
+    connect(watermarkButton_, &QPushButton::toggled, this,
+            [this](bool visible)
+            {
+                watermarkVisible_ = visible;
+                updateViewImage();
+                if (actions_.historyUpdatedPair)
+                    actions_.historyUpdatedPair(outputImage(), watermark_ && watermarkVisible_
+                                                                   ? std::optional<QImage>(image_)
+                                                                   : std::nullopt);
+            });
     auto* saveButton =
         button(outputs, QStringLiteral("scrollResultSaveButton"), QStringLiteral("保存"));
     saveButton->setStyleSheet(
@@ -262,7 +280,7 @@ ScrollResultWindow::ScrollResultWindow(QImage image, ScrollStitchStats stats,
             [this]
             {
                 if (!saving_)
-                    report(actions_.copyImage(image_));
+                    report(actions_.copyImage(outputImage()));
             });
     auto* pin = button(outputs, QStringLiteral("scrollResultPinButton"), QStringLiteral("钉图"));
     pin->setEnabled(bool(actions_.pinImage));
@@ -270,7 +288,7 @@ ScrollResultWindow::ScrollResultWindow(QImage image, ScrollStitchStats stats,
             [this]
             {
                 if (!saving_ && actions_.pinImage)
-                    report(actions_.pinImage(image_));
+                    report(actions_.pinImage(outputImage()));
             });
     connect(button(outputs, QStringLiteral("scrollResultCropButton"), QStringLiteral("裁剪")),
             &QPushButton::clicked, this,
@@ -359,11 +377,64 @@ void ScrollResultWindow::applyCrop()
     {
         image_ = image_.copy(rectangle);
         output_ = false;
-        view_->setImage(image_);
-        if (actions_.historyUpdated)
-            actions_.historyUpdated(image_);
+        updateWatermarkForImage();
+        updateViewImage();
+        if (actions_.historyUpdatedPair)
+            actions_.historyUpdatedPair(outputImage(), watermark_ && watermarkVisible_
+                                                           ? std::optional<QImage>(image_)
+                                                           : std::nullopt);
+        else if (actions_.historyUpdated)
+            actions_.historyUpdated(outputImage());
     }
     setCropping(false);
+}
+void ScrollResultWindow::updateWatermarkForImage()
+{
+    watermark_.reset();
+    if (!actions_.watermarkEnabled || !actions_.watermarks || image_.isNull())
+        return;
+    const auto* preset = actions_.watermarks->currentPreset();
+    const auto* asset = preset ? actions_.watermarks->asset(preset->assetId) : nullptr;
+    if (!preset || !asset)
+        return;
+    QString error;
+    const QImage assetImage = actions_.watermarks->assetImage(asset->id, &error);
+    if (asset->kind == WatermarkKind::Image && assetImage.isNull())
+        return;
+    WatermarkInstance instance;
+    instance.presetId = preset->id;
+    instance.layout = preset->layout;
+    instance.opacity = preset->opacity;
+    instance.scale = preset->scale;
+    instance.normalizedCenter = watermarkInitialCenter(
+        preset->layout, watermarkBaseSize(*asset, assetImage), image_.size());
+    watermark_ = instance;
+}
+void ScrollResultWindow::updateViewImage()
+{
+    if (!view_)
+        return;
+    view_->setImage(outputImage());
+    if (watermarkButton_)
+    {
+        const QSignalBlocker blocker(watermarkButton_);
+        watermarkButton_->setVisible(watermark_.has_value());
+        watermarkButton_->setChecked(watermarkVisible_);
+    }
+}
+QImage ScrollResultWindow::outputImage() const
+{
+    if (!watermark_ || !watermarkVisible_ || !actions_.watermarks)
+        return image_;
+    const auto* preset = actions_.watermarks->preset(watermark_->presetId);
+    const auto* asset = preset ? actions_.watermarks->asset(preset->assetId) : nullptr;
+    if (!preset || !asset)
+        return image_;
+    QString error;
+    const QImage assetImage = actions_.watermarks->assetImage(asset->id, &error);
+    if (asset->kind == WatermarkKind::Image && assetImage.isNull())
+        return image_;
+    return composeWatermark(image_, *asset, assetImage, *watermark_);
 }
 void ScrollResultWindow::report(ImageOutputResult result)
 {
@@ -395,7 +466,7 @@ void ScrollResultWindow::save()
         return;
     if (!target.path.isEmpty() || !target.quickDirectory.isEmpty())
     {
-        const auto result = saveImageToTarget(image_, target);
+        const auto result = saveImageToTarget(outputImage(), target);
         report({result.result.success, result.result.success
                                            ? QStringLiteral("已保存：%1").arg(result.path)
                                            : result.result.explanation});

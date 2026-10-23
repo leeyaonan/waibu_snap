@@ -28,9 +28,16 @@ HistoryCleanupResult selectCleanupCandidates(const CleanupPolicy& policy,
     {
         if (!item.managed)
             continue;
-        if (item.bytes < 0 || item.createdAtMs < 0 || nowMs < 0 ||
-            (item.source != HistorySource::Overlay && item.source != HistorySource::Scroll) ||
-            item.bytes > std::numeric_limits<qint64>::max() - bytes ||
+        if (item.bytes < 0 || item.originalBytes < 0 ||
+            item.bytes > std::numeric_limits<qint64>::max() - item.originalBytes ||
+            item.createdAtMs < 0 || nowMs < 0 ||
+            (item.source != HistorySource::Overlay && item.source != HistorySource::Scroll))
+        {
+            result.error = QStringLiteral("清理记录无效、重复、跨组或占用溢出，已停止选择候选。");
+            return result;
+        }
+        const qint64 stored = item.bytes + item.originalBytes;
+        if (stored > std::numeric_limits<qint64>::max() - bytes ||
             ids.contains(historyItemId(item)) || (count && groupId != item.groupId))
         {
             result.error = QStringLiteral("清理记录无效、重复、跨组或占用溢出，已停止选择候选。");
@@ -39,7 +46,7 @@ HistoryCleanupResult selectCleanupCandidates(const CleanupPolicy& policy,
         groupId = item.groupId;
         ids.insert(historyItemId(item));
         latest = historyItemId(item);
-        bytes += item.bytes;
+        bytes += stored;
         ++count;
         if (isExpired(item))
             ++expired;
@@ -48,13 +55,14 @@ HistoryCleanupResult selectCleanupCandidates(const CleanupPolicy& policy,
     {
         if (!item.managed)
             continue;
+        const qint64 stored = item.bytes + item.originalBytes;
         const bool protectedItem = item.starred || historyItemId(item) == latest ||
                                    historyItemId(item) == selectedId ||
-                                   (policy.bytesEnabled && item.bytes > policy.maxBytes);
+                                   (policy.bytesEnabled && stored > policy.maxBytes);
         if (protectedItem)
         {
             ++result.protectedCount;
-            result.protectedBytes += item.bytes;
+            result.protectedBytes += stored;
             continue;
         }
         const bool quotaExceeded = (policy.countEnabled && count > policy.maxCount) ||
@@ -63,8 +71,8 @@ HistoryCleanupResult selectCleanupCandidates(const CleanupPolicy& policy,
         if (policy.enabled && (quotaExceeded || isExpired(item)))
         {
             result.candidates.append(item);
-            result.releasedBytes += item.bytes;
-            bytes -= item.bytes;
+            result.releasedBytes += stored;
+            bytes -= stored;
             --count;
             if (isExpired(item))
                 --expired;

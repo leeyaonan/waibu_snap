@@ -202,6 +202,38 @@ class HistoryIngestTest final : public QObject
     Q_OBJECT
   private slots:
     void init() { QApplication::setQuitOnLastWindowClosed(false); }
+    void originalVariantAndUpdateRemoval()
+    {
+        QTemporaryDir temp;
+        const auto run = options(temp);
+        AppSettings settings(run.settingsFile);
+        HistoryManager manager(settings, run.historyRoot);
+        QVERIFY(manager.initialize().success);
+        const auto session = manager.beginSession();
+        const QImage watermarked = pixels(QColor(20, 60, 200));
+        const QImage original = pixels(QColor(200, 30, 40));
+        const auto recorded =
+            manager.record(session, watermarked, HistorySource::Overlay, original);
+        QVERIFY2(recorded.success, qPrintable(recorded.error));
+        QVERIFY(recorded.item.hasOriginal);
+        QVERIFY(recorded.item.originalBytes > 0);
+        const QString itemId = historyItemId(recorded.item);
+        const auto loaded = manager.loadImage(itemId);
+        QVERIFY2(loaded.success, qPrintable(loaded.error));
+        comparePixels(loaded.image, watermarked);
+        const auto loadedOriginal = manager.loadImage(itemId, {}, HistoryImageVariant::Original);
+        QVERIFY2(loadedOriginal.success, qPrintable(loadedOriginal.error));
+        comparePixels(loadedOriginal.image, original);
+        const auto plain = manager.findItem(itemId);
+        QVERIFY(plain && plain->hasOriginal);
+        QVERIFY(plain->originalBytes > 0);
+
+        const auto replaced =
+            manager.record(session, pixels(QColor(20, 180, 40)), HistorySource::Overlay);
+        QVERIFY2(replaced.success, qPrintable(replaced.error));
+        QVERIFY(!replaced.item.hasOriginal);
+        QVERIFY(!manager.loadImage(itemId, {}, HistoryImageVariant::Original).success);
+    }
     void defaultsFallbackSwitchAndRestart()
     {
         QTemporaryDir temp;

@@ -613,13 +613,13 @@ class HistoryGroupsTest final : public QObject
                 if (action->objectName() != QStringLiteral("historyMenuAction") &&
                     action->objectName() != QStringLiteral("currentGroupAction"))
                     oldNames.append(action->objectName());
-            QCOMPARE(oldNames, (QStringList{QStringLiteral("screenshotAction"),
-                                            QStringLiteral("scrollCaptureAction"),
-                                            QStringLiteral("clipboardStickerAction"),
-                                            QStringLiteral("settingsAction"),
-                                            QStringLiteral("hideAllStickersAction"),
-                                            QStringLiteral("restoreAllStickersAction"),
-                                            QStringLiteral("quitAction")}));
+            QCOMPARE(
+                oldNames,
+                (QStringList{
+                    QStringLiteral("screenshotAction"), QStringLiteral("scrollCaptureAction"),
+                    QStringLiteral("clipboardStickerAction"), QStringLiteral("settingsAction"),
+                    QStringLiteral("watermarkMenuAction"), QStringLiteral("hideAllStickersAction"),
+                    QStringLiteral("restoreAllStickersAction"), QStringLiteral("quitAction")}));
         }
         HistoryManager restarted(AppSettings(options.settingsFile), options.historyRoot);
         QVERIFY(restarted.initialize().success);

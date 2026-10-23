@@ -133,6 +133,33 @@ class HistoryWindowTest final : public QObject
         choose(w, QStringLiteral("starred"));
         QVERIFY(child<QLabel>(w, "historyEmpty")->text().contains(QStringLiteral("还没有星标")));
     }
+    void originalVariantToggle()
+    {
+        Fixture f;
+        const auto group = f.manager.currentGroup();
+        QVERIFY(group);
+        const auto watermarked = f.store.writeManagedPng(
+            group->id, picture(Qt::red), HistorySource::Overlay, {}, picture(Qt::blue));
+        QVERIFY2(watermarked.success, qPrintable(watermarked.error));
+        QVERIFY(watermarked.item.hasOriginal);
+        f.manager.refresh();
+        auto* window = f.open();
+        QCOMPARE(thumbnails(window)->count(), 1);
+        thumbnails(window)->setCurrentRow(0);
+        QCoreApplication::processEvents();
+        auto* toggle = child<QToolButton>(window, "historyOriginalToggle");
+        QVERIFY(toggle->isVisible());
+        QVERIFY(!toggle->isChecked());
+        QCOMPARE(preview(window)->image().pixelColor(0, 0), QColor(Qt::red));
+        toggle->click();
+        QCoreApplication::processEvents();
+        QVERIFY(toggle->isChecked());
+        QCOMPARE(toggle->text(), QStringLiteral("水印版"));
+        QCOMPARE(preview(window)->image().pixelColor(0, 0), QColor(Qt::blue));
+        toggle->click();
+        QCoreApplication::processEvents();
+        QCOMPARE(preview(window)->image().pixelColor(0, 0), QColor(Qt::red));
+    }
     void filtersCountsAndCurrentGroup()
     {
         Fixture f;

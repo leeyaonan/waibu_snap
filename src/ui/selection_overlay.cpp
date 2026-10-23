@@ -53,6 +53,22 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
 {
     if (actions_.historySessionId.isEmpty())
         actions_.historySessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (actions_.watermarks)
+    {
+        connect(actions_.watermarks, &WatermarkService::currentPresetChanged, this,
+                &SelectionOverlay::refreshWatermarkFromService);
+        connect(actions_.watermarks, &WatermarkService::preferencesChanged, this,
+                &SelectionOverlay::refreshWatermarkFromService);
+        connect(actions_.watermarks, &WatermarkService::autoChanged, this,
+                [this](bool enabled)
+                {
+                    if (enabled)
+                        watermarkAutoAttempted_ = false;
+                    maybeApplyAutoWatermark();
+                    updateToolbar();
+                    update();
+                });
+    }
     scrollSupported_ = regionCaptureSupported();
     if (!snappingError.isEmpty() || windows_.isEmpty())
     {
@@ -313,7 +329,7 @@ void SelectionOverlay::ensureToolbar()
         watermarkPresetCombo_->setObjectName(QStringLiteral("watermarkPresetCombo"));
         watermarkPresetCombo_->setFocusPolicy(Qt::NoFocus);
         watermarkPresetCombo_->setFixedHeight(26);
-        watermarkPresetCombo_->setFixedWidth(88);
+        watermarkPresetCombo_->setFixedWidth(76);
         watermarkLayout->addWidget(watermarkPresetCombo_);
         watermarkOpacitySpin_ = new QSpinBox(watermarkBar_);
         watermarkOpacitySpin_->setObjectName(QStringLiteral("watermarkOpacitySpin"));
@@ -322,7 +338,7 @@ void SelectionOverlay::ensureToolbar()
         watermarkOpacitySpin_->setToolTip(QStringLiteral("水印透明度"));
         watermarkOpacitySpin_->setAccessibleName(QStringLiteral("水印透明度"));
         watermarkOpacitySpin_->setFixedHeight(26);
-        watermarkOpacitySpin_->setFixedWidth(58);
+        watermarkOpacitySpin_->setFixedWidth(54);
         watermarkLayout->addWidget(watermarkOpacitySpin_);
         watermarkScaleSpin_ = new QSpinBox(watermarkBar_);
         watermarkScaleSpin_->setObjectName(QStringLiteral("watermarkScaleSpin"));
@@ -331,7 +347,7 @@ void SelectionOverlay::ensureToolbar()
         watermarkScaleSpin_->setToolTip(QStringLiteral("水印缩放"));
         watermarkScaleSpin_->setAccessibleName(QStringLiteral("水印缩放"));
         watermarkScaleSpin_->setFixedHeight(26);
-        watermarkScaleSpin_->setFixedWidth(58);
+        watermarkScaleSpin_->setFixedWidth(54);
         watermarkLayout->addWidget(watermarkScaleSpin_);
         const auto textButton =
             [this, watermarkLayout](const QString& object, const QString& text, const QString& tip)
@@ -340,7 +356,7 @@ void SelectionOverlay::ensureToolbar()
             button->setObjectName(object);
             button->setToolTip(tip);
             button->setAccessibleName(tip);
-            button->setFixedSize(24, 26);
+            button->setFixedSize(22, 26);
             button->setFocusPolicy(Qt::NoFocus);
             watermarkLayout->addWidget(button);
             return button;
@@ -351,6 +367,10 @@ void SelectionOverlay::ensureToolbar()
                                            QStringLiteral("重"), QStringLiteral("重置为预设默认"));
         watermarkRemoveButton_ = textButton(QStringLiteral("watermarkRemoveButton"),
                                             QStringLiteral("删"), QStringLiteral("移除水印"));
+        watermarkAutoButton_ =
+            textButton(QStringLiteral("watermarkAutoButton"), QStringLiteral("常"),
+                       QStringLiteral("常驻水印：后续截图自动添加"));
+        watermarkAutoButton_->setCheckable(true);
         connect(watermarkPresetCombo_, &QComboBox::currentIndexChanged, this,
                 [this]
                 {
@@ -400,6 +420,19 @@ void SelectionOverlay::ensureToolbar()
                 &SelectionOverlay::resetWatermark);
         connect(watermarkRemoveButton_, &QPushButton::clicked, this,
                 &SelectionOverlay::removeWatermark);
+        connect(watermarkAutoButton_, &QPushButton::toggled, this,
+                [this](bool enabled)
+                {
+                    if (!actions_.watermarks)
+                        return;
+                    const QString error = actions_.watermarks->setAutoEnabled(enabled);
+                    if (!error.isEmpty())
+                    {
+                        showStatus(error, false);
+                        const QSignalBlocker blocker(watermarkAutoButton_);
+                        watermarkAutoButton_->setChecked(!enabled);
+                    }
+                });
         watermarkBar_->hide();
     }
     undoButton_ = actionButtons_[0];
@@ -979,6 +1012,7 @@ void SelectionOverlay::updateToolbar()
         watermarkBar_->setEnabled(enabled);
     toolbar_->show();
     positionStatus();
+    maybeApplyAutoWatermark();
     if (!actions_.shapeTemplateNotice.isEmpty())
     {
         const QString notice = std::exchange(actions_.shapeTemplateNotice, QString());
@@ -1208,12 +1242,18 @@ bool SelectionOverlay::exportToPath(const QString& path)
 }
 void SelectionOverlay::recordHistory(const QImage& image, const QString& savedPath)
 {
-    if (actions_.recordHistory)
+    std::optional<QImage> original;
+    if (watermark_ && watermark_->visible)
+        original = outputImage(false);
+    const auto report = [](const HistoryStatus& result)
     {
-        const auto result = actions_.recordHistory(image, savedPath);
         if (!result.success)
             qWarning().noquote() << "截图输出成功，历史写入失败：" << result.error;
-    }
+    };
+    if (actions_.recordHistoryPair)
+        report(actions_.recordHistoryPair(image, original, savedPath));
+    else if (actions_.recordHistory)
+        report(actions_.recordHistory(image, savedPath));
 }
 bool SelectionOverlay::finishSave(const ImageFileResult& output, const QImage& image)
 {
@@ -2163,6 +2203,44 @@ void SelectionOverlay::applyWatermarkPreset()
     updateToolbar();
     update();
 }
+void SelectionOverlay::maybeApplyAutoWatermark()
+{
+    if (!actions_.watermarks || !actions_.watermarks->autoEnabled() ||
+        !actions_.watermarks->currentPreset())
+        return;
+    if (watermark_)
+    {
+        watermarkAutoAttempted_ = true;
+        return;
+    }
+    if (watermarkAutoAttempted_ || selection_.isEmpty() || dragMode_ == DragMode::Create ||
+        textMode_ || scrollReady_ || finished_ || saveDialogOpen_ || ocrDialog_)
+        return;
+    watermarkAutoAttempted_ = true;
+    applyWatermarkPreset();
+}
+void SelectionOverlay::refreshWatermarkFromService()
+{
+    if (!actions_.watermarks)
+        return;
+    if (watermark_)
+    {
+        const auto* current = actions_.watermarks->preset(watermark_->presetId);
+        if (!current)
+        {
+            watermark_.reset();
+            watermarkSelected_ = false;
+            watermarkGesture_ = WatermarkGesture::None;
+            markDirty();
+        }
+        else if (current->id != actions_.watermarks->currentPresetId())
+            applyWatermarkPreset();
+    }
+    maybeApplyAutoWatermark();
+    updateToolbar();
+    updateCursor(mapFromGlobal(QCursor::pos()));
+    update();
+}
 void SelectionOverlay::removeWatermark()
 {
     if (!watermark_)
@@ -2224,6 +2302,9 @@ void SelectionOverlay::syncWatermarkBar()
                                                                    : QStringLiteral("显示水印"));
         watermarkResetButton_->setEnabled(true);
         watermarkRemoveButton_->setEnabled(true);
+        const QSignalBlocker autoBlocker(watermarkAutoButton_);
+        watermarkAutoButton_->setChecked(actions_.watermarks->autoEnabled());
+        watermarkAutoButton_->setEnabled(true);
     }
     else
     {
@@ -2233,6 +2314,9 @@ void SelectionOverlay::syncWatermarkBar()
         watermarkVisibilityButton_->setToolTip(QStringLiteral("隐藏水印"));
         watermarkResetButton_->setEnabled(hasPreset);
         watermarkRemoveButton_->setEnabled(false);
+        const QSignalBlocker autoBlocker(watermarkAutoButton_);
+        watermarkAutoButton_->setChecked(actions_.watermarks->autoEnabled());
+        watermarkAutoButton_->setEnabled(hasPreset);
     }
     watermarkBar_->adjustSize();
 }

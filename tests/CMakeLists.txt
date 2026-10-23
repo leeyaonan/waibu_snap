@@ -264,7 +264,7 @@ add_test(NAME history_window COMMAND history_window_test -o
 set_tests_properties(history_window PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 # 历史浏览 UI 的高 DPI 显式清单，独立于既有截图冒烟数字。
 add_test(NAME history_window_high_dpi COMMAND history_window_test
-    emptyHistory filtersCountsAndCurrentGroup sortingSelectionAndKeyboard lazyThumbnails
+    emptyHistory filtersCountsAndCurrentGroup originalVariantToggle sortingSelectionAndKeyboard lazyThumbnails
     transparentCheckerboard longImageZoomScrollAndPan narrowLayoutAndCollapse
     restoreStateAndSelection offscreenGeometryAndStaleSelection missingImageAndRefresh
     refreshPreservesIngestState corruptedMetadataAndUnavailableRoot
@@ -331,6 +331,17 @@ set_target_properties(history_missing_webp_test PROPERTIES WIN32_EXECUTABLE FALS
 add_test(NAME history_missing_webp COMMAND history_missing_webp_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/history_missing_webp-output.txt,txt")
 set_tests_properties(history_missing_webp PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
+qt_add_executable(watermark_scroll_test integration/watermark_scroll_test.cpp)
+target_link_libraries(watermark_scroll_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(watermark_scroll_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME watermark_scroll COMMAND watermark_scroll_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/watermark_scroll-output.txt,txt")
+set_tests_properties(watermark_scroll PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+add_test(NAME watermark_scroll_high_dpi COMMAND watermark_scroll_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/watermark_scroll-high-dpi-output.txt,txt")
+set_tests_properties(watermark_scroll_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
 
 qt_add_executable(watermark_overlay_test integration/watermark_overlay_test.cpp)
 target_link_libraries(watermark_overlay_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)

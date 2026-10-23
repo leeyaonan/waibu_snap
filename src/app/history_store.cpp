@@ -31,6 +31,35 @@ QString metadataPath(const QString& groupPath, const QString& file)
 }
 QString groupFile(const QString& path) { return metadataPath(path, QStringLiteral("group.json")); }
 QString itemsFile(const QString& path) { return metadataPath(path, QStringLiteral("items.json")); }
+QString originalsDirectory(const QString& groupPath)
+{
+    return QDir(QDir(groupPath).filePath(QStringLiteral(".waibusnap")))
+        .filePath(QStringLiteral("originals"));
+}
+QString originalFile(const QString& groupPath, const QString& fileName)
+{
+    return QDir(originalsDirectory(groupPath)).filePath(fileName);
+}
+QString writePng(const QString& path, const QImage& image)
+{
+    if (image.isNull())
+        return QStringLiteral("水印原图为空。");
+    if (QFileInfo(path).isSymLink() || QFileInfo(QFileInfo(path).absolutePath()).isSymLink())
+        return QStringLiteral("水印原图路径不能是符号链接：%1").arg(path);
+    if (!QDir().mkpath(QFileInfo(path).absolutePath()))
+        return QStringLiteral("无法创建水印原图目录：%1").arg(QFileInfo(path).absolutePath());
+    QSaveFile file(path);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly))
+        return QStringLiteral("无法打开水印原图：%1").arg(file.errorString());
+    QImage copy = image;
+    copy.setDevicePixelRatio(1);
+    QImageWriter writer(&file, "png");
+    if (!writer.write(copy) || !file.commit())
+        return QStringLiteral("水印原图写入失败：%1").arg(file.errorString());
+    return {};
+}
+
 QString registryFile(const QString& root)
 {
     return metadataPath(root, QStringLiteral("groups.json"));
@@ -393,6 +422,12 @@ HistoryScanResult HistoryStore::scanUnlocked() const
                                    : qMax(qint64(0), file.lastModified().toMSecsSinceEpoch());
             item.starred = metadata.value(QStringLiteral("starred")).toBool();
             item.managed = metadata.value(QStringLiteral("managed")).toBool();
+            item.originalPath = originalFile(clean, item.fileName);
+            const bool claimsOriginal = metadata.value(QStringLiteral("hasOriginal")).toBool();
+            const QFileInfo originalInfo(item.originalPath);
+            item.hasOriginal = claimsOriginal && originalInfo.isFile() &&
+                               !originalInfo.isSymLink() && !originalInfo.isJunction();
+            item.originalBytes = item.hasOriginal ? originalInfo.size() : 0;
             if (item.managed)
                 item.source =
                     metadata.value(QStringLiteral("source")) == QJsonValue(QStringLiteral("scroll"))
@@ -755,7 +790,8 @@ HistoryStatus HistoryStore::saveCleanupPolicy(const QString& groupId, const Clea
 }
 HistoryWriteResult HistoryStore::writeManagedPng(const QString& groupId, const QImage& image,
                                                  HistorySource source,
-                                                 const QString& existingFileName)
+                                                 const QString& existingFileName,
+                                                 const QImage& original)
 {
     if (image.isNull() || (source != HistorySource::Overlay && source != HistorySource::Scroll))
         return {{false, QStringLiteral("受管历史写入需要有效图片与截图来源。")}, {}};
@@ -836,15 +872,6 @@ HistoryWriteResult HistoryStore::writeManagedPng(const QString& groupId, const Q
         if (!published)
             return {{false, QStringLiteral("历史文件名多次冲突，请重试。")}, {}};
         temporary.setAutoRemove(false);
-        index.insert(item.fileName, QJsonObject{{QStringLiteral("starred"), false},
-                                                {QStringLiteral("managed"), true},
-                                                {QStringLiteral("source"), sourceText(source)},
-                                                {QStringLiteral("createdAt"), item.createdAtMs}});
-        error = saveIndex(snapshot->group.absolutePath, index);
-        if (!error.isEmpty())
-            return {{false, error + QStringLiteral(
-                                        "；PNG 已保留，扫描将按外部图片显示，未声明入库成功。")},
-                    item};
     }
     else
     {
@@ -861,9 +888,62 @@ HistoryWriteResult HistoryStore::writeManagedPng(const QString& groupId, const Q
                  QStringLiteral("受管 PNG 原子更新失败，原图已保留：%1").arg(file.errorString())},
                 {}};
     }
+    const QString originalPath = item.originalPath.isEmpty()
+                                     ? originalFile(snapshot->group.absolutePath, item.fileName)
+                                     : item.originalPath;
+    QString originalError;
+    bool hasOriginal = item.hasOriginal;
+    qint64 originalBytes = item.originalBytes;
+    if (!original.isNull())
+    {
+        const QString written = writePng(originalPath, original);
+        if (written.isEmpty())
+        {
+            hasOriginal = true;
+            originalBytes = QFileInfo(originalPath).size();
+        }
+        else
+            originalError = written;
+    }
+    else if (QFileInfo::exists(originalPath) || QFileInfo(originalPath).isSymLink())
+    {
+        if (QFileInfo(originalPath).isSymLink() || !QFile::remove(originalPath))
+            originalError = QStringLiteral("旧水印原图删除失败：%1").arg(originalPath);
+        else
+        {
+            hasOriginal = false;
+            originalBytes = 0;
+        }
+    }
+    else
+    {
+        hasOriginal = false;
+        originalBytes = 0;
+    }
+    item.groupId = groupId;
+    item.managed = true;
+    item.source = source;
+    item.absolutePath = QDir(snapshot->group.absolutePath).filePath(item.fileName);
+    item.originalPath = originalPath;
+    item.hasOriginal = hasOriginal;
+    item.originalBytes = originalBytes;
     item.bytes = QFileInfo(item.absolutePath).size();
     item.pixelSize = pixels.size();
-    return {{true, {}}, item};
+    const QJsonObject previous = index.value(item.fileName).toObject();
+    QJsonObject metadata = previous;
+    metadata.insert(QStringLiteral("starred"), previous.value(QStringLiteral("starred")).toBool());
+    metadata.insert(QStringLiteral("managed"), true);
+    metadata.insert(QStringLiteral("source"), sourceText(source));
+    metadata.insert(QStringLiteral("createdAt"), previous.contains(QStringLiteral("createdAt"))
+                                                     ? previous.value(QStringLiteral("createdAt"))
+                                                     : item.createdAtMs);
+    metadata.insert(QStringLiteral("hasOriginal"), hasOriginal);
+    metadata.insert(QStringLiteral("originalBytes"), originalBytes);
+    index.insert(item.fileName, metadata);
+    error = saveIndex(snapshot->group.absolutePath, index);
+    if (!error.isEmpty())
+        return {{false, error + QStringLiteral("；图片文件已保留，未声明入库成功。")}, item};
+    return {{true, originalError}, item};
 }
 HistoryStatus HistoryStore::setStarred(const QString& groupId, const QString& fileName,
                                        bool starred)
@@ -892,10 +972,14 @@ HistoryStatus HistoryStore::setStarred(const QString& groupId, const QString& fi
     if (!found->managed && !starred)
         index.remove(fileName);
     else
-        index.insert(fileName, QJsonObject{{QStringLiteral("starred"), starred},
-                                           {QStringLiteral("managed"), found->managed},
-                                           {QStringLiteral("source"), sourceText(found->source)},
-                                           {QStringLiteral("createdAt"), found->createdAtMs}});
+    {
+        QJsonObject metadata = index.value(fileName).toObject();
+        metadata.insert(QStringLiteral("starred"), starred);
+        metadata.insert(QStringLiteral("managed"), found->managed);
+        metadata.insert(QStringLiteral("source"), sourceText(found->source));
+        metadata.insert(QStringLiteral("createdAt"), found->createdAtMs);
+        index.insert(fileName, metadata);
+    }
     error = saveIndex(snapshot->group.absolutePath, index);
     return {error.isEmpty(), error};
 }
@@ -1011,10 +1095,36 @@ HistoryStatus HistoryStore::removeManagedItem(const HistoryItem& item, const His
         error = QStringLiteral("图片删除失败，原文件和索引已保留：%1").arg(moved.error);
     else if (QFileInfo::exists(item.absolutePath) || QFileInfo(item.absolutePath).isSymLink())
         error = QStringLiteral("删除服务返回成功但原文件仍存在，索引已保留。");
-    else if (!staged.commit())
-        error = QStringLiteral("历史索引提交失败，已尝试恢复原图：%1").arg(staged.errorString());
     else
-        return {true, {}};
+    {
+        if (item.hasOriginal && !item.originalPath.isEmpty() &&
+            (QFileInfo::exists(item.originalPath) || QFileInfo(item.originalPath).isSymLink()))
+        {
+            if (QFileInfo(item.originalPath).isSymLink())
+                error =
+                    QStringLiteral("水印原图路径是符号链接，已停止删除：%1").arg(item.originalPath);
+            else
+            {
+                const auto removedOriginal = remove(item.originalPath);
+                if (!removedOriginal.success)
+                    error = QStringLiteral("水印原图删除失败，主图已开始删除：%1")
+                                .arg(removedOriginal.error);
+                else if (QFileInfo::exists(item.originalPath) ||
+                         QFileInfo(item.originalPath).isSymLink())
+                    error = QStringLiteral("删除服务返回成功但水印原图仍存在：%1")
+                                .arg(item.originalPath);
+            }
+        }
+        if (!error.isEmpty())
+        {
+            // 主图已移走；索引尚未提交，下面恢复主图并把错误返回给用户。
+        }
+        else if (!staged.commit())
+            error =
+                QStringLiteral("历史索引提交失败，已尝试恢复原图：%1").arg(staged.errorString());
+        else
+            return {true, {}};
+    }
     if (!QFileInfo::exists(item.absolutePath) && !QFileInfo(item.absolutePath).isSymLink())
     {
         if (backup.rename(item.absolutePath))
