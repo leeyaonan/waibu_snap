@@ -1066,4 +1066,4 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 - 修复：`sticker_window_behavior.mm` 在设置 mask 后显式同步 `_setPreventsActivation:`；编辑态重建窗口清除非激活状态。该 selector 缺失时保留原行为并输出诊断。
 - 新增 `sticker_window_behavior` 原生回归：先确认运行中仅补 mask 时 `_preventsActivation` 为 false（修复前失败），再断言修复后为 true；没有以 offscreen 代替 Cocoa 原生窗口。
 - 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：全量 **37/37 CTest** 通过；主冒烟 **503 项**、独立高 DPI 子集 **436 项**保持；clang-format 18.1.8 与 `git diff --check` 通过。
-- 待人工：双显示器真实复现（屏幕 A 使用窗口 A、屏幕 B 最后使用 Edge，回屏幕 A 点击钉图），确认窗口 A 不被 Edge B 顶掉；单屏、Stage Manager、全屏 Space、混合 DPI 与 Windows 均未由本机覆盖。
+- 用户验收（2026-10-23）：按原双显示器路径复测，窗口 A 不再被 Edge 窗口 B 顶掉，贴图可正常点击拖动，确认修复；单屏、Stage Manager、全屏 Space、混合 DPI 与 Windows 仍未被本机覆盖。
