@@ -11,6 +11,7 @@
 #include <QClipboard>
 #include <QCursor>
 #include <QDebug>
+#include <QFileDialog>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScopedValueRollback>
@@ -28,7 +29,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                              std::unique_ptr<GlobalHotkey> hotkey)
     : application_(application), options_(std::move(options)),
       hotkey_(hotkey ? std::move(hotkey) : createGlobalHotkey()), settings_(options_.settingsFile),
-      history_(settings_, options_.historyRoot),
+      history_(settings_, options_.historyRoot), watermarks_(settings_),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
       displays_(createDisplayTopology()), capture_(createCaptureProvider()),
       windows_(createWindowEnumerator()),
@@ -76,6 +77,10 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
         if (!initialized.success)
             qWarning().noquote() << "截图历史初始化失败：" << initialized.error;
     }
+    QString watermarkNotice;
+    watermarks_.initialize(&watermarkNotice);
+    if (!watermarkNotice.isEmpty())
+        qWarning().noquote() << "水印设置：" << watermarkNotice;
     if (!historyActions_.copyImage)
         historyActions_.copyImage = copyImageToClipboard;
     if (!historyActions_.pinImage)
@@ -488,6 +493,23 @@ void ApplicationController::openSettings()
             historySettings.usageNotice += QStringLiteral("\n") + key->explanation();
     historySettings.saveHotkey = [this](HotkeyAction action, const QKeySequence& sequence)
     { return changeHotkey(sequence, action); };
+    WatermarkSettingsActions watermarkSettings;
+    watermarkSettings.preferences = watermarks_.preferences();
+    watermarkSettings.historyEnabled = historyEnabled_;
+    watermarkSettings.chooseImage = [](QWidget* parent, const QString& current)
+    {
+        return QFileDialog::getOpenFileName(parent, QStringLiteral("选择水印图片"), current,
+                                            QStringLiteral("图片 (*.png *.jpg *.jpeg *.webp)"));
+    };
+    watermarkSettings.importImage =
+        [this](const QString& sourcePath, QString* managed, QString* error)
+    { return watermarks_.importImage(sourcePath, managed, error); };
+    watermarkSettings.loadManagedImage = [this](const QString& fileName, QString* error)
+    { return watermarks_.loadManagedImage(fileName, error); };
+    watermarkSettings.removeAssetImage = [this](const QString& fileName)
+    { return watermarks_.removeAssetImage(fileName); };
+    watermarkSettings.savePreferences = [this](const WatermarkPreferences& preferences)
+    { return watermarks_.savePreferences(preferences); };
     historySettings.savePreferences = [this](const HistoryPreferences& preferences)
     {
         if (!preferences.enabled)
@@ -554,7 +576,7 @@ void ApplicationController::openSettings()
          [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); },
          settings_.loadStickerDoubleClickClose(),
          [this](bool enabled) { return settings_.saveStickerDoubleClickClose(enabled); }},
-        autostartActions_, std::move(historySettings));
+        autostartActions_, std::move(historySettings), std::move(watermarkSettings));
     connect(&history_, &HistoryManager::groupsChanged, &dialog,
             [this, &dialog]
             {

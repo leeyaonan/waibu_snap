@@ -3,6 +3,7 @@
 #include "app/history_manager.h"
 #include "app/scroll_capture.h"
 #include "app/sticker_manager.h"
+#include "app/watermark_service.h"
 #include "interfaces/autostart.h"
 #include "interfaces/capture_provider.h"
 #include "interfaces/file_manager.h"
@@ -115,6 +116,7 @@ class ApplicationController final : public QObject
     std::unique_ptr<GlobalHotkey> hotkey_;
     AppSettings settings_;
     HistoryManager history_;
+    WatermarkService watermarks_;
     bool historyEnabled_ = false;
     HistorySession historySession_;
     HotkeySettings hotkeySettings_;
