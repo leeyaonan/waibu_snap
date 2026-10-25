@@ -65,6 +65,15 @@ int changedPixels(const QImage& before, const QImage& after)
                 ++count;
     return count;
 }
+QRect changedBounds(const QImage& before, const QImage& after)
+{
+    QRect bounds;
+    for (int y = 0; y < before.height(); ++y)
+        for (int x = 0; x < before.width(); ++x)
+            if (before.pixel(x, y) != after.pixel(x, y))
+                bounds = bounds.united(QRect(x, y, 1, 1));
+    return bounds;
+}
 }
 class WatermarkTest final : public QObject
 {
@@ -230,6 +239,27 @@ class WatermarkTest final : public QObject
         QVERIFY(changedPixels(base, larger) > changedPixels(base, output));
         instance.visible = false;
         QCOMPARE(changedPixels(base, composeWatermark(base, asset, {}, instance)), 0);
+    }
+    void textBottomRightStaysInsideAndCentered()
+    {
+        using namespace waibusnap;
+        WatermarkAsset asset = textAsset();
+        asset.text = QStringLiteral("歪布");
+        asset.color = Qt::black;
+        const QImage base = solidImage(QSize(320, 200), QColor(240, 240, 240));
+        WatermarkInstance instance;
+        instance.layout = WatermarkLayout::BottomRight;
+        instance.opacity = 100;
+        instance.scale = 100;
+        instance.normalizedCenter =
+            watermarkInitialCenter(instance.layout, watermarkBaseSize(asset, {}), base.size());
+        const QImage output = composeWatermark(base, asset, {}, instance);
+        const QRect bounds = changedBounds(base, output);
+        QVERIFY(!bounds.isEmpty());
+        QVERIFY(bounds.right() < base.width() - 1);
+        QVERIFY(bounds.bottom() < base.height() - 1);
+        QVERIFY(bounds.left() > base.width() / 2);
+        QVERIFY(bounds.top() > base.height() / 2);
     }
     void diagonalTileCoverage()
     {
