@@ -171,7 +171,11 @@ void paintWatermark(QPainter& painter, QSize outputSize, const WatermarkAsset& a
     painter.translate(center);
     painter.rotate(instance.rotation);
     if (asset.kind == WatermarkKind::Text)
+    {
+        const QSizeF textSize = textDocumentSize(asset, asset.fontPixelSize * scale);
+        painter.translate(-textSize.width() / 2.0, -textSize.height() / 2.0);
         drawTextDocument(painter, asset, asset.fontPixelSize * scale);
+    }
     else
     {
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
