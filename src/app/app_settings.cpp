@@ -43,6 +43,92 @@ AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
         filePath_ = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
                         .filePath(QStringLiteral("settings.ini"));
 }
+QuickGunnerPreferences AppSettings::loadQuickGunnerPreferences(QString* notice) const
+{
+    if (notice)
+        notice->clear();
+    const auto fail = [notice](const QString& reason)
+    {
+        if (notice)
+            *notice = QStringLiteral("快枪手设置无法读取或已损坏，已回退为空设置；原文件未改写。%1")
+                          .arg(reason);
+        return QuickGunnerPreferences{};
+    };
+    QFile file(filePath_);
+    if (!file.open(QIODevice::ReadOnly))
+        return QFileInfo::exists(filePath_) ? fail(QStringLiteral("文件不可读。"))
+                                            : QuickGunnerPreferences{};
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return fail(QStringLiteral("INI 格式无效。"));
+    QuickGunnerPreferences result;
+    const auto directory = settings.value(QStringLiteral("quickGunner/directory"), QString());
+    if (directory.metaType().id() != QMetaType::QString ||
+        directory.toString().contains(QChar::Null) ||
+        (!directory.toString().isEmpty() && !QDir::isAbsolutePath(directory.toString())))
+        return fail(QStringLiteral("目录必须为绝对路径。"));
+    if (!directory.toString().isEmpty())
+        result.directory = QDir::cleanPath(directory.toString());
+    const auto value = settings.value(QStringLiteral("quickGunner/region"));
+    if (value.isValid())
+    {
+        const auto document = QJsonDocument::fromJson(value.toString().toUtf8());
+        QString reason;
+        if (value.metaType().id() != QMetaType::QString || !document.isObject())
+            return fail(QStringLiteral("机位 JSON 格式无效。"));
+        result.region = QuickGunnerRegion::fromJson(document.object(), &reason);
+        if (!result.region)
+            return fail(reason);
+    }
+    return result;
+}
+QString AppSettings::saveQuickGunnerPreferences(const QuickGunnerPreferences& preferences) const
+{
+    if (preferences.directory.contains(QChar::Null) ||
+        (!preferences.directory.isEmpty() && !QDir::isAbsolutePath(preferences.directory)))
+        return QStringLiteral("快枪手目录必须为绝对路径。");
+    if (preferences.region && !preferences.region->isValid())
+        return QStringLiteral("快枪手机位无效，必须在显示器内且至少为 16×16 物理像素。");
+    const QString error = QStringLiteral("快枪手设置写入失败，原设置已保留，请重试保存。");
+    const QString parent = QFileInfo(filePath_).absolutePath();
+    if (!QDir().mkpath(parent) || QFileInfo(filePath_).isDir())
+        return error;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.setAtomicSyncRequired(true);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return error;
+    const QString directoryKey = QStringLiteral("quickGunner/directory");
+    const QString regionKey = QStringLiteral("quickGunner/region");
+    const auto oldDirectory = settings.value(directoryKey);
+    const auto oldRegion = settings.value(regionKey);
+    settings.setValue(directoryKey, preferences.directory.isEmpty()
+                                        ? QString()
+                                        : QDir::cleanPath(preferences.directory));
+    if (preferences.region)
+        settings.setValue(
+            regionKey,
+            QString::fromUtf8(
+                QJsonDocument(preferences.region->toJson()).toJson(QJsonDocument::Compact)));
+    else
+        settings.remove(regionKey);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        // 与其他设置入口一致：原子同步失败时恢复共享缓存，避免后续保存夹带失败值。
+        if (oldDirectory.isValid())
+            settings.setValue(directoryKey, oldDirectory);
+        else
+            settings.remove(directoryKey);
+        if (oldRegion.isValid())
+            settings.setValue(regionKey, oldRegion);
+        else
+            settings.remove(regionKey);
+        return error;
+    }
+    return {};
+}
 HistoryPreferences AppSettings::loadHistoryPreferences(QString* notice) const
 {
     HistoryPreferences result{HistoryStore::defaultRootDirectory(), {}, {}, false};
