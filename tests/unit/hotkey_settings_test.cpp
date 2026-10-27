@@ -42,6 +42,20 @@ class HotkeySettingsTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void quickGunnerActionKeepsExistingOrderAndDefaults()
+    {
+        using namespace waibusnap;
+        QCOMPARE(int(HotkeyAction::Screenshot), 0);
+        QCOMPARE(int(HotkeyAction::HistoryPrevious), 1);
+        QCOMPARE(int(HotkeyAction::HistoryNext), 2);
+        QCOMPARE(int(HotkeyAction::HistoryOpen), 3);
+        QCOMPARE(hotkeyActions.size(), size_t(5));
+        const auto shutter = HotkeyAction::QuickGunnerShutter;
+        QCOMPARE(int(shutter), 4);
+        QCOMPARE(hotkeyActions.back(), shutter);
+        QCOMPARE(defaultHotkey(shutter), QKeySequence(Qt::Key_F2));
+        QCOMPARE(hotkeyActionName(shutter), QStringLiteral("快枪手快门"));
+    }
     void stickerCloseReminderDefaultsRoundTripAndIsolation()
     {
         using namespace waibusnap;

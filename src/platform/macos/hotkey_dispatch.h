@@ -11,7 +11,7 @@ struct MacHotkeyCallback
     std::function<void()> handler;
 };
 inline OSStatus dispatchMacHotkeyEvent(EventRef event,
-                                       const std::array<MacHotkeyCallback, 4>& callbacks)
+                                       const std::array<MacHotkeyCallback, 5>& callbacks)
 {
     EventHotKeyID id = {};
     const auto status = GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID,

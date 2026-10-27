@@ -5,10 +5,10 @@ class MacHotkeyDispatchTest final : public QObject
 {
     Q_OBJECT
   private slots:
-    void fourActionsAndStaleEvents()
+    void fiveActionsAndStaleEvents()
     {
-        std::array<MacHotkeyCallback, 4> bindings;
-        std::array<int, 4> calls{};
+        std::array<MacHotkeyCallback, 5> bindings;
+        std::array<int, 5> calls{};
         for (size_t i = 0; i < bindings.size(); ++i)
             bindings[i] = {UInt32(i + 1), [&, i] { ++calls[i]; }};
         const auto dispatch = [&](UInt32 signature, UInt32 id)
@@ -25,14 +25,14 @@ class MacHotkeyDispatchTest final : public QObject
             ReleaseEvent(event);
             return result;
         };
-        for (UInt32 i = 1; i <= 4; ++i)
+        for (UInt32 i = 1; i <= bindings.size(); ++i)
             QCOMPARE(dispatch(0x5742534e, i), noErr);
         for (const auto count : calls)
             QCOMPARE(count, 1);
         QCOMPARE(dispatch(0, 1), eventNotHandledErr);
-        bindings[1].id = 5;
+        bindings[1].id = 6;
         QCOMPARE(dispatch(0x5742534e, 2), eventNotHandledErr);
-        QCOMPARE(dispatch(0x5742534e, 5), noErr);
+        QCOMPARE(dispatch(0x5742534e, 6), noErr);
         QCOMPARE(calls[1], 2);
         bindings[2] = {};
         QCOMPARE(dispatch(0x5742534e, 3), eventNotHandledErr);
@@ -45,14 +45,14 @@ class MacHotkeyDispatchTest final : public QObject
         QCOMPARE(CreateEvent(nullptr, kEventClassKeyboard, kEventHotKeyPressed, 0,
                              kEventAttributeNone, &event),
                  noErr);
-        std::array<MacHotkeyCallback, 4> bindings;
+        std::array<MacHotkeyCallback, 5> bindings;
         QCOMPARE(dispatchMacHotkeyEvent(event, bindings), eventNotHandledErr);
-        EventHotKeyID key = {0x5742534e, 4};
+        EventHotKeyID key = {0x5742534e, 5};
         QCOMPARE(
             SetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, sizeof(key), &key),
             noErr);
         bool completed = false;
-        bindings[3] = {4, [&]
+        bindings[4] = {5, [&]
                        {
                            bindings = {};
                            completed = true;

@@ -29,6 +29,8 @@ QString sequenceKey(HotkeyAction action)
         return QStringLiteral("hotkey/historyNext");
     case HotkeyAction::HistoryOpen:
         return QStringLiteral("hotkey/historyOpen");
+    case HotkeyAction::QuickGunnerShutter:
+        return QStringLiteral("hotkey/quickGunner");
     }
     return {};
 }
