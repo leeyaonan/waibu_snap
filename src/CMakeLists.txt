@@ -13,6 +13,8 @@ target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp ui/selection_overlay.h
     app/quick_gunner.cpp app/quick_gunner.h
+    app/quick_gunner_save_queue.cpp app/quick_gunner_save_queue.h
+    ui/quick_gunner_flash_window.cpp ui/quick_gunner_flash_window.h
     ui/quick_gunner_region_picker.cpp ui/quick_gunner_region_picker.h
     ui/annotation_toolbar_style.cpp ui/annotation_toolbar_style.h
     ui/toolbar_icons.cpp ui/toolbar_icons.h

@@ -1,6 +1,7 @@
 #include "ui/quick_gunner_region_picker.h"
 #include "core/quick_gunner.h"
 #include "core/selection_geometry.h"
+#include "interfaces/overlay_window_behavior.h"
 #include <QCloseEvent>
 #include <QKeyEvent>
 #include <QLabel>
@@ -10,12 +11,17 @@
 namespace waibusnap
 {
 QuickGunnerRegionPicker::QuickGunnerRegionPicker(CaptureFrame frame, QWidget* parent)
-    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
+    : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
       frame_(std::move(frame))
 {
     setAttribute(Qt::WA_DeleteOnClose);
+    setAttribute(Qt::WA_MacAlwaysShowToolWindow);
     setFocusPolicy(Qt::StrongFocus);
     setCursor(Qt::CrossCursor);
+    setGeometry(frame_.display.logicalGeometry);
+    winId();
+    raiseOverlayAboveSystemChrome(windowHandle());
+    // 原生窗口抬升后重新定位，避免 Cocoa 把菜单栏 / Dock 附近的机位夹回可用区。
     setGeometry(frame_.display.logicalGeometry);
     hint_ = new QLabel(this);
     hint_->setAttribute(Qt::WA_TransparentForMouseEvents);

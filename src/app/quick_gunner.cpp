@@ -1,8 +1,11 @@
 #include "app/quick_gunner.h"
+#include "app/quick_gunner_save_queue.h"
+#include "ui/quick_gunner_flash_window.h"
 #include "ui/quick_gunner_region_picker.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QTemporaryFile>
+#include <QTimer>
 namespace waibusnap
 {
 namespace
@@ -87,9 +90,28 @@ bool sameDisplay(const DisplayTarget& first, const DisplayTarget& second)
 QuickGunnerController::QuickGunnerController(AppSettings settings, DisplayTopology& displays,
                                              CaptureProvider& capture,
                                              RegionPickerFactory pickerFactory, QObject* parent)
+    : QuickGunnerController(std::move(settings), displays, capture, std::move(pickerFactory),
+                            QuickGunnerDependencies{}, parent)
+{
+}
+QuickGunnerController::QuickGunnerController(AppSettings settings, DisplayTopology& displays,
+                                             CaptureProvider& capture,
+                                             RegionPickerFactory pickerFactory,
+                                             QuickGunnerDependencies dependencies, QObject* parent)
     : QObject(parent), settings_(std::move(settings)), displays_(displays), capture_(capture),
       pickerFactory_(std::move(pickerFactory)), preferences_(settings_.loadQuickGunnerPreferences())
 {
+    captureFactory_ = dependencies.captureFactory ? std::move(dependencies.captureFactory)
+                                                  : createRegionCaptureOnce;
+    watermark_ = dependencies.watermark ? std::move(dependencies.watermark)
+                                        : [](const QImage& image) { return image; };
+    saveQueue_ = dependencies.saveQueue ? std::move(dependencies.saveQueue)
+                                        : std::make_unique<QuickGunnerSaveQueue>(settings_);
+    saveQueue_->setDirectory(preferences_.directory);
+    connect(saveQueue_.get(), &QuickGunnerSaveQueue::failed, this,
+            &QuickGunnerController::shotFailed);
+    connect(saveQueue_.get(), &QuickGunnerSaveQueue::dropped, this,
+            &QuickGunnerController::shotsDropped);
     if (!pickerFactory_)
         pickerFactory_ = [](CaptureFrame frame, QWidget* owner)
         { return new QuickGunnerRegionPicker(std::move(frame), owner); };
@@ -97,6 +119,8 @@ QuickGunnerController::QuickGunnerController(AppSettings settings, DisplayTopolo
 QuickGunnerController::~QuickGunnerController()
 {
     ++token_;
+    ++captureToken_;
+    once_.reset();
     if (picker_)
     {
         disconnect(picker_, nullptr, this, nullptr);
@@ -123,6 +147,7 @@ QString QuickGunnerController::setDirectory(const QString& directory,
     if (!error.isEmpty())
         return error;
     preferences_ = std::move(next);
+    saveQueue_->setDirectory(preferences_.directory);
     emit preferencesChanged();
     return {};
 }
@@ -156,6 +181,7 @@ void QuickGunnerController::finishFraming(const QString& notice)
     }
     resumeActive_ = false;
     setState(next);
+    QTimer::singleShot(0, this, &QuickGunnerController::pumpCapture);
     if (!finalNotice.isEmpty())
         emit noticeChanged(finalNotice);
 }
@@ -174,7 +200,11 @@ QString QuickGunnerController::beginFraming(QWidget* parent)
         return display.error;
     if (quickGunnerPixelSize(display.target).isEmpty() || !displays_.stillMatches(display.target))
         return QStringLiteral("显示器信息无效或布局已变化，请重新框选机位。");
+    if (capturing_)
+        return QStringLiteral("正在拍摄，请稍后调整机位。");
     resumeActive_ = active();
+    if (flash_)
+        flash_->hide();
     const auto token = ++token_;
     setState(State::Framing);
     QPointer<QuickGunnerController> self(this);
@@ -272,4 +302,91 @@ void QuickGunnerController::deactivate()
     resumeActive_ = false;
     finishFraming();
 }
+int QuickGunnerController::pendingSaveCount() const { return saveQueue_->pendingCount(); }
+QString QuickGunnerController::shutter()
+{
+    if (state_ == State::Framing)
+        return QStringLiteral("正在框选快枪手机位，请先确认或取消。");
+    if (preferences_.directory.isEmpty())
+        return QStringLiteral("请先选择快枪手目录。");
+    if (!preferences_.region || !preferences_.region->isValid())
+        return QStringLiteral("请先框选有效机位（至少 16×16 物理像素）。");
+    if (!displays_.stillMatches(preferences_.region->display))
+        return QStringLiteral("显示器布局已变化，请重新框选机位。");
+    if (!capture_.hasPermission())
+        return capture_.permissionExplanation();
+    if (!flash_)
+        flash_ = std::make_unique<QuickGunnerFlashWindow>();
+    RegionCaptureRequest request{preferences_.region->display, preferences_.region->pixelRect, {}};
+    const auto id = regionCaptureWindowId(flash_->windowHandle());
+    if (id)
+        request.excludedWindowIds.append(id);
+    if (pending_.size() == 8)
+    {
+        pending_.pop_front();
+        emit shotsDropped(1);
+    }
+    pending_.push_back(std::move(request));
+    pumpCapture();
+    return {};
+}
+void QuickGunnerController::pumpCapture()
+{
+    if (capturing_ || pending_.empty() || state_ == State::Framing)
+        return;
+    const auto request = std::move(pending_.front());
+    pending_.pop_front();
+    if (flash_)
+        flash_->hide();
+    capturing_ = true;
+    const auto token = ++captureToken_;
+    once_ = captureFactory_();
+    QPointer<QuickGunnerController> self(this);
+    const auto completed = [self, token, request](QImage image, QString error)
+    {
+        if (!self)
+            return;
+        // 即使注入实现同步完成，也延迟到 GUI 队列交付，避免在 capture 栈内析构实现。
+        QMetaObject::invokeMethod(
+            self,
+            [self, token, request, image = std::move(image), error]() mutable
+            {
+                if (!self || !self->capturing_ || self->captureToken_ != token)
+                    return;
+                self->once_.reset();
+                self->capturing_ = false;
+                if (error.isEmpty() && (!self->displays_.stillMatches(request.display) ||
+                                        image.size() != request.pixelRect.size()))
+                    error = QStringLiteral("拍摄结果与机位不匹配，请重新框选机位。");
+                if (image.isNull() && error.isEmpty())
+                    error = QStringLiteral("快枪手未获取到图片，请重试。");
+                if (!error.isEmpty())
+                    emit self->shotFailed(error);
+                else
+                {
+                    image.setDevicePixelRatio(1);
+                    self->saveQueue_->enqueue(self->watermark_(image));
+                    const auto dpr = request.display.devicePixelRatio;
+                    const auto rect = request.pixelRect;
+                    const QRect logical(
+                        request.display.logicalGeometry.topLeft() +
+                            QPoint(qRound(rect.x() / dpr), qRound(rect.y() / dpr)),
+                        QSize(qRound(rect.width() / dpr), qRound(rect.height() / dpr)));
+                    emit self->shotCaptured(logical);
+                    if (self->flash_)
+                        self->flash_->flash(logical);
+                }
+                if (self)
+                    self->pumpCapture();
+            },
+            Qt::QueuedConnection);
+    };
+    if (!displays_.stillMatches(request.display) || !capture_.hasPermission())
+        completed({}, QStringLiteral("显示器布局或屏幕录制权限已变化，请检查后重试。"));
+    else if (!once_)
+        completed({}, QStringLiteral("无法创建快枪手单帧采集器。"));
+    else
+        once_->capture(request, completed);
+}
+
 }

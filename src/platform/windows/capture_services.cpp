@@ -2,6 +2,7 @@
 #include "interfaces/presentation_observer.h"
 #include "interfaces/region_capture.h"
 #include "interfaces/window_enumerator.h"
+#include <QObject>
 #include <QTimer>
 namespace waibusnap
 {
@@ -23,6 +24,19 @@ class WindowsDisplays final : public DisplayTopology
         return {{}, QStringLiteral("Windows 光标显示器定位尚未实现。")};
     }
     bool stillMatches(const DisplayTarget&) const override { return false; }
+};
+class WindowsRegionCaptureOnce final : public RegionCaptureOnce
+{
+  public:
+    void capture(const RegionCaptureRequest&,
+                 std::function<void(QImage, QString)> completion) override
+    {
+        QTimer::singleShot(0, &context_, [completion = std::move(completion)]
+                           { completion({}, QStringLiteral("Windows 原生区域采集尚未实现")); });
+    }
+
+  private:
+    QObject context_;
 };
 class WindowsCapture final : public CaptureProvider
 {
@@ -61,6 +75,10 @@ observePresentation(QWindow*, QObject* context, std::function<void(PresentationS
 std::function<void()> captureForegroundRestorer() { return {}; }
 bool regionCaptureSupported() { return false; }
 quint64 regionCaptureWindowId(QWindow*) { return 0; }
+std::unique_ptr<RegionCaptureOnce> createRegionCaptureOnce()
+{
+    return std::make_unique<WindowsRegionCaptureOnce>();
+}
 std::unique_ptr<RegionCaptureSession> createRegionCaptureSession(RegionCaptureRequest)
 {
     return {};

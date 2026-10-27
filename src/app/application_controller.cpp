@@ -1,5 +1,6 @@
 #include "app/application_controller.h"
 #include "app/hotkey_rules.h"
+#include "app/quick_gunner_save_queue.h"
 #include "core/sticker_geometry.h"
 #include "core/window_snapping.h"
 #include "interfaces/overlay_window_behavior.h"
@@ -13,6 +14,7 @@
 #include <QCursor>
 #include <QDebug>
 #include <QFileDialog>
+#include <QFontMetrics>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScopedValueRollback>
@@ -82,6 +84,28 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     watermarks_.initialize(&watermarkNotice);
     if (!watermarkNotice.isEmpty())
         qWarning().noquote() << "水印设置：" << watermarkNotice;
+    QuickGunnerDependencies quickGunnerDependencies;
+    quickGunnerDependencies.watermark = [this](const QImage& image)
+    { return quickGunnerWatermark(image); };
+    quickGunner_ = std::make_unique<QuickGunnerController>(settings_, *displays_, *capture_,
+                                                           RegionPickerFactory{},
+                                                           std::move(quickGunnerDependencies));
+    const auto quickGunnerNotice = [this](const QString& error)
+    {
+        if (!error.isEmpty() && !options_.testMode && !options_.smokeTest)
+            tray_.showMessage(QStringLiteral("快枪手"), error, QSystemTrayIcon::Warning);
+    };
+    connect(quickGunner_.get(), &QuickGunnerController::noticeChanged, this, quickGunnerNotice);
+    connect(quickGunner_.get(), &QuickGunnerController::shotFailed, this, quickGunnerNotice);
+    connect(quickGunner_.get(), &QuickGunnerController::shotsDropped, this,
+            [quickGunnerNotice](int count) {
+                quickGunnerNotice(
+                    QStringLiteral("快枪手队列已满，已丢弃 %1 张待处理图片。").arg(count));
+            });
+    connect(quickGunner_.get(), &QuickGunnerController::preferencesChanged, this,
+            &ApplicationController::refreshQuickGunnerActions);
+    connect(quickGunner_.get(), &QuickGunnerController::stateChanged, this,
+            &ApplicationController::refreshQuickGunnerActions);
     if (!historyActions_.copyImage)
         historyActions_.copyImage = copyImageToClipboard;
     if (!historyActions_.pinImage)
@@ -138,6 +162,53 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                                   ? QStringLiteral("框选区域后点击长图开始滚动采集")
                                   : QStringLiteral("截长图暂不支持当前平台（Windows 后补）。"));
     scrollAction_->setEnabled(regionCaptureSupported());
+    quickGunnerMenu_ = menu_.addMenu(QStringLiteral("快枪手"));
+    quickGunnerMenu_->setObjectName(QStringLiteral("quickGunnerMenu"));
+    quickGunnerMenu_->setToolTipsVisible(true);
+    quickGunnerMenu_->menuAction()->setObjectName(QStringLiteral("quickGunnerMenuAction"));
+    quickGunnerShootAction_ =
+        quickGunnerMenu_->addAction(QStringLiteral("拍一张"), this,
+                                    [this, quickGunnerNotice]
+                                    {
+                                        if (quickGunnerActionsEnabled())
+                                            quickGunnerNotice(quickGunner_->shutter());
+                                    });
+    quickGunnerShootAction_->setObjectName(QStringLiteral("quickGunnerShootAction"));
+    quickGunnerFrameAction_ =
+        quickGunnerMenu_->addAction(QStringLiteral("调整拍摄区域…"), this,
+                                    [this, quickGunnerNotice]
+                                    {
+                                        if (quickGunnerActionsEnabled())
+                                            quickGunnerNotice(quickGunner_->beginFraming(nullptr));
+                                    });
+    quickGunnerFrameAction_->setObjectName(QStringLiteral("quickGunnerFrameAction"));
+    quickGunnerDirectoryAction_ = quickGunnerMenu_->addAction(
+        QStringLiteral("选择快枪手目录…"), this,
+        [this, quickGunnerNotice]
+        {
+            if (!quickGunnerActionsEnabled())
+                return;
+            const auto directory = QFileDialog::getExistingDirectory(
+                nullptr, QStringLiteral("选择快枪手目录"), quickGunner_->preferences().directory);
+            if (directory.isEmpty() || !quickGunnerActionsEnabled())
+                return;
+            QStringList reserved;
+            if (historyEnabled_)
+            {
+                reserved << history_.rootDirectory();
+                for (const auto& group : history_.groups())
+                    if (history_.ready() && !group.absolutePath.isEmpty())
+                        reserved << group.absolutePath;
+            }
+            quickGunnerNotice(quickGunner_->setDirectory(directory, reserved));
+        });
+    quickGunnerDirectoryAction_->setObjectName(QStringLiteral("quickGunnerDirectoryAction"));
+    quickGunnerStatusAction_ = quickGunnerMenu_->addAction(QString());
+    quickGunnerStatusAction_->setObjectName(QStringLiteral("quickGunnerStatusAction"));
+    quickGunnerStatusAction_->setEnabled(false);
+    connect(quickGunnerMenu_, &QMenu::aboutToShow, this,
+            &ApplicationController::refreshQuickGunnerActions);
+    refreshQuickGunnerActions();
     clipboardStickerAction_ = menu_.addAction(QStringLiteral("剪贴板贴图"), this,
                                               &ApplicationController::pinClipboardImage);
     clipboardStickerAction_->setObjectName(QStringLiteral("clipboardStickerAction"));
@@ -252,6 +323,73 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
             });
 }
 ApplicationController::~ApplicationController() { cleanup(); }
+bool ApplicationController::quickGunnerActionsEnabled() const
+{
+    return regionCaptureSupported() && !active_ && !settingsOpen_ && !quitting_ &&
+           !resolvingQuit_ && quickGunner_->state() != QuickGunnerController::State::Framing;
+}
+void ApplicationController::refreshQuickGunnerActions()
+{
+    if (!quickGunnerStatusAction_)
+        return;
+    for (auto* action :
+         {quickGunnerShootAction_, quickGunnerFrameAction_, quickGunnerDirectoryAction_})
+    {
+        action->setEnabled(quickGunnerActionsEnabled());
+        action->setToolTip(regionCaptureSupported() ? QString()
+                                                    : QStringLiteral("Windows 原生采集后补"));
+    }
+    const auto& preferences = quickGunner_->preferences();
+    QString status;
+    if (!regionCaptureSupported())
+        status = QStringLiteral("Windows 原生采集后补");
+    else
+    {
+        status = preferences.region ? QStringLiteral("机位 %1×%2 px")
+                                          .arg(preferences.region->pixelRect.width())
+                                          .arg(preferences.region->pixelRect.height())
+                                    : QStringLiteral("机位未设置");
+        status +=
+            QStringLiteral(" · ") + (preferences.directory.isEmpty() ? QStringLiteral("目录未设置")
+                                                                     : preferences.directory);
+    }
+    quickGunnerStatusAction_->setText(
+        QFontMetrics(menu_.font()).elidedText(status, Qt::ElideMiddle, 440));
+    quickGunnerStatusAction_->setToolTip(status);
+}
+QImage ApplicationController::quickGunnerWatermark(const QImage& image)
+{
+    if (!watermarks_.autoEnabled())
+        return image;
+    const auto* preset = watermarks_.currentPreset();
+    const auto* asset = preset ? watermarks_.asset(preset->assetId) : nullptr;
+    if (!preset || !asset)
+        return image;
+    QString error;
+    const auto assetImage = watermarks_.assetImage(asset->id, &error);
+    if (asset->kind == WatermarkKind::Image && assetImage.isNull())
+    {
+        if (!quickGunnerWatermarkWarned_)
+        {
+            quickGunnerWatermarkWarned_ = true;
+            if (!options_.testMode && !options_.smokeTest)
+                tray_.showMessage(
+                    QStringLiteral("快枪手水印"),
+                    QStringLiteral("水印资产无法读取，本次及后续受影响图片将保存原图。%1")
+                        .arg(error),
+                    QSystemTrayIcon::Warning);
+        }
+        return image;
+    }
+    WatermarkInstance instance;
+    instance.presetId = preset->id;
+    instance.layout = preset->layout;
+    instance.opacity = preset->opacity;
+    instance.scale = preset->scale;
+    instance.normalizedCenter =
+        watermarkInitialCenter(preset->layout, watermarkBaseSize(*asset, assetImage), image.size());
+    return composeWatermark(image, *asset, assetImage, instance);
+}
 void ApplicationController::setHistoryMenusInstalled(bool installed)
 {
     if (installed == historyMenusInstalled_)
@@ -278,6 +416,7 @@ void ApplicationController::setHistoryMenusInstalled(bool installed)
 }
 void ApplicationController::refreshStickerActions()
 {
+    refreshQuickGunnerActions();
     setHistoryMenusInstalled(historyEnabled_);
 
     const bool interactive = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
@@ -722,6 +861,13 @@ void ApplicationController::openHistory()
 }
 void ApplicationController::trigger(const QString& source)
 {
+    if (quickGunner_ && quickGunner_->state() == QuickGunnerController::State::Framing)
+    {
+        if (!options_.testMode && !options_.smokeTest)
+            tray_.showMessage(QStringLiteral("快枪手"), QStringLiteral("请先完成或取消机位框选"),
+                              QSystemTrayIcon::Information);
+        return;
+    }
     const qint64 t0 = monotonicNs();
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
     {
@@ -1469,7 +1615,8 @@ void ApplicationController::startSmokeTest()
                                                        window != currentGroupMenu_ &&
                                                        window != historyMenu_ &&
                                                        window != watermarkMenu_ &&
-                                                       window != watermarkPresetMenu_;
+                                                       window != watermarkPresetMenu_ &&
+                                                       window != quickGunnerMenu_;
                                             }))
                             {
                                 application_.exit(22);

@@ -617,6 +617,7 @@ class HistoryGroupsTest final : public QObject
                 oldNames,
                 (QStringList{
                     QStringLiteral("screenshotAction"), QStringLiteral("scrollCaptureAction"),
+                    QStringLiteral("quickGunnerMenuAction"),
                     QStringLiteral("clipboardStickerAction"), QStringLiteral("settingsAction"),
                     QStringLiteral("watermarkMenuAction"), QStringLiteral("hideAllStickersAction"),
                     QStringLiteral("restoreAllStickersAction"), QStringLiteral("quitAction")}));
