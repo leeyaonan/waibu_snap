@@ -8084,7 +8084,7 @@ class StartupSmokeTest final : public QObject
             {}, nullptr, saves, autostart);
         dialog.show();
         dialog.findChild<QKeySequenceEdit*>(QStringLiteral("hotkeyEditor"))
-            ->setKeySequence(QKeySequence(Qt::Key_F2));
+            ->setKeySequence(QKeySequence(Qt::Key_F3));
         dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
         dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"))->setChecked(true);
         auto* save = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
@@ -8099,7 +8099,7 @@ class StartupSmokeTest final : public QObject
                      QStringLiteral("测试%1错误").arg(all.at(failure - 1)));
             QVERIFY(!stub.state.enabled);
             QCOMPARE(settings.loadHotkey().sequence,
-                     failure == 1 ? defaultScreenshotHotkey() : QKeySequence(Qt::Key_F2));
+                     failure == 1 ? defaultScreenshotHotkey() : QKeySequence(Qt::Key_F3));
             QCOMPARE(settings.loadSavePreferences().format,
                      failure <= 2 ? ImageFormat::Png : ImageFormat::Jpeg);
             attempt = 2;
@@ -8112,7 +8112,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!dialog.isVisible());
         QVERIFY(stub.state.enabled);
         QCOMPARE(stub.requests.size(), failure == 3 ? 2 : 1);
-        QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+        QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F3));
         QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
         QFile file(temporary.filePath(QStringLiteral("settings.ini")));
         QVERIFY(file.open(QIODevice::ReadOnly));
@@ -8387,6 +8387,7 @@ class StartupSmokeTest final : public QObject
             QStringLiteral("settingsWatermarkPage")};
         const QList<QStringList> controls = {
             {QStringLiteral("hotkeyEditor"), QStringLiteral("hotkeyHelp"),
+             QStringLiteral("quickGunnerHotkeyEditor"), QStringLiteral("quickGunnerHotkeyHelp"),
              QStringLiteral("autostartCheck"), QStringLiteral("autostartHelp")},
             {QStringLiteral("quickDirectory"), QStringLiteral("chooseDirectoryButton"),
              QStringLiteral("clearDirectoryButton"), QStringLiteral("saveFormat"),
@@ -8547,6 +8548,11 @@ class StartupSmokeTest final : public QObject
         file.close();
         QStringList writes;
         SaveSettingsActions actions;
+        actions.saveQuickGunnerHotkey = [&](const QKeySequence& sequence)
+        {
+            writes.append(QStringLiteral("快门"));
+            return settings.saveHotkey(sequence, HotkeyAction::QuickGunnerShutter);
+        };
         actions.shapeTemplates = settings.loadShapeTemplates();
         actions.shapeTemplateDir = settings.shapeTemplateDir();
         actions.chooseDirectory = [&](QWidget*, const QString&) { return temporary.path(); };
@@ -8592,8 +8598,13 @@ class StartupSmokeTest final : public QObject
         QVERIFY(tabs);
         auto* editor = dialog.findChild<QKeySequenceEdit*>(QStringLiteral("hotkeyEditor"));
         editor->setFocus();
-        QTest::keyClick(editor, Qt::Key_F2);
-        QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F2));
+        QTest::keyClick(editor, Qt::Key_F3);
+        QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F3));
+        auto* shutter =
+            dialog.findChild<QKeySequenceEdit*>(QStringLiteral("quickGunnerHotkeyEditor"));
+        QVERIFY(shutter);
+        QCOMPARE(shutter->keySequence(), QKeySequence(Qt::Key_F2));
+        shutter->setKeySequence(QKeySequence(Qt::Key_F4));
         auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("autostartCheck"));
         check->setChecked(false);
         tabs->setCurrentIndex(1);
@@ -8619,7 +8630,7 @@ class StartupSmokeTest final : public QObject
         reminder->setChecked(false);
         for (int page : {0, 1, 2, 3, 0, 2, 1, lastPage})
             tabs->setCurrentIndex(page);
-        QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F2));
+        QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F3));
         QVERIFY(!check->isChecked());
         QCOMPARE(dialog.findChild<QLineEdit*>(QStringLiteral("quickDirectory"))->text(),
                  temporary.path());
@@ -8650,11 +8661,14 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(dialog.result(), decision == 0 ? int(QDialog::Accepted) : int(QDialog::Rejected));
         if (decision == 0)
         {
-            QCOMPARE(writes, (QStringList{QStringLiteral("热键"), QStringLiteral("保存"),
-                                          QStringLiteral("启动"), QStringLiteral("比例"),
-                                          QStringLiteral("模板"), QStringLiteral("贴图")}));
+            QCOMPARE(writes, (QStringList{QStringLiteral("热键"), QStringLiteral("快门"),
+                                          QStringLiteral("保存"), QStringLiteral("启动"),
+                                          QStringLiteral("比例"), QStringLiteral("模板"),
+                                          QStringLiteral("贴图")}));
+            QCOMPARE(settings.loadHotkey(HotkeyAction::QuickGunnerShutter).sequence,
+                     QKeySequence(Qt::Key_F4));
             QVERIFY(!AppSettings(path).loadStickerCloseReminder());
-            QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
+            QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F3));
             QCOMPARE(settings.loadSavePreferences().quickDirectory, temporary.path());
             QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
             const auto ratios = settings.loadCaptureRatios();

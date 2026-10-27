@@ -2,13 +2,18 @@
 #include "app/quick_gunner.h"
 #include "app/quick_gunner_save_queue.h"
 #include "ui/quick_gunner_flash_window.h"
+#include "ui/quick_gunner_region_picker.h"
 #include <QAction>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
+#include <QTimer>
 namespace waibusnap
 {
 struct ApplicationControllerTestAccess
@@ -33,10 +38,34 @@ struct ApplicationControllerTestAccess
         controller.quickGunner_ = std::move(quickGunner);
         controller.displays_ = std::move(displays);
         controller.capture_ = std::move(capture);
+        controller.connectQuickGunner();
     }
     static QuickGunnerController& quickGunner(ApplicationController& controller)
     {
         return *controller.quickGunner_;
+    }
+    static void initializeHotkeys(ApplicationController& c)
+    {
+        c.quickGunnerHotkey_->load();
+        c.hotkeySettings_.initialize();
+        for (auto& key : c.historyHotkeys_)
+            key->initialize();
+    }
+    static bool registered(ApplicationController& c) { return c.quickGunnerHotkey_->registered(); }
+    static bool quitting(ApplicationController& c) { return c.quitting_; }
+    static QList<QWidget*> pausedUi(ApplicationController& c, CaptureFrame frame)
+    {
+        // 此处只注入暂停界面，不启动受控截图计时器，避免退出测试影响下一行模态。
+        c.options_.testMode = false;
+        c.active_ = true;
+        c.scrollFlowActive_ = true;
+        c.overlay_ = new SelectionOverlay(frame);
+        c.scrollBorder_ = new ScrollBorderWindow({20, 20, 100, 80});
+        c.scrollBar_ = new ScrollControlBar({20, 20, 100, 80}, {0, 0, 800, 600});
+        QList<QWidget*> windows{c.overlay_, c.scrollBorder_, c.scrollBar_};
+        for (auto* window : windows)
+            window->show();
+        return windows;
     }
     static quint64 token(ApplicationController& controller) { return controller.token_; }
     static QImage watermark(ApplicationController& controller, const QImage& image)
@@ -70,7 +99,32 @@ class Capture final : public CaptureProvider
     bool permission = true;
     bool hasPermission() const override { return permission; }
     bool requestPermission() override { return permission; }
-    void capture(const DisplayTarget&, std::function<void(CaptureResult)>) override {}
+    QVector<std::function<void(CaptureResult)>> callbacks;
+    void capture(const DisplayTarget&, std::function<void(CaptureResult)> callback) override
+    {
+        callbacks.append(std::move(callback));
+    }
+};
+class Hotkeys final : public GlobalHotkey
+{
+  public:
+    bool rejectShutter = false;
+    std::array<std::function<void()>, 5> handlers;
+    HotkeyRegistration registerHotkey(HotkeyAction action, const QKeySequence&,
+                                      std::function<void()> handler) override
+    {
+        if (rejectShutter && action == HotkeyAction::QuickGunnerShutter)
+            return {false, QStringLiteral("测试系统占用")};
+        handlers[size_t(action)] = std::move(handler);
+        return {true, {}};
+    }
+    void unregister(HotkeyAction action) override { handlers[size_t(action)] = {}; }
+    void fire(HotkeyAction action)
+    {
+        const auto handler = handlers[size_t(action)];
+        if (handler)
+            handler();
+    }
 };
 struct Calls
 {
@@ -140,6 +194,7 @@ class QuickGunnerCaptureTest : public QObject
 {
     Q_OBJECT
   private slots:
+    void initTestCase() { QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs); }
     void preflight()
     {
         Harness noDirectory(false);
@@ -337,6 +392,276 @@ class QuickGunnerCaptureTest : public QObject
         QVERIFY(controller.active());
         QVERIFY(ApplicationControllerTestAccess::token(controller) > token);
     }
+    void modeLifecycleAndShutterGuards()
+    {
+        Harness h;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("settings.ini"));
+        auto keys = std::make_unique<Hotkeys>();
+        auto* raw = keys.get();
+        ApplicationController c(*qobject_cast<QApplication*>(qApp), options, {}, {}, {}, {}, {},
+                                std::move(keys));
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
+        auto* mode = c.menu()->findChild<QAction*>(QStringLiteral("quickGunnerModeAction"));
+        QVERIFY(mode);
+        QVERIFY(!ApplicationControllerTestAccess::registered(c));
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        QVERIFY(h.calls->requests.isEmpty());
+        if (!regionCaptureSupported())
+        {
+            QVERIFY(!mode->isEnabled());
+            return;
+        }
+        mode->trigger();
+        QVERIFY(mode->isChecked());
+        QVERIFY(gunner.active());
+        QVERIFY(ApplicationControllerTestAccess::registered(c));
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        QCOMPARE(h.calls->requests.size(), 1);
+        QVERIFY(!c.active());
+        h.complete(0);
+        QTRY_VERIFY(!gunner.capturing());
+        QTRY_COMPARE(gunner.pendingSaveCount(), 0);
+        for (int which = 0; which < 4; ++which)
+        {
+            ApplicationControllerTestAccess::guard(c, which, true);
+            raw->fire(HotkeyAction::QuickGunnerShutter);
+            QCOMPARE(h.calls->requests.size(), 1);
+            ApplicationControllerTestAccess::guard(c, which, false);
+        }
+        raw->fire(HotkeyAction::Screenshot);
+        QVERIFY(c.active());
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        QCOMPARE(h.calls->requests.size(), 1);
+        ApplicationControllerTestAccess::guard(c, 0, false);
+        mode->trigger();
+        QVERIFY(!mode->isChecked());
+        QCOMPARE(gunner.state(), QuickGunnerController::State::Idle);
+        QVERIFY(!ApplicationControllerTestAccess::registered(c));
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        QCOMPARE(h.calls->requests.size(), 1);
+        raw->rejectShutter = true;
+        QTest::ignoreMessage(QtWarningMsg, "快枪手：快枪手快门无法注册：测试系统占用");
+        mode->trigger();
+        QVERIFY(!mode->isChecked());
+        QCOMPARE(gunner.state(), QuickGunnerController::State::Idle);
+        QVERIFY(!ApplicationControllerTestAccess::registered(c));
+        raw->rejectShutter = false;
+        mode->trigger();
+        QVERIFY(gunner.active());
+        auto* frame = c.menu()->findChild<QAction*>(QStringLiteral("quickGunnerFrameAction"));
+        frame->trigger();
+        QCOMPARE(gunner.state(), QuickGunnerController::State::Framing);
+        QVERIFY(!ApplicationControllerTestAccess::registered(c));
+        // 当前 fake 冻结帧尚未完成，模拟采集失败后仍恢复 Active。
+        h.capture.callbacks.last()({{}, CaptureError::Unavailable, QStringLiteral("重框采集失败")});
+        QVERIFY(gunner.active());
+        QVERIFY(mode->isChecked());
+        QVERIFY(ApplicationControllerTestAccess::registered(c));
+        // 重启模拟：偏好保留，模式和 F2 注册均不保留。
+        ApplicationController restarted(*qobject_cast<QApplication*>(qApp), options, {}, {}, {}, {},
+                                        {}, std::make_unique<Hotkeys>());
+        ApplicationControllerTestAccess::initializeHotkeys(restarted);
+        QVERIFY(!ApplicationControllerTestAccess::registered(restarted));
+        QCOMPARE(ApplicationControllerTestAccess::quickGunner(restarted).preferences().directory,
+                 gunner.preferences().directory);
+        QCOMPARE(
+            ApplicationControllerTestAccess::quickGunner(restarted).preferences().region->toJson(),
+            gunner.preferences().region->toJson());
+        QVERIFY(!restarted.menu()
+                     ->findChild<QAction*>(QStringLiteral("quickGunnerModeAction"))
+                     ->isChecked());
+    }
+    void firstFramingCancelAndActivate_data()
+    {
+        QTest::addColumn<bool>("accept");
+        QTest::newRow("cancel") << false;
+        QTest::newRow("accept") << true;
+    }
+    void firstFramingCancelAndActivate()
+    {
+        if (!regionCaptureSupported())
+            QSKIP("Windows 原生区域采集后补。");
+        QFETCH(bool, accept);
+        Harness h(true, false);
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("application.ini"));
+        QPointer<QuickGunnerRegionPicker> picker;
+        auto gunner = std::make_unique<QuickGunnerController>(
+            h.settings, h.displays, h.capture,
+            [&](CaptureFrame frame, QWidget* parent)
+            {
+                picker = new QuickGunnerRegionPicker(std::move(frame), parent);
+                return picker.data();
+            });
+        ApplicationController c(*qobject_cast<QApplication*>(qApp), options, {}, {}, {}, {}, {},
+                                std::make_unique<Hotkeys>());
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(gunner), std::make_unique<Displays>(), std::make_unique<Capture>());
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        auto* mode = c.menu()->findChild<QAction*>(QStringLiteral("quickGunnerModeAction"));
+        QVERIFY(mode);
+        mode->trigger();
+        QVERIFY(mode->isChecked());
+        QVERIFY(!ApplicationControllerTestAccess::registered(c));
+        QImage image(800, 600, QImage::Format_RGB32);
+        image.fill(Qt::green);
+        h.capture.callbacks.last()({{h.displays.target, image, 0}, CaptureError::None, {}});
+        QVERIFY(picker);
+        if (accept)
+            picker->regionSelected({20, 40, 100, 80});
+        else
+            picker->close();
+        QCOMPARE(mode->isChecked(), accept);
+        QCOMPARE(ApplicationControllerTestAccess::registered(c), accept);
+        QCOMPARE(ApplicationControllerTestAccess::quickGunner(c).active(), accept);
+    }
+    void firstDirectorySelection_data()
+    {
+        QTest::addColumn<int>("decision");
+        QTest::newRow("cancel") << 0;
+        QTest::newRow("select-then-frame") << 1;
+        QTest::newRow("reserved-directory") << 2;
+    }
+    void firstDirectorySelection()
+    {
+        if (!regionCaptureSupported())
+            QSKIP("Windows 原生区域采集后补。");
+        QFETCH(int, decision);
+        Harness h(false, false);
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("application.ini"));
+        // 历史关闭仍保护已配置根路径，不因快枪手入口创建历史目录。
+        options.historyEnabledOverride = false;
+        options.historyRoot = h.temp.filePath(QStringLiteral("reserved"));
+        QVERIFY(QDir().mkdir(options.historyRoot));
+        ApplicationController c(*qobject_cast<QApplication*>(qApp), options, {}, {}, {}, {}, {},
+                                std::make_unique<Hotkeys>());
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        bool saw = false;
+        if (decision == 2)
+            QTest::ignoreMessage(
+                QtWarningMsg, "快枪手：快枪手目录不能与历史根目录或分组目录相同，也不能互相包含。");
+        QTimer::singleShot(0,
+                           [&]
+                           {
+                               auto* dialog =
+                                   qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+                               QVERIFY(dialog);
+                               saw = true;
+                               if (decision == 0)
+                                   dialog->reject();
+                               else
+                               {
+                                   const auto directory =
+                                       decision == 1 ? h.temp.filePath(QStringLiteral("shots"))
+                                                     : options.historyRoot;
+                                   if (decision == 1)
+                                       QVERIFY(QDir().mkdir(directory));
+                                   dialog->setDirectory(directory);
+                                   QMetaObject::invokeMethod(dialog, "accept");
+                               }
+                           });
+        auto* mode = c.menu()->findChild<QAction*>(QStringLiteral("quickGunnerModeAction"));
+        QVERIFY(mode);
+        mode->trigger();
+        QVERIFY(saw);
+        QCOMPARE(mode->isChecked(), decision == 1);
+        auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
+        QCOMPARE(gunner.state(), decision == 1 ? QuickGunnerController::State::Framing
+                                               : QuickGunnerController::State::Idle);
+        QVERIFY(!ApplicationControllerTestAccess::registered(c));
+        QVERIFY(!QFile::exists(QDir(options.historyRoot).filePath(QStringLiteral(".waibusnap"))));
+        if (decision == 1)
+        {
+            QCOMPARE(h.settings.loadQuickGunnerPreferences().directory,
+                     h.temp.filePath(QStringLiteral("shots")));
+            gunner.deactivate();
+            QVERIFY(!mode->isChecked());
+        }
+        else
+            QVERIFY(gunner.preferences().directory.isEmpty());
+    }
+    void quitBacklog_data()
+    {
+        QTest::addColumn<bool>("discard");
+        QTest::addColumn<int>("kind");
+        QTest::newRow("capture-cancel") << false << 0;
+        QTest::newRow("capture-discard") << true << 0;
+        QTest::newRow("save-retry-cancel") << false << 1;
+        QTest::newRow("save-retry-discard") << true << 1;
+        QTest::newRow("empty-no-dialog") << true << 2;
+    }
+    void quitBacklog()
+    {
+        QFETCH(bool, discard);
+        QFETCH(int, kind);
+        Harness h;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("application.ini"));
+        options.metricsFile = h.temp.filePath(QStringLiteral("metrics.jsonl"));
+        ApplicationController c(*qobject_cast<QApplication*>(qApp), options);
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
+        auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
+        if (kind == 0)
+        {
+            QVERIFY(gunner.shutter().isEmpty());
+            QVERIFY(gunner.shutter().isEmpty());
+            QCOMPARE(gunner.pendingCaptureCount(), 1);
+        }
+        else if (kind == 1)
+        {
+            QVERIFY(QDir(gunner.preferences().directory).removeRecursively());
+            QVERIFY(gunner.shutter().isEmpty());
+            h.complete(0);
+            QTRY_COMPARE(h.saves->retryCount(), 1);
+            QCOMPARE(gunner.pendingSaveCount(), 1);
+        }
+        QImage image(800, 600, QImage::Format_RGB32);
+        image.fill(Qt::green);
+        const auto windows =
+            ApplicationControllerTestAccess::pausedUi(c, {h.displays.target, image, 0});
+        bool saw = false;
+        if (kind != 2)
+            QTimer::singleShot(
+                0,
+                [&]
+                {
+                    auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                    QVERIFY(box);
+                    saw = true;
+                    for (auto* window : windows)
+                        QVERIFY(!window->isVisible());
+                    QCOMPARE(box->text(),
+                             QStringLiteral("快枪手还有 1 张图片待保存或重试，退出会丢失。"));
+                    auto* cancel =
+                        box->findChild<QPushButton*>(QStringLiteral("quickGunnerQuitCancel"));
+                    auto* leave =
+                        box->findChild<QPushButton*>(QStringLiteral("quickGunnerQuitDiscard"));
+                    QVERIFY(cancel && leave);
+                    QCOMPARE(box->defaultButton(), cancel);
+                    (discard ? leave : cancel)->click();
+                });
+        c.quit();
+        QCOMPARE(saw, kind != 2);
+        QCOMPARE(ApplicationControllerTestAccess::quitting(c), discard);
+        if (!discard)
+        {
+            QVERIFY(c.active());
+            for (auto* window : windows)
+                QVERIFY(window->isVisible());
+        }
+    }
     void trayEntriesAndGuards()
     {
         QTemporaryDir temp;
@@ -344,32 +669,35 @@ class QuickGunnerCaptureTest : public QObject
         options.testMode = true;
         options.settingsFile = temp.filePath(QStringLiteral("settings.ini"));
         ApplicationController controller(*qobject_cast<QApplication*>(qApp), options);
-        auto* shoot =
-            controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerShootAction"));
+        auto* mode =
+            controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerModeAction"));
         auto* frame =
             controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerFrameAction"));
         auto* directory =
             controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerDirectoryAction"));
         auto* status =
             controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerStatusAction"));
-        QVERIFY(shoot && frame && directory && status);
+        QVERIFY(mode && frame && directory && status);
+        QVERIFY(mode->isCheckable());
+        QVERIFY(!mode->isChecked());
+        QVERIFY(!controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerShootAction")));
         QVERIFY(!status->isEnabled());
-        QCOMPARE(shoot->isEnabled(), regionCaptureSupported());
+        QCOMPARE(mode->isEnabled(), regionCaptureSupported());
         QCOMPARE(frame->isEnabled(), regionCaptureSupported());
         QCOMPARE(directory->isEnabled(), regionCaptureSupported());
-        QVERIFY(!controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerModeAction")));
         for (int which = 0; which < 4; ++which)
         {
             ApplicationControllerTestAccess::guard(controller, which, true);
-            QVERIFY(!shoot->isEnabled());
+            QVERIFY(!mode->isEnabled());
             QVERIFY(!frame->isEnabled());
             QVERIFY(!directory->isEnabled());
             ApplicationControllerTestAccess::guard(controller, which, false);
-            QCOMPARE(shoot->isEnabled(), regionCaptureSupported());
+            QCOMPARE(mode->isEnabled(), regionCaptureSupported());
         }
         const auto actions = controller.menu()->actions();
         auto* quickMenu = controller.menu()->findChild<QMenu*>(QStringLiteral("quickGunnerMenu"));
         QVERIFY(quickMenu);
+        QCOMPARE(quickMenu->actions(), (QList<QAction*>{mode, frame, directory, status}));
         const auto position = actions.indexOf(quickMenu->menuAction());
         QVERIFY(position > 0);
         QCOMPARE(actions[position - 1]->objectName(), QStringLiteral("scrollCaptureAction"));

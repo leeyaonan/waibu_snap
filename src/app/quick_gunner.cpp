@@ -164,28 +164,25 @@ void QuickGunnerController::finishFraming(const QString& notice)
     // 关闭窗口期间若发生显式停用或新会话，旧结束路径不能覆盖新状态。
     if (token_ != token)
         return;
-    State next = State::Idle;
     QString finalNotice = notice;
-    if (resumeActive_)
+    if (resumeActive_ && (!preferences_.region || !preferences_.region->isValid() ||
+                          !displays_.stillMatches(preferences_.region->display)))
     {
-        if (preferences_.region && preferences_.region->isValid() &&
-            displays_.stillMatches(preferences_.region->display))
-            next = State::Active;
-        else
-        {
-            if (!finalNotice.isEmpty())
-                finalNotice += QLatin1Char('\n');
-            finalNotice +=
-                QStringLiteral("机位无效或显示器布局已变化，快枪手模式已退出，请重新框选机位。");
-        }
+        if (!finalNotice.isEmpty())
+            finalNotice += QLatin1Char('\n');
+        finalNotice += QStringLiteral("机位无效或显示器布局已变化，请重新框选机位。");
     }
+    const State next =
+        resumeActive_ || (activateAfter_ && framingAccepted_) ? State::Active : State::Idle;
     resumeActive_ = false;
+    activateAfter_ = false;
+    framingAccepted_ = false;
     setState(next);
     QTimer::singleShot(0, this, &QuickGunnerController::pumpCapture);
     if (!finalNotice.isEmpty())
         emit noticeChanged(finalNotice);
 }
-QString QuickGunnerController::beginFraming(QWidget* parent)
+QString QuickGunnerController::beginFraming(QWidget* parent, bool activateAfterSelection)
 {
     if (state_ == State::Framing)
         return QStringLiteral("正在框选快枪手机位，请先确认或取消。");
@@ -203,6 +200,8 @@ QString QuickGunnerController::beginFraming(QWidget* parent)
     if (capturing_)
         return QStringLiteral("正在拍摄，请稍后调整机位。");
     resumeActive_ = active();
+    activateAfter_ = activateAfterSelection;
+    framingAccepted_ = false;
     if (flash_)
         flash_->hide();
     const auto token = ++token_;
@@ -258,7 +257,10 @@ QString QuickGunnerController::beginFraming(QWidget* parent)
                         next.region = region;
                         const auto error = self->settings_.saveQuickGunnerPreferences(next);
                         if (error.isEmpty())
+                        {
                             self->preferences_ = std::move(next);
+                            self->framingAccepted_ = true;
+                        }
                         self->finishFraming(error);
                         if (self && error.isEmpty())
                             emit self->preferencesChanged();
@@ -300,6 +302,8 @@ QString QuickGunnerController::activate(const QStringList& reservedDirectories)
 void QuickGunnerController::deactivate()
 {
     resumeActive_ = false;
+    activateAfter_ = false;
+    framingAccepted_ = false;
     finishFraming();
 }
 int QuickGunnerController::pendingSaveCount() const { return saveQueue_->pendingCount(); }

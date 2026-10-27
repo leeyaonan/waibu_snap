@@ -45,7 +45,7 @@ class QuickGunnerController final : public QObject
     State state() const { return state_; }
     const QuickGunnerPreferences& preferences() const { return preferences_; }
     QString setDirectory(const QString& directory, const QStringList& reservedDirectories);
-    QString beginFraming(QWidget* parent = nullptr);
+    QString beginFraming(QWidget* parent = nullptr, bool activateAfterSelection = false);
     QString activate(const QStringList& reservedDirectories);
     void deactivate();
   signals:
@@ -67,6 +67,8 @@ class QuickGunnerController final : public QObject
     QuickGunnerPreferences preferences_;
     State state_ = State::Idle;
     bool resumeActive_ = false;
+    bool activateAfter_ = false;
+    bool framingAccepted_ = false;
     quint64 token_ = 0;
     QPointer<QuickGunnerRegionPicker> picker_;
     std::function<std::unique_ptr<RegionCaptureOnce>()> captureFactory_;
