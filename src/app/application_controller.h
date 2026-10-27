@@ -1,6 +1,7 @@
 #pragma once
 #include "app/app_settings.h"
 #include "app/history_manager.h"
+#include "app/quick_gunner.h"
 #include "app/scroll_capture.h"
 #include "app/sticker_manager.h"
 #include "app/watermark_service.h"
@@ -88,6 +89,9 @@ class ApplicationController final : public QObject
     void startSmokeTest();
     void openSettings();
     void refreshStickerActions();
+    void refreshQuickGunnerActions();
+    bool quickGunnerActionsEnabled() const;
+    QImage quickGunnerWatermark(const QImage& image);
     void setHistoryMenusInstalled(bool installed);
     void rebuildCurrentGroupMenu();
     void updateCurrentGroupMenu();
@@ -100,6 +104,12 @@ class ApplicationController final : public QObject
     QApplication& application_;
     RunOptions options_;
     QAction* scrollAction_ = nullptr;
+    QMenu* quickGunnerMenu_ = nullptr;
+    QAction* quickGunnerShootAction_ = nullptr;
+    QAction* quickGunnerFrameAction_ = nullptr;
+    QAction* quickGunnerDirectoryAction_ = nullptr;
+    QAction* quickGunnerStatusAction_ = nullptr;
+    bool quickGunnerWatermarkWarned_ = false;
     QAction* settingsAction_ = nullptr;
     QAction* openHistoryAction_ = nullptr;
     QAction* historyPreviousAction_ = nullptr;
@@ -127,6 +137,8 @@ class ApplicationController final : public QObject
     std::array<std::unique_ptr<HotkeySettings>, 3> historyHotkeys_;
     std::unique_ptr<DisplayTopology> displays_;
     std::unique_ptr<CaptureProvider> capture_;
+    // 依赖显示器与权限提供者；按逆序先销毁快枪手。
+    std::unique_ptr<QuickGunnerController> quickGunner_;
     std::unique_ptr<WindowEnumerator> windows_;
     std::unique_ptr<PresentationObservation> observation_;
     StickerManager stickers_;

@@ -433,3 +433,12 @@ add_test(NAME quick_gunner_region_picker_high_dpi COMMAND quick_gunner_region_pi
     "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-region-picker-high-dpi-output.txt,txt")
 set_tests_properties(quick_gunner_region_picker_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 30)
+
+foreach(name IN ITEMS quick_gunner_capture quick_gunner_save_queue quick_gunner_flash_window)
+    qt_add_executable(${name}_test integration/${name}_test.cpp)
+    target_link_libraries(${name}_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+    set_target_properties(${name}_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME ${name} COMMAND ${name}_test -o
+        "${CMAKE_CURRENT_BINARY_DIR}/${name}-output.txt,txt")
+    set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+endforeach()

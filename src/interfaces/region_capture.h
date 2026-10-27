@@ -12,6 +12,15 @@ struct RegionCaptureRequest
     QRect pixelRect;
     QVector<quint64> excludedWindowIds;
 };
+class RegionCaptureOnce
+{
+  public:
+    virtual ~RegionCaptureOnce() = default;
+    // GUI 线程发起与交付；析构后不得调用完成回调。
+    virtual void capture(const RegionCaptureRequest&,
+                         std::function<void(QImage, QString)> completion) = 0;
+};
+std::unique_ptr<RegionCaptureOnce> createRegionCaptureOnce();
 class RegionCaptureSession
 {
   public:
