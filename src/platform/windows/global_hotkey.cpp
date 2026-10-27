@@ -7,7 +7,7 @@ namespace
 {
 constexpr int firstId = 0x5700;
 constexpr int lastId = 0xbfff;
-// 每轮四个连续 ID，槽位顺序与 hotkeyActions 一致；整个进程不复用旧 token。
+// 每轮按 hotkeyActions 数量分配连续 ID，槽位顺序一致；整个进程不复用旧 token。
 int nextIdBlock = firstId;
 std::optional<size_t> actionIndex(HotkeyAction action)
 {

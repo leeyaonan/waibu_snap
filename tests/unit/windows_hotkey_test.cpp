@@ -117,10 +117,10 @@ class WindowsHotkeyTest final : public QObject
     void actionIdsIndependentReleaseAndDestruction()
     {
         FakeApi fake;
-        std::array<int, 4> calls{};
+        std::array<int, 5> calls{};
         {
             WindowsHotkey hotkey(fake.api());
-            std::array<int, 4> ids{};
+            std::array<int, 5> ids{};
             for (size_t i = 0; i < hotkeyActions.size(); ++i)
             {
                 QVERIFY(hotkey
@@ -128,7 +128,7 @@ class WindowsHotkeyTest final : public QObject
                                             [&, i] { ++calls[i]; })
                             .enabled);
                 ids[i] = fake.registered.last();
-                QCOMPARE((ids[i] - 0x5700) % 4, int(i));
+                QCOMPARE((ids[i] - 0x5700) % int(hotkeyActions.size()), int(i));
                 QVERIFY(fake.active[ids[i]].modifiers & MOD_NOREPEAT);
                 QVERIFY(dispatch(hotkey, fake.message(ids[i])));
                 QCOMPARE(calls[i], 1);
@@ -138,14 +138,16 @@ class WindowsHotkeyTest final : public QObject
             hotkey.unregister(HotkeyAction::HistoryPrevious);
             QVERIFY(!dispatch(hotkey, removed));
             QCOMPARE(fake.released, QVector<int>{ids[1]});
-            for (size_t i : {size_t(0), size_t(2), size_t(3)})
+            for (size_t i = 0; i < hotkeyActions.size(); ++i)
             {
+                if (i == 1)
+                    continue;
                 QVERIFY(dispatch(hotkey, fake.message(ids[i])));
                 QCOMPARE(calls[i], 2);
             }
         }
         QVERIFY(fake.active.isEmpty());
-        QCOMPARE(fake.released.size(), 4);
+        QCOMPARE(fake.released.size(), qsizetype(hotkeyActions.size()));
     }
     void replaceRollbackAndStaleEvents()
     {
@@ -207,8 +209,8 @@ class WindowsHotkeyTest final : public QObject
     {
         FakeApi fake;
         WindowsHotkey hotkey(fake.api());
-        std::array<int, 4> calls{};
-        std::array<MSG, 4> messages{};
+        std::array<int, 5> calls{};
+        std::array<MSG, 5> messages{};
         for (size_t i = 0; i < hotkeyActions.size(); ++i)
         {
             QVERIFY(hotkey
@@ -219,10 +221,10 @@ class WindowsHotkeyTest final : public QObject
         }
         fake.error = ERROR_HOTKEY_ALREADY_REGISTERED;
         QVERIFY(!hotkey
-                     .registerHotkey(HotkeyAction::HistoryPrevious, QKeySequence(Qt::Key_F2),
+                     .registerHotkey(HotkeyAction::HistoryPrevious, QKeySequence(Qt::Key_F4),
                                      [] { QFAIL("失败的新处理器不应生效。"); })
                      .enabled);
-        QCOMPARE(fake.active.size(), 4);
+        QCOMPARE(fake.active.size(), qsizetype(hotkeyActions.size()));
         QVERIFY(fake.released.isEmpty());
         for (const auto& message : messages)
             QVERIFY(dispatch(hotkey, message));
@@ -235,7 +237,7 @@ class WindowsHotkeyTest final : public QObject
                     .enabled);
         QVERIFY(dispatch(hotkey, messages[1]));
         QCOMPARE(calls[1], 2);
-        QCOMPARE(fake.active.size(), 4);
+        QCOMPARE(fake.active.size(), qsizetype(hotkeyActions.size()));
     }
     void errorReasons_data()
     {

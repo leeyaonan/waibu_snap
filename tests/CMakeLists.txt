@@ -55,6 +55,11 @@ set_target_properties(hotkey_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME hotkey_settings COMMAND hotkey_settings_test)
 set_tests_properties(hotkey_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+qt_add_executable(quick_gunner_hotkey_test unit/quick_gunner_hotkey_test.cpp)
+target_link_libraries(quick_gunner_hotkey_test PRIVATE waibusnap_settings Qt6::Test waibusnap_options)
+set_target_properties(quick_gunner_hotkey_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME quick_gunner_hotkey COMMAND quick_gunner_hotkey_test)
+
 qt_add_executable(history_types_test unit/history_types_test.cpp)
 target_link_libraries(history_types_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(history_types_test PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -372,7 +377,7 @@ add_test(NAME history_settings_high_dpi COMMAND history_settings_test
     privacyOptInRequiresAcknowledgement controllerPrivacyOptInAndEnable
     directoryChooseClearCancelAndEscape rootSwitchAndNoMigration
     rootFailureKeepsOldAndRetry templateOnlyAffectsNewGroupsAndAtLeastOne bytePrecisionAndProtection
-    dialogDuplicateInvalidAndSingleFailure trayMenusEmptyAndGuards
+    dialogDuplicateInvalidAndSingleFailure trayMenusEmptyAndGuards controllerLazyShutterConflictsAndCleanup
     navigationAllGroupsCurrentSelectionAndReuse navigationFirstStep navigationOpenGroupAndSort
     controllerSettingsRootSwitchAndModalGuard
     -o "${CMAKE_CURRENT_BINARY_DIR}/history_settings-high-dpi-output.txt,txt")

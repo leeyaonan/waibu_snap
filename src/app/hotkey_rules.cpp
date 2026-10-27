@@ -14,6 +14,8 @@ QKeySequence defaultHotkey(HotkeyAction action)
         return QKeySequence(Qt::Key_F8);
     case HotkeyAction::HistoryOpen:
         return QKeySequence(Qt::Key_F9);
+    case HotkeyAction::QuickGunnerShutter:
+        return QKeySequence(Qt::Key_F2);
     }
     return {};
 }
@@ -29,10 +31,14 @@ QString hotkeyActionName(HotkeyAction action)
         return QStringLiteral("下一张");
     case HotkeyAction::HistoryOpen:
         return QStringLiteral("打开历史");
+    case HotkeyAction::QuickGunnerShutter:
+        return QStringLiteral("快枪手快门");
     }
     return {};
 }
-QString hotkeyConflictError(const std::array<QKeySequence, 4>& sequences)
+namespace
+{
+template <size_t N> QString conflictError(const std::array<QKeySequence, N>& sequences)
 {
     for (size_t i = 0; i < sequences.size(); ++i)
     {
@@ -45,6 +51,15 @@ QString hotkeyConflictError(const std::array<QKeySequence, 4>& sequences)
                     .arg(hotkeyActionName(hotkeyActions[i]), hotkeyActionName(hotkeyActions[j]));
     }
     return {};
+}
+}
+QString hotkeyConflictError(const std::array<QKeySequence, 4>& sequences)
+{
+    return conflictError(sequences);
+}
+QString hotkeyConflictError(const std::array<QKeySequence, 5>& sequences)
+{
+    return conflictError(sequences);
 }
 QString hotkeyValidationError(const QKeySequence& sequence)
 {

@@ -34,6 +34,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
       hotkey_(hotkey ? std::move(hotkey) : createGlobalHotkey()), settings_(options_.settingsFile),
       history_(settings_, options_.historyRoot), watermarks_(settings_),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
+      quickGunnerHotkey_(std::make_unique<QuickGunnerHotkey>(settings_, *hotkey_, [] {})),
       displays_(createDisplayTopology()), capture_(createCaptureProvider()),
       windows_(createWindowEnumerator()),
       stickers_(nullptr,
@@ -587,6 +588,7 @@ void ApplicationController::pinClipboardImage()
 }
 void ApplicationController::start()
 {
+    quickGunnerHotkey_->load();
     if (options_.smokeTest)
     {
         startSmokeTest();
@@ -621,17 +623,36 @@ void ApplicationController::start()
 }
 HotkeySettings& ApplicationController::hotkeySettings(HotkeyAction action)
 {
-    return action == HotkeyAction::Screenshot ? hotkeySettings_
-                                              : *historyHotkeys_[size_t(action) - 1];
+    switch (action)
+    {
+    case HotkeyAction::Screenshot:
+        return hotkeySettings_;
+    case HotkeyAction::HistoryPrevious:
+    case HotkeyAction::HistoryNext:
+    case HotkeyAction::HistoryOpen:
+        return *historyHotkeys_[size_t(action) - 1];
+    case HotkeyAction::QuickGunnerShutter:
+        break;
+    }
+    qFatal("此动作不使用常驻热键设置。");
+}
+QKeySequence ApplicationController::sequenceForAction(HotkeyAction action)
+{
+    return action == HotkeyAction::QuickGunnerShutter ? quickGunnerHotkey_->currentSequence()
+                                                      : hotkeySettings(action).currentSequence();
 }
 QString ApplicationController::changeHotkey(const QKeySequence& sequence, HotkeyAction action)
 {
     for (const auto other : hotkeyActions)
-        if (other != action && hotkeySettings(other).currentSequence() == sequence)
+        if (other != action && sequenceForAction(other) == sequence)
             return QStringLiteral("%1与%2快捷键重复，原绑定保留。")
                 .arg(hotkeyActionName(action), hotkeyActionName(other));
-    const QString error = hotkeySettings(action).changeHotkey(sequence);
-    qInfo().noquote() << (error.isEmpty() ? hotkeySettings(action).explanation() : error);
+    const bool shutter = action == HotkeyAction::QuickGunnerShutter;
+    const QString error = shutter ? quickGunnerHotkey_->change(sequence)
+                                  : hotkeySettings(action).changeHotkey(sequence);
+    const QString explanation =
+        shutter ? quickGunnerHotkey_->explanation() : hotkeySettings(action).explanation();
+    qInfo().noquote() << (error.isEmpty() ? explanation : error);
     tray_.setToolTip(hotkeySettings_.tooltip());
     return error;
 }
@@ -1520,6 +1541,7 @@ void ApplicationController::cleanup()
     stickers_.closeAll();
     if (closingOverlay)
         delete closingOverlay.data();
+    quickGunnerHotkey_->deactivate();
     hotkey_->unregister();
     tray_.hide();
 }

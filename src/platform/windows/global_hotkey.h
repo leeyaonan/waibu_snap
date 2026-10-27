@@ -39,6 +39,6 @@ class WindowsHotkey final : public GlobalHotkey, public QAbstractNativeEventFilt
         std::function<void()> handler;
     };
     WindowsHotkeyApi api_;
-    std::array<Binding, 4> bindings_;
+    std::array<Binding, hotkeyActions.size()> bindings_;
 };
 }

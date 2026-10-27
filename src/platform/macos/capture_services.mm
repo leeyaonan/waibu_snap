@@ -264,8 +264,8 @@ class MacHotkey final : public GlobalHotkey
         EventHotKeyRef ref = nullptr;
         QKeySequence sequence;
     };
-    std::array<Binding, 4> bindings_;
-    std::array<MacHotkeyCallback, 4> callbacks_;
+    std::array<Binding, 5> bindings_;
+    std::array<MacHotkeyCallback, 5> callbacks_;
     EventHandlerRef eventHandler_ = nullptr;
     UInt32 nextId_ = 0;
     static constexpr UInt32 signature = 0x5742534e;

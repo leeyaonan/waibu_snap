@@ -11,11 +11,12 @@ enum class HotkeyAction
     Screenshot,
     HistoryPrevious,
     HistoryNext,
-    HistoryOpen
+    HistoryOpen,
+    QuickGunnerShutter
 };
-constexpr std::array<HotkeyAction, 4> hotkeyActions = {
+constexpr std::array<HotkeyAction, 5> hotkeyActions = {
     HotkeyAction::Screenshot, HotkeyAction::HistoryPrevious, HotkeyAction::HistoryNext,
-    HotkeyAction::HistoryOpen};
+    HotkeyAction::HistoryOpen, HotkeyAction::QuickGunnerShutter};
 struct HotkeyRegistration
 {
     bool enabled = false;

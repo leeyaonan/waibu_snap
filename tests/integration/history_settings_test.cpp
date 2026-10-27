@@ -31,10 +31,12 @@ struct ApplicationControllerTestAccess
     static void cleanup(ApplicationController& c) { c.cleanup(); }
     static void initializeHotkeys(ApplicationController& c)
     {
+        c.quickGunnerHotkey_->load();
         c.hotkeySettings_.initialize();
         for (auto& key : c.historyHotkeys_)
             key->initialize();
     }
+    static QuickGunnerHotkey& shutter(ApplicationController& c) { return *c.quickGunnerHotkey_; }
     static QString change(ApplicationController& c, HotkeyAction action, QKeySequence key)
     {
         return c.changeHotkey(key, action);
@@ -61,8 +63,8 @@ template <class T> T* child(QObject* root, const char* name)
 class FakeHotkey final : public GlobalHotkey
 {
   public:
-    std::array<QKeySequence, 4> keys;
-    std::array<std::function<void()>, 4> handlers;
+    std::array<QKeySequence, 5> keys;
+    std::array<std::function<void()>, 5> handlers;
     QString rejected;
     QVector<HotkeyAction> attempts;
     QVector<HotkeyAction> released;
@@ -661,6 +663,8 @@ class HistorySettingsTest final : public QObject
         fake.rejected = QStringLiteral("F7");
         for (const auto action : hotkeyActions)
         {
+            if (action == HotkeyAction::QuickGunnerShutter)
+                continue;
             HotkeySettings settings(f.settings, fake, [] {}, action);
             const auto result = settings.initialize();
             QCOMPARE(settings.enabled(), action != HotkeyAction::HistoryPrevious);
@@ -670,6 +674,61 @@ class HistorySettingsTest final : public QObject
         QVERIFY(fake.keys[1].isEmpty());
         QCOMPARE(fake.keys[2], QKeySequence(Qt::Key_F8));
         QCOMPARE(fake.keys[3], QKeySequence(Qt::Key_F9));
+        QVERIFY(fake.keys[4].isEmpty());
+    }
+    void controllerLazyShutterConflictsAndCleanup()
+    {
+        Fixture f;
+        auto fake = std::make_unique<FakeHotkey>();
+        auto* raw = fake.get();
+        const auto runOptions = options(f);
+        AppSettings settings(runOptions.settingsFile);
+        QVERIFY(settings.saveHotkey(QKeySequence(Qt::Key_F3), HotkeyAction::QuickGunnerShutter)
+                    .isEmpty());
+        ApplicationController c(*qApp, runOptions, {}, {}, startup(), {}, {}, std::move(fake));
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        auto& shutter = ApplicationControllerTestAccess::shutter(c);
+        QCOMPARE(shutter.currentSequence(), QKeySequence(Qt::Key_F3));
+        QVERIFY(!shutter.registered());
+        QCOMPARE(raw->attempts.size(), 4);
+        QVERIFY(raw->keys[4].isEmpty());
+        for (const auto action : hotkeyActions)
+        {
+            if (action == HotkeyAction::QuickGunnerShutter)
+                continue;
+            const auto error =
+                ApplicationControllerTestAccess::change(c, action, shutter.currentSequence());
+            QVERIFY(error.contains(QStringLiteral("快枪手快门")));
+            QVERIFY(!ApplicationControllerTestAccess::change(c, HotkeyAction::QuickGunnerShutter,
+                                                             defaultHotkey(action))
+                         .isEmpty());
+        }
+        QCOMPARE(raw->attempts.size(), 4);
+        QVERIFY(ApplicationControllerTestAccess::change(c, HotkeyAction::QuickGunnerShutter,
+                                                        QKeySequence(Qt::Key_F2))
+                    .isEmpty());
+        QCOMPARE(raw->attempts.size(), 4);
+        QCOMPARE(settings.loadHotkey(HotkeyAction::QuickGunnerShutter).sequence,
+                 QKeySequence(Qt::Key_F2));
+        QVERIFY(shutter.activate().isEmpty());
+        QVERIFY(shutter.registered());
+        QCOMPARE(raw->keys[4], QKeySequence(Qt::Key_F2));
+        raw->rejected = QStringLiteral("F3");
+        QVERIFY(!ApplicationControllerTestAccess::change(c, HotkeyAction::QuickGunnerShutter,
+                                                         QKeySequence(Qt::Key_F3))
+                     .isEmpty());
+        QCOMPARE(settings.loadHotkey(HotkeyAction::QuickGunnerShutter).sequence,
+                 QKeySequence(Qt::Key_F2));
+        raw->rejected.clear();
+        QVERIFY(ApplicationControllerTestAccess::change(c, HotkeyAction::QuickGunnerShutter,
+                                                        QKeySequence(Qt::Key_F3))
+                    .isEmpty());
+        QCOMPARE(raw->keys[4], QKeySequence(Qt::Key_F3));
+        ApplicationControllerTestAccess::cleanup(c);
+        QVERIFY(!shutter.registered());
+        QCOMPARE(raw->released.first(), HotkeyAction::QuickGunnerShutter);
+        for (const auto& handler : raw->handlers)
+            QVERIFY(!handler);
     }
     void dialogDuplicateInvalidAndSingleFailure()
     {

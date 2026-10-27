@@ -2,6 +2,7 @@
 #include "app/app_settings.h"
 #include "app/history_manager.h"
 #include "app/quick_gunner.h"
+#include "app/quick_gunner_hotkey.h"
 #include "app/scroll_capture.h"
 #include "app/sticker_manager.h"
 #include "app/watermark_service.h"
@@ -101,6 +102,7 @@ class ApplicationController final : public QObject
     QString changeHotkey(const QKeySequence& sequence,
                          HotkeyAction action = HotkeyAction::Screenshot);
     HotkeySettings& hotkeySettings(HotkeyAction action);
+    QKeySequence sequenceForAction(HotkeyAction action);
     QApplication& application_;
     RunOptions options_;
     QAction* scrollAction_ = nullptr;
@@ -135,6 +137,7 @@ class ApplicationController final : public QObject
     HistorySession historySession_;
     HotkeySettings hotkeySettings_;
     std::array<std::unique_ptr<HotkeySettings>, 3> historyHotkeys_;
+    std::unique_ptr<QuickGunnerHotkey> quickGunnerHotkey_;
     std::unique_ptr<DisplayTopology> displays_;
     std::unique_ptr<CaptureProvider> capture_;
     // 依赖显示器与权限提供者；按逆序先销毁快枪手。
