@@ -329,6 +329,16 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
                     else
                         rebuildSources();
                 });
+    if (additionalSource)
+        connect(additionalSource, &QObject::destroyed, this,
+                [this, additionalSource]
+                {
+                    sources_.removeAll(additionalSource);
+                    if (!source_)
+                        selectSource({});
+                    else
+                        rebuildSources();
+                });
     connect(historySource_, &HistoryResourceSource::groupDialogOpenChanged, this,
             &HistoryWindow::groupDialogOpenChanged);
     connect(historySource_, &HistoryResourceSource::groupViewRequested, this,
@@ -624,8 +634,11 @@ void HistoryWindow::rebuildItems(const QString& selected, int fallbackRow)
 }
 HistoryWindow::~HistoryWindow()
 {
-    source_->setProtectedItem({});
-    source_->setActive(false);
+    if (source_)
+    {
+        source_->setProtectedItem({});
+        source_->setActive(false);
+    }
 }
 void HistoryWindow::showSelection()
 {

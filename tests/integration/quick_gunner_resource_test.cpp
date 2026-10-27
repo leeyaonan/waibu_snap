@@ -540,6 +540,16 @@ class QuickGunnerResourceTest final : public QObject
         QVERIFY(!failed.saveHistoryWindowState(state).isEmpty());
         QCOMPARE(failed.loadHistoryWindowState().lastSource, QStringLiteral("history"));
     }
+    void borrowedSourceMayEndBeforeDeferredWindowDeletion()
+    {
+        Fixture f;
+        f.write(QStringLiteral("a.png"));
+        f.open(false);
+        f.window->close();
+        f.source.reset();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(f.window.isNull());
+    }
     void trayReusesWindowAcrossSourcesAndDisabledHistory()
     {
         Fixture f;

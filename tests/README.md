@@ -1135,7 +1135,7 @@ Windows 首轮 CI 的清理布局断言高估首行高度（3×行距=42px，标
 
 ## B5 快枪手来源与条目动作（2026-10-27）
 
-- 新增 `quick_gunner_resource` / `quick_gunner_resource_high_dpi`，共用 15 个业务用例（含初始化 / 收尾为各 17 项 QtTest）：PNG / JPEG / WebP 平铺扫描、子目录 / 链接过滤、独立星标 JSON 往返 / 损坏回退 / 剪枝 / 写失败、复制 / 钉图 / 定位、删除边界 / 路径替换、清空首错停止与跨目录保护、目录不存在后恢复、真实 watcher 增删移与选择 / 缩放保持、不可监听时 2s 轮询及暂停、多来源 / 分组入口 / lastSource / 隐私、筛选下确认清空、历史扫描排除与托盘复用窗口。
+- 新增 `quick_gunner_resource` / `quick_gunner_resource_high_dpi`，共用 16 个业务用例（含初始化 / 收尾为各 18 项 QtTest）：PNG / JPEG / WebP 平铺扫描、子目录 / 链接过滤、独立星标 JSON 往返 / 损坏回退 / 剪枝 / 写失败、复制 / 钉图 / 定位、删除边界 / 路径替换、清空首错停止与跨目录保护、目录不存在后恢复、真实 watcher 增删移与选择 / 缩放保持、不可监听时 2s 轮询及暂停、多来源 / 分组入口 / lastSource / 隐私、筛选下确认清空、历史扫描排除与托盘复用窗口，以及借用来源先结束、关闭窗口延迟销毁的生命周期保护。
 - `resource_source` 增加历史关闭仍打开浏览器的失败回归（B4 基线断言 browser 为 null，实施后通过）和 deletable 映射；`history_missing_webp` 增加真实移除插件搜索路径后快枪手中文错误；同步历史隐私与快枪手托盘菜单结构断言。回收站单测使用注入替身，原生系统回收站仍需人工。
 - 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：`bash scripts/build-project.sh` 通过、稳定开发签名通过；全量 CTest **52/54 通过**。两个失败：`platform_workarounds::nativeVisibilityAndRecovery`（第 99 行在屏断言）与 `sticker_window_behavior::keyboardEntryMakesPanelKey`（第 70 行焦点断言）。独立 detached worktree 基于未修改 main `9adf4d2` 单独构建并复测，同两断言失败，未修改用例或跳过门禁。本机原生窗口状态的原因尚未进一步定位，不把本批视为全量通过。
 - 本批 lint（clang-format 18.1.8）与 `git diff --check` 通过；双端 CI 结果以本批 PR 为准。Windows 原生采集仍后补，资源浏览与目录配置不依赖采集能力。

@@ -1,6 +1,7 @@
 #pragma once
 #include "ui/history_resource_source.h"
 #include <QGraphicsView>
+#include <QPointer>
 #include <QWidget>
 #include <optional>
 class QComboBox;
@@ -41,7 +42,7 @@ class HistoryWindow final : public QWidget
     ~HistoryWindow() override;
     void refresh();
     void selectSource(const QString& sourceId);
-    QString selectedSourceId() const { return source_->id(); }
+    QString selectedSourceId() const { return source_ ? source_->id() : QString(); }
     void setHistoryEnabled(bool enabled);
     void navigate(int step, bool allHistory = false);
     QString selectedItemId() const { return selectedId(); }
@@ -84,7 +85,7 @@ class HistoryWindow final : public QWidget
     void restoreWindowState(const HistoryWindowState& state);
     void saveWindowState();
     HistoryResourceSource* historySource_;
-    ResourceSource* source_;
+    QPointer<ResourceSource> source_;
     QVector<ResourceSource*> sources_;
     struct SourceView
     {
