@@ -18,6 +18,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <filesystem>
 using namespace waibusnap;
 namespace waibusnap
 {
@@ -170,8 +171,12 @@ class QuickGunnerResourceTest final : public QObject
         const QString outside = f.temp.filePath(QStringLiteral("outside.png"));
         QVERIFY(picture().save(outside));
         const auto link = QDir(f.directory).filePath(QStringLiteral("link.png"));
-        // Windows 的 QFile::link 创建快捷方式；只有文件系统支持链接时核验链接过滤。
-        const bool linked = QFile::link(outside, link);
+        // 使用真实符号链接，避免 Windows 的 QFile::link 写出不带 .lnk 的无效快捷方式。
+        std::error_code linkError;
+        std::filesystem::create_symlink(QFileInfo(outside).filesystemFilePath(),
+                                        QFileInfo(link).filesystemFilePath(), linkError);
+        QVERIFY2(!linkError, linkError.message().c_str());
+        QVERIFY(QFileInfo(link).isSymbolicLink());
         f.createSource();
         ResourceSource& api = *f.source;
         QCOMPARE(api.id(), QStringLiteral("quick-gunner"));
@@ -203,11 +208,26 @@ class QuickGunnerResourceTest final : public QObject
         QCOMPARE(snapshot.usage.externalBytes, bytes);
         QVERIFY(!api.loadImage(outside).success);
         QVERIFY(!api.deleteItem(outside).success);
-        if (linked)
-        {
-            QVERIFY(!api.loadImage(link).success);
-            QVERIFY(!api.deleteItem(link).success);
-        }
+        QVERIFY(!api.loadImage(link).success);
+        QVERIFY(!api.deleteItem(link).success);
+        QVERIFY(QFileInfo::exists(outside));
+    }
+    void shortcutOrSymlinkIsNotAnImage()
+    {
+        Fixture f;
+        const auto outside = f.temp.filePath(QStringLiteral("outside.png"));
+        QVERIFY(picture().save(outside));
+        // Qt 要求 Windows 快捷方式以 .lnk 结尾；Unix 上同一调用创建符号链接。
+        const auto link = QDir(f.directory).filePath(QStringLiteral("link.png.lnk"));
+        QVERIFY(QFile::link(outside, link));
+        const QFileInfo info(link);
+        QVERIFY(info.isShortcut() || info.isSymbolicLink());
+        f.createSource();
+        QVERIFY(f.source->snapshot().items.isEmpty());
+        QVERIFY(!f.source->loadImage(link).success);
+        QVERIFY(!f.source->deleteItem(link).success);
+        QVERIFY(f.trashed.isEmpty());
+        QVERIFY(QFileInfo::exists(link));
         QVERIFY(QFileInfo::exists(outside));
     }
     void starsRoundTripCorruptionPruningAndAtomicFailure()
@@ -305,11 +325,14 @@ class QuickGunnerResourceTest final : public QObject
         const auto outside = f.temp.filePath(QStringLiteral("outside.png"));
         QVERIFY(picture().save(outside));
         QVERIFY(QFile::remove(a));
-        if (QFile::link(outside, a))
-        {
-            QVERIFY(!f.source->deleteItem(a).success);
-            QVERIFY(QFileInfo::exists(outside));
-        }
+        std::error_code linkError;
+        std::filesystem::create_symlink(QFileInfo(outside).filesystemFilePath(),
+                                        QFileInfo(a).filesystemFilePath(), linkError);
+        QVERIFY2(!linkError, linkError.message().c_str());
+        QVERIFY(QFileInfo(a).isSymbolicLink());
+        QVERIFY(!f.source->deleteItem(a).success);
+        QVERIFY(f.trashed.isEmpty());
+        QVERIFY(QFileInfo::exists(outside));
         const auto oldDirectory = f.directory;
         const auto other = f.temp.filePath(QStringLiteral("另一个目录"));
         QVERIFY(QDir().mkpath(other));
