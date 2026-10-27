@@ -269,6 +269,8 @@ add_test(NAME history_window COMMAND history_window_test -o
 set_tests_properties(history_window PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 # 历史浏览 UI 的高 DPI 显式清单，独立于既有截图冒烟数字。
 add_test(NAME history_window_high_dpi COMMAND history_window_test
+    resourceBrowserIdentity liveRecordAndStarPreserveView liveDeleteFallsBackNearSelection
+    liveSameSessionReplacesPreview
     emptyHistory filtersCountsAndCurrentGroup originalVariantToggle sortingSelectionAndKeyboard lazyThumbnails
     transparentCheckerboard longImageZoomScrollAndPan narrowLayoutAndCollapse
     restoreStateAndSelection offscreenGeometryAndStaleSelection missingImageAndRefresh
@@ -450,3 +452,9 @@ foreach(name IN ITEMS quick_gunner_capture quick_gunner_save_queue quick_gunner_
         "${CMAKE_CURRENT_BINARY_DIR}/${name}-output.txt,txt")
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 endforeach()
+
+qt_add_executable(resource_source_test integration/resource_source_test.cpp)
+target_link_libraries(resource_source_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(resource_source_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME resource_source COMMAND resource_source_test)
+set_tests_properties(resource_source PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
