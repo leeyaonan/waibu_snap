@@ -8,6 +8,7 @@
 #include "output/watermark_renderer.h"
 #include "session/monotonic_clock.h"
 #include "ui/group_settings_dialog.h"
+#include "ui/quick_gunner_flash_window.h"
 #include "ui/settings_dialog.h"
 #include <QAction>
 #include <QClipboard>
@@ -113,13 +114,6 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     quickGunnerSource_ = std::make_unique<QuickGunnerResourceSource>(
         [this] { return quickGunner_->preferences().directory; }, settings_.quickGunnerStarsPath(),
         historyActions_);
-    connect(quickGunner_.get(), &QuickGunnerController::preferencesChanged, this,
-            [this]
-            {
-                quickGunnerSource_->directoryChanged();
-                if (historyEnabled_ && historyWindow_)
-                    historyWindow_->refresh();
-            });
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
         const std::shared_ptr<Autostart> autostart = createAutostart();
@@ -306,7 +300,8 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
 ApplicationController::~ApplicationController() { cleanup(); }
 bool ApplicationController::quickGunnerActionsEnabled() const
 {
-    return regionCaptureSupported() && !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_;
+    return regionCaptureSupported() && !active_ && !settingsOpen_ && !quitting_ &&
+           !resolvingQuit_ && quickGunner_->state() != QuickGunnerController::State::Framing;
 }
 void ApplicationController::connectQuickGunner()
 {
@@ -317,10 +312,16 @@ void ApplicationController::connectQuickGunner()
     connect(quickGunner_.get(), &QuickGunnerController::shotsDropped, this,
             [this](int count) {
                 showQuickGunnerNotice(
-                    QStringLiteral("快枪手队列已满，已丢弃 %1 张待处理图片。").arg(count));
+                    QStringLiteral("快枪手已丢弃 %1 张尚未处理的图片。").arg(count));
             });
     connect(quickGunner_.get(), &QuickGunnerController::preferencesChanged, this,
-            &ApplicationController::refreshQuickGunnerActions);
+            [this]
+            {
+                refreshQuickGunnerActions();
+                quickGunnerSource_->directoryChanged();
+                if (historyEnabled_ && historyWindow_)
+                    historyWindow_->refresh();
+            });
     connect(quickGunner_.get(), &QuickGunnerController::stateChanged, this,
             [this](QuickGunnerController::State state)
             {
@@ -374,7 +375,11 @@ QStringList ApplicationController::reservedQuickGunnerDirectories() const
 bool ApplicationController::chooseQuickGunnerDirectory()
 {
     const auto interactive = [this]
-    { return !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_; };
+    {
+        return !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_ &&
+               quickGunner_->state() != QuickGunnerController::State::Framing &&
+               !QApplication::activeModalWidget();
+    };
     if (!interactive())
         return false;
     const auto directory = QFileDialog::getExistingDirectory(
@@ -438,7 +443,8 @@ void ApplicationController::refreshQuickGunnerActions()
     }
     const bool browserEnabled = !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_;
     quickGunnerOpenAction_->setEnabled(browserEnabled);
-    quickGunnerDirectoryAction_->setEnabled(browserEnabled);
+    quickGunnerDirectoryAction_->setEnabled(
+        browserEnabled && quickGunner_->state() != QuickGunnerController::State::Framing);
     const auto& preferences = quickGunner_->preferences();
     QString status =
         quickGunner_->active() ? QStringLiteral("快枪手：开") : QStringLiteral("快枪手：关");
@@ -985,6 +991,11 @@ void ApplicationController::openResourceBrowser(const QString& sourceId)
 }
 void ApplicationController::trigger(const QString& source)
 {
+    if (quickGunner_ && (quickGunner_->capturing() || quickGunner_->pendingCaptureCount() > 0))
+    {
+        showQuickGunnerNotice(QStringLiteral("快枪手正在拍摄，请稍后再按普通截图键。"));
+        return;
+    }
     if (quickGunner_ && quickGunner_->state() == QuickGunnerController::State::Framing)
     {
         if (!options_.testMode && !options_.smokeTest)
@@ -1003,6 +1014,8 @@ void ApplicationController::trigger(const QString& source)
     }
     if (!retryDisplay_)
         scrollRestoreFocus_ = captureForegroundRestorer();
+    if (quickGunner_ && quickGunner_->flashWindow())
+        quickGunner_->flashWindow()->hide();
     historySession_ =
         historyEnabled_ && history_.ready() ? history_.beginSession() : HistorySession{};
     active_ = true;
@@ -1674,7 +1687,8 @@ void ApplicationController::quit()
             scrollBorder_->hide();
         if (scrollBar_)
             scrollBar_->hide();
-        const int pending = quickGunner_->pendingCaptureCount() + quickGunner_->pendingSaveCount();
+        const int pending = quickGunner_->pendingCaptureCount() + quickGunner_->pendingSaveCount() +
+                            int(quickGunner_->capturing());
         if (pending > 0)
         {
             QMessageBox box(

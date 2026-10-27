@@ -4,9 +4,11 @@
 #include "ui/quick_gunner_flash_window.h"
 #include "ui/quick_gunner_region_picker.h"
 #include <QAction>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -14,6 +16,7 @@
 #include <QTest>
 #include <QThread>
 #include <QTimer>
+#include <QToolButton>
 namespace waibusnap
 {
 struct ApplicationControllerTestAccess
@@ -53,6 +56,14 @@ struct ApplicationControllerTestAccess
     }
     static bool registered(ApplicationController& c) { return c.quickGunnerHotkey_->registered(); }
     static bool quitting(ApplicationController& c) { return c.quitting_; }
+    static void stopScreenshot(ApplicationController& c)
+    {
+        // 仅结束 fake 会话，避免受控运行的自动退出计时器污染后续模态用例。
+        c.options_.testMode = false;
+        c.finish({}, 2);
+        c.options_.testMode = true;
+    }
+    static bool chooseDirectory(ApplicationController& c) { return c.chooseQuickGunnerDirectory(); }
     static QList<QWidget*> pausedUi(ApplicationController& c, CaptureFrame frame)
     {
         // 此处只注入暂停界面，不启动受控截图计时器，避免退出测试影响下一行模态。
@@ -75,6 +86,12 @@ struct ApplicationControllerTestAccess
     static WatermarkService& watermarks(ApplicationController& controller)
     {
         return controller.watermarks_;
+    }
+    static HistoryWindow* browser(ApplicationController& c) { return c.historyWindow_; }
+    static HistoryManager& history(ApplicationController& c) { return c.history_; }
+    static QuickGunnerResourceSource& source(ApplicationController& c)
+    {
+        return *c.quickGunnerSource_;
     }
     static bool warned(ApplicationController& controller)
     {
@@ -156,7 +173,8 @@ struct Harness
     int watermarks = 0;
     bool watermarkOnGui = false;
     std::unique_ptr<QuickGunnerController> controller;
-    Harness(bool directory = true, bool region = true)
+    Harness(bool directory = true, bool region = true,
+            std::function<QImage(const QImage&)> watermark = {})
     {
         QuickGunnerPreferences preferences;
         if (directory)
@@ -176,7 +194,12 @@ struct Harness
             result.setPixelColor(0, 0, Qt::blue);
             return result;
         };
-        auto queue = std::make_unique<QuickGunnerSaveQueue>(settings);
+        QuickGunnerSaveActions writes;
+        // 固定毫秒时间戳，连拍集成同时核对真实文件冲突后缀，不能靠时钟避开冲突。
+        writes.timestamp = [] { return QDateTime::fromMSecsSinceEpoch(1700000000123LL); };
+        if (watermark)
+            dependencies.watermark = std::move(watermark);
+        auto queue = std::make_unique<QuickGunnerSaveQueue>(settings, writes);
         saves = queue.get();
         dependencies.saveQueue = std::move(queue);
         controller = std::make_unique<QuickGunnerController>(
@@ -253,6 +276,106 @@ class QuickGunnerCaptureTest : public QObject
         QCOMPARE(h.controller->pendingSaveCount(), 0);
         QCOMPARE(h.watermarks, 8);
         QVERIFY(h.watermarkOnGui);
+    }
+    void deactivateDropsWaitingAndSavesInFlight()
+    {
+        Harness h;
+        QVERIFY(h.controller->activate({}).isEmpty());
+        QSignalSpy dropped(h.controller.get(), &QuickGunnerController::shotsDropped);
+        QSignalSpy saved(h.saves, &QuickGunnerSaveQueue::saved);
+        for (int i = 0; i < 4; ++i)
+            QVERIFY(h.controller->shutter().isEmpty());
+        QCOMPARE(h.controller->pendingCaptureCount(), 3);
+        h.controller->deactivate();
+        QCOMPARE(h.controller->pendingCaptureCount(), 0);
+        QCOMPARE(dropped.size(), 1);
+        QCOMPARE(dropped[0][0].toInt(), 3);
+        QVERIFY(h.controller->capturing());
+        h.complete(0);
+        QTRY_COMPARE(saved.size(), 1);
+        QVERIFY(!h.controller->capturing());
+        QCOMPARE(h.calls->requests.size(), 1);
+        QVERIFY(!h.controller->flashWindow()->isVisible());
+        h.controller->deactivate();
+        QCOMPARE(dropped.size(), 1);
+        QVERIFY(h.controller->activate({}).isEmpty());
+        QCoreApplication::processEvents();
+        QCOMPARE(h.calls->requests.size(), 1);
+    }
+    void ordinaryScreenshotCannotRaceInFlightCapture()
+    {
+        Harness h;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("application.ini"));
+        options.metricsFile = h.temp.filePath(QStringLiteral("metrics.jsonl"));
+        auto keys = std::make_unique<Hotkeys>();
+        auto* raw = keys.get();
+        ApplicationController c(*qApp, options, {}, {}, {}, {}, {}, std::move(keys));
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
+        // 直接激活 fake 控制器，Windows 也能验证共享层互斥，不调用原生采集。
+        QVERIFY(gunner.activate({}).isEmpty());
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        QCOMPARE(h.calls->requests.size(), 1);
+        for (int i = 0; i < 2; ++i)
+        {
+            const auto token = ApplicationControllerTestAccess::token(c);
+            raw->fire(HotkeyAction::Screenshot);
+            QVERIFY(!c.active());
+            QCOMPARE(ApplicationControllerTestAccess::token(c), token);
+            h.complete(i);
+            if (i == 0)
+                QTRY_COMPARE(h.calls->requests.size(), 2);
+        }
+        QTRY_VERIFY(!gunner.capturing());
+        raw->fire(HotkeyAction::Screenshot);
+        QVERIFY(c.active());
+        QVERIFY(!gunner.flashWindow()->isVisible());
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        QCOMPARE(h.calls->requests.size(), 2);
+        ApplicationControllerTestAccess::stopScreenshot(c);
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        QCOMPARE(h.calls->requests.size(), 3);
+        h.complete(2);
+        QTRY_VERIFY(!gunner.capturing());
+    }
+    void framingDisablesReentrantTrayActionsAndKeepsEscape()
+    {
+        Harness h;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("application.ini"));
+        ApplicationController c(*qApp, options, {}, {}, {}, {}, {}, std::make_unique<Hotkeys>());
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
+        auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
+        QVERIFY(gunner.beginFraming().isEmpty());
+        for (const auto* name :
+             {"quickGunnerModeAction", "quickGunnerFrameAction", "quickGunnerDirectoryAction"})
+        {
+            auto* action = c.menu()->findChild<QAction*>(QLatin1String(name));
+            QVERIFY(action);
+            QVERIFY(!action->isEnabled());
+        }
+        QVERIFY(!ApplicationControllerTestAccess::chooseDirectory(c));
+        QCOMPARE(h.capture.callbacks.size(), 1);
+        QImage image(800, 600, QImage::Format_RGB32);
+        image.fill(Qt::green);
+        h.capture.callbacks.last()({{h.displays.target, image, 0}, CaptureError::None, {}});
+        auto* picker = qApp->findChild<QuickGunnerRegionPicker*>();
+        for (auto* window : QApplication::topLevelWidgets())
+            if (auto* candidate = qobject_cast<QuickGunnerRegionPicker*>(window))
+                picker = candidate;
+        QVERIFY(picker);
+        QTest::keyClick(picker, Qt::Key_Escape);
+        QCOMPARE(gunner.state(), QuickGunnerController::State::Idle);
+        auto* directory =
+            c.menu()->findChild<QAction*>(QStringLiteral("quickGunnerDirectoryAction"));
+        QVERIFY(directory->isEnabled());
     }
     void invalidDirectoryStillCapturesAndRecovers()
     {
@@ -398,6 +521,7 @@ class QuickGunnerCaptureTest : public QObject
         RunOptions options;
         options.testMode = true;
         options.settingsFile = h.temp.filePath(QStringLiteral("settings.ini"));
+        options.metricsFile = h.temp.filePath(QStringLiteral("metrics.jsonl"));
         auto keys = std::make_unique<Hotkeys>();
         auto* raw = keys.get();
         ApplicationController c(*qobject_cast<QApplication*>(qApp), options, {}, {}, {}, {}, {},
@@ -475,6 +599,267 @@ class QuickGunnerCaptureTest : public QObject
         QVERIFY(!restarted.menu()
                      ->findChild<QAction*>(QStringLiteral("quickGunnerModeAction"))
                      ->isChecked());
+    }
+    void burstFilesReachBrowserAndActions_data()
+    {
+        QTest::addColumn<bool>("historyEnabled");
+        QTest::addColumn<bool>("jpeg");
+        QTest::newRow("history-off-png") << false << false;
+        QTest::newRow("history-on-png") << true << false;
+        QTest::newRow("history-off-jpeg") << false << true;
+        QTest::newRow("history-on-jpeg") << true << true;
+    }
+    void burstFilesReachBrowserAndActions()
+    {
+        QFETCH(bool, historyEnabled);
+        QFETCH(bool, jpeg);
+        ApplicationController* application = nullptr;
+        Harness h(true, true, [&](const QImage& image)
+                  { return ApplicationControllerTestAccess::watermark(*application, image); });
+        QVERIFY(h.settings.saveSavePreferences({{}, jpeg ? ImageFormat::Jpeg : ImageFormat::Png})
+                    .isEmpty());
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("settings.ini"));
+        options.historyRoot = h.temp.filePath(QStringLiteral("history"));
+        options.historyEnabledOverride = historyEnabled;
+        QImage copied, pinned;
+        QString revealed;
+        QStringList trashed;
+        HistoryWindowActions actions;
+        actions.copyImage = [&](const QImage& image)
+        {
+            copied = image;
+            return ImageOutputResult{true, {}};
+        };
+        actions.pinImage = [&](const QImage& image)
+        {
+            pinned = image;
+            return ImageOutputResult{true, {}};
+        };
+        actions.reveal = [&](const QString& path)
+        {
+            revealed = path;
+            return HistoryStatus{true, {}};
+        };
+        actions.trash = [&](const QString& path)
+        {
+            trashed << path;
+            return HistoryStatus{QFile::remove(path), {}};
+        };
+        auto keys = std::make_unique<Hotkeys>();
+        auto* raw = keys.get();
+        ApplicationController c(*qApp, options, {}, {}, {}, actions, {}, std::move(keys));
+        application = &c;
+        WatermarkPreferences watermarks;
+        WatermarkAsset asset;
+        asset.id = QStringLiteral("signature");
+        asset.name = QStringLiteral("署名");
+        asset.text = QStringLiteral("B6");
+        WatermarkPreset center;
+        center.id = QStringLiteral("center");
+        center.name = QStringLiteral("居中");
+        center.assetId = asset.id;
+        center.layout = WatermarkLayout::Center;
+        center.opacity = 100;
+        auto corner = center;
+        corner.id = QStringLiteral("corner");
+        corner.name = QStringLiteral("左下");
+        corner.layout = WatermarkLayout::BottomLeft;
+        watermarks.assets = {asset};
+        watermarks.presets = {center, corner};
+        watermarks.defaultPresetId = center.id;
+        watermarks.autoEnabled = true;
+        watermarks.retainOriginal = true;
+        auto& watermarkService = ApplicationControllerTestAccess::watermarks(c);
+        QVERIFY(watermarkService.savePreferences(watermarks).isEmpty());
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
+        auto& history = ApplicationControllerTestAccess::history(c);
+        qint64 historyBytes = 0;
+        if (historyEnabled)
+        {
+            QImage image(32, 24, QImage::Format_RGB32);
+            image.fill(Qt::green);
+            QVERIFY(history.record(history.beginSession(), image, HistorySource::Overlay).success);
+            historyBytes = history.totalUsage().managedBytes;
+        }
+        const auto group = history.currentGroupId();
+        c.openResourceBrowser(QStringLiteral("quick-gunner"));
+        auto* browser = ApplicationControllerTestAccess::browser(c);
+        QVERIFY(browser);
+        auto* list = browser->findChild<QListWidget*>(QStringLiteral("historyThumbnails"));
+        auto* combo = browser->findChild<QComboBox*>(QStringLiteral("resourceSourceCombo"));
+        auto* preview = browser->findChild<HistoryImageView*>(QStringLiteral("historyImageView"));
+        QVERIFY(list && combo && preview);
+        QCOMPARE(combo->count(), historyEnabled ? 2 : 1);
+        QSignalSpy saved(h.saves, &QuickGunnerSaveQueue::saved);
+        QSignalSpy dropped(&gunner, &QuickGunnerController::shotsDropped);
+        // Windows 共享流程使用 fake 激活，托盘仍按既有用例保持禁用。
+        if (regionCaptureSupported())
+            c.menu()->findChild<QAction*>(QStringLiteral("quickGunnerModeAction"))->trigger();
+        else
+            QVERIFY(gunner.activate({}).isEmpty());
+        QVERIFY(gunner.active());
+        QString selected;
+        QImage original(100, 80, QImage::Format_RGB32);
+        original.fill(Qt::red);
+        const auto centered = ApplicationControllerTestAccess::watermark(c, original);
+        QVERIFY(centered != original);
+        for (int i = 0; i < 10; ++i)
+        {
+            if (i == 4)
+                QVERIFY(watermarkService.setAutoEnabled(false).isEmpty());
+            if (i == 7)
+            {
+                QVERIFY(watermarkService.setCurrentPreset(corner.id).isEmpty());
+                QVERIFY(watermarkService.setAutoEnabled(true).isEmpty());
+                const auto changed = ApplicationControllerTestAccess::watermark(c, original);
+                QVERIFY(changed != centered && changed != original);
+            }
+            const auto expected = ApplicationControllerTestAccess::watermark(c, original);
+            raw->fire(HotkeyAction::QuickGunnerShutter);
+            QCOMPARE(h.calls->requests.size(), i + 1);
+            h.complete(i);
+            QTRY_COMPARE_WITH_TIMEOUT(list->count(), i + 1, 5000);
+            QTRY_COMPARE(saved.size(), i + 1);
+            if (!jpeg)
+                QCOMPARE(QImage(saved.last()[0].toString()).convertToFormat(QImage::Format_ARGB32),
+                         expected.convertToFormat(QImage::Format_ARGB32));
+            if (i == 0)
+            {
+                selected = browser->selectedItemId();
+                preview->actualSize();
+            }
+            QCOMPARE(browser->selectedItemId(), selected);
+            QCOMPARE(preview->zoom(), qreal(1));
+        }
+        QCOMPARE(saved.size(), 10);
+        QVERIFY(dropped.isEmpty());
+        const QDir directory(gunner.preferences().directory);
+        const auto files = directory.entryList(QDir::Files);
+        QCOMPARE(files.size(), 10);
+        QVERIFY(!browser->findChild<QToolButton*>(QStringLiteral("historyOriginalToggle"))
+                     ->isVisible());
+        for (const auto& file : files)
+        {
+            QVERIFY(file.endsWith(jpeg ? QStringLiteral(".jpg") : QStringLiteral(".png")));
+            const QImage image(directory.filePath(file));
+            QCOMPARE(image.size(), QSize(100, 80));
+            QVERIFY(image.pixelColor(99, 0).red() > 240);
+        }
+        if (historyEnabled)
+        {
+            QCOMPARE(history.totalUsage().managedCount, 1);
+            QCOMPARE(history.totalUsage().externalCount, 0);
+            QCOMPARE(history.totalUsage().managedBytes, historyBytes);
+            QCOMPARE(history.runCleanup().deletedCount, 0);
+            QCOMPARE(directory.entryList(QDir::Files).size(), 10);
+        }
+        auto button = [browser](const char* name)
+        { return browser->findChild<QToolButton*>(QLatin1String(name)); };
+        button("historyStar")->click();
+        QCOMPARE(ApplicationControllerTestAccess::source(c).snapshot().usage.starredCount, 1);
+        button("historyCopy")->click();
+        QCOMPARE(copied, QImage(selected));
+        QTest::keyClick(browser, Qt::Key_Return, Qt::ShiftModifier);
+        QCOMPARE(pinned, copied);
+        QVERIFY(browser->isVisible());
+        button("historyReveal")->click();
+        QCOMPARE(revealed, selected);
+        button("historyDelete")->click();
+        QCOMPARE(list->count(), 9);
+        QVERIFY(!QFile::exists(selected));
+        QVERIFY(!browser->selectedItemId().isEmpty());
+        // 清空走真实窗口确认，文件操作只作用于临时目录的回收站替身。
+        bool confirmed = false;
+        QTimer answer;
+        answer.setInterval(10);
+        connect(&answer, &QTimer::timeout, browser,
+                [&]
+                {
+                    auto* box =
+                        browser->findChild<QMessageBox*>(QStringLiteral("resourceClearConfirm"));
+                    if (!box)
+                        return;
+                    confirmed = true;
+                    answer.stop();
+                    box->done(QMessageBox::Yes);
+                });
+        answer.start();
+        button("resourceClearAll")->click();
+        QVERIFY(confirmed);
+        QCOMPARE(list->count(), 0);
+        QCOMPARE(trashed.size(), 10);
+        QCOMPARE(history.currentGroupId(), group);
+        if (historyEnabled)
+        {
+            const auto usage = history.totalUsage();
+            QCOMPARE(usage.managedCount, 1);
+            QCOMPARE(usage.externalCount, 0);
+            QCOMPARE(usage.managedBytes, historyBytes);
+            QCOMPARE(history.runCleanup().deletedCount, 0);
+            c.openHistory();
+            QCOMPARE(ApplicationControllerTestAccess::browser(c), browser);
+            QCOMPARE(browser->selectedSourceId(), QStringLiteral("history"));
+            QCOMPARE(list->count(), 1);
+            c.openResourceBrowser(QStringLiteral("quick-gunner"));
+            QCOMPARE(history.currentGroupId(), group);
+        }
+        else
+            QVERIFY(!QFileInfo::exists(options.historyRoot));
+        gunner.deactivate();
+        QVERIFY(!ApplicationControllerTestAccess::registered(c));
+    }
+    void failedDirectoryRecoveryAndReselectionReachOpenBrowser()
+    {
+        Harness h;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("settings.ini"));
+        options.historyEnabledOverride = false;
+        options.historyRoot = h.temp.filePath(QStringLiteral("history"));
+        auto keys = std::make_unique<Hotkeys>();
+        auto* raw = keys.get();
+        ApplicationController c(*qApp, options, {}, {}, {}, {}, {}, std::move(keys));
+        ApplicationControllerTestAccess::installForFramingTest(
+            c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
+        QVERIFY(gunner.activate({}).isEmpty());
+        c.openResourceBrowser(QStringLiteral("quick-gunner"));
+        auto* browser = ApplicationControllerTestAccess::browser(c);
+        auto* list = browser->findChild<QListWidget*>(QStringLiteral("historyThumbnails"));
+        const auto directory = gunner.preferences().directory;
+        QVERIFY(QDir(directory).removeRecursively());
+        for (int i = 0; i < 2; ++i)
+        {
+            raw->fire(HotkeyAction::QuickGunnerShutter);
+            h.complete(i);
+            QTRY_COMPARE(h.saves->retryCount(), i + 1);
+            QVERIFY(gunner.active());
+        }
+        QCOMPARE(list->count(), 0);
+        QVERIFY(QDir().mkdir(directory));
+        // 不显式重试或刷新浏览器，验证两个真实定时恢复链路。
+        QTRY_COMPARE_WITH_TIMEOUT(list->count(), 2, 6500);
+        QTRY_COMPARE(gunner.pendingSaveCount(), 0);
+        QVERIFY(QDir(directory).removeRecursively());
+        raw->fire(HotkeyAction::QuickGunnerShutter);
+        h.complete(2);
+        QTRY_COMPARE(h.saves->retryCount(), 1);
+        const auto replacement = h.temp.filePath(QStringLiteral("new shots"));
+        QVERIFY(QDir().mkdir(replacement));
+        QVERIFY(gunner.setDirectory(replacement, {options.historyRoot}).isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(list->count(), 1, 5000);
+        QTRY_COMPARE(gunner.pendingSaveCount(), 0);
+        QCOMPARE(QFileInfo(browser->selectedItemId()).absolutePath(),
+                 QFileInfo(replacement).canonicalFilePath());
+        QCOMPARE(QDir(replacement).entryList(QDir::Files).size(), 1);
+        QVERIFY(!QFileInfo::exists(options.historyRoot));
+        QVERIFY(gunner.active());
     }
     void firstFramingCancelAndActivate_data()
     {
@@ -599,6 +984,8 @@ class QuickGunnerCaptureTest : public QObject
         QTest::newRow("save-retry-cancel") << false << 1;
         QTest::newRow("save-retry-discard") << true << 1;
         QTest::newRow("empty-no-dialog") << true << 2;
+        QTest::newRow("in-flight-only-cancel") << false << 3;
+        QTest::newRow("in-flight-only-discard") << true << 3;
     }
     void quitBacklog()
     {
@@ -613,11 +1000,13 @@ class QuickGunnerCaptureTest : public QObject
         ApplicationControllerTestAccess::installForFramingTest(
             c, std::move(h.controller), std::make_unique<Displays>(), std::make_unique<Capture>());
         auto& gunner = ApplicationControllerTestAccess::quickGunner(c);
-        if (kind == 0)
+        if (kind == 0 || kind == 3)
         {
             QVERIFY(gunner.shutter().isEmpty());
-            QVERIFY(gunner.shutter().isEmpty());
-            QCOMPARE(gunner.pendingCaptureCount(), 1);
+            if (kind == 0)
+                QVERIFY(gunner.shutter().isEmpty());
+            QCOMPARE(gunner.pendingCaptureCount(), kind == 0 ? 1 : 0);
+            QVERIFY(gunner.capturing());
         }
         else if (kind == 1)
         {
@@ -632,9 +1021,10 @@ class QuickGunnerCaptureTest : public QObject
         const auto windows =
             ApplicationControllerTestAccess::pausedUi(c, {h.displays.target, image, 0});
         bool saw = false;
+        QString backlogText;
         if (kind != 2)
             QTimer::singleShot(
-                0,
+                0, &c,
                 [&]
                 {
                     auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
@@ -642,8 +1032,7 @@ class QuickGunnerCaptureTest : public QObject
                     saw = true;
                     for (auto* window : windows)
                         QVERIFY(!window->isVisible());
-                    QCOMPARE(box->text(),
-                             QStringLiteral("快枪手还有 1 张图片待保存或重试，退出会丢失。"));
+                    backlogText = box->text();
                     auto* cancel =
                         box->findChild<QPushButton*>(QStringLiteral("quickGunnerQuitCancel"));
                     auto* leave =
@@ -654,6 +1043,9 @@ class QuickGunnerCaptureTest : public QObject
                 });
         c.quit();
         QCOMPARE(saw, kind != 2);
+        if (kind != 2)
+            QCOMPARE(backlogText, QStringLiteral("快枪手还有 %1 张图片待保存或重试，退出会丢失。")
+                                      .arg(kind == 0 ? 2 : 1));
         QCOMPARE(ApplicationControllerTestAccess::quitting(c), discard);
         if (!discard)
         {
