@@ -45,6 +45,7 @@ class QuickGunnerController final : public QObject
     RegionPickerFactory pickerFactory_;
     QuickGunnerPreferences preferences_;
     State state_ = State::Idle;
+    bool resumeActive_ = false;
     quint64 token_ = 0;
     QPointer<QuickGunnerRegionPicker> picker_;
 };

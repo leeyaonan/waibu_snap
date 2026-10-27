@@ -37,10 +37,19 @@ class Capture final : public CaptureProvider
 {
   public:
     bool permission = true;
+    bool grantOnRequest = false;
+    bool requestResult = false;
+    int permissionRequests = 0;
     int calls = 0;
     QVector<std::function<void(CaptureResult)>> callbacks;
     bool hasPermission() const override { return permission; }
-    bool requestPermission() override { return false; }
+    bool requestPermission() override
+    {
+        ++permissionRequests;
+        if (grantOnRequest)
+            permission = true;
+        return requestResult;
+    }
     void capture(const DisplayTarget&, std::function<void(CaptureResult)> callback) override
     {
         ++calls;
@@ -71,6 +80,20 @@ struct Harness
                                          picker = new Picker(std::move(frozen), parent);
                                          return picker.data();
                                      }};
+    QString activate()
+    {
+        auto error = controller.setDirectory(temp.path(), {});
+        if (!error.isEmpty())
+            return error;
+        error = controller.beginFraming();
+        if (!error.isEmpty())
+            return error;
+        capture.complete();
+        if (!picker)
+            return QStringLiteral("测试机位选择器未创建。");
+        picker->select({20, 40, 100, 80});
+        return controller.activate({});
+    }
 };
 QByteArray read(const QString& path)
 {
@@ -421,6 +444,186 @@ class QuickGunnerRegionPickerTest final : public QObject
         QVERIFY(!restored.activate({h.temp.path()}).isEmpty());
         QVERIFY(restored.activate({}).isEmpty());
         QCOMPARE(h.capture.calls, 2);
+    }
+    void activeReframingOutcomes_data()
+    {
+        QTest::addColumn<QString>("outcome");
+        for (const auto* outcome : {"selected", "cancelled", "capture-failed", "picker-destroyed",
+                                    "invalid-region", "save-failed"})
+            QTest::newRow(outcome) << QString::fromLatin1(outcome);
+    }
+    void activeReframingOutcomes()
+    {
+        QFETCH(QString, outcome);
+        Harness h;
+        QVERIFY(h.activate().isEmpty());
+        const auto previous = h.controller.preferences().region->toJson();
+        QSignalSpy states(&h.controller, &QuickGunnerController::stateChanged);
+        QSignalSpy notices(&h.controller, &QuickGunnerController::noticeChanged);
+        QVERIFY(h.controller.beginFraming().isEmpty());
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Framing);
+        if (outcome == QStringLiteral("capture-failed"))
+            h.capture.complete(1, {{}, CaptureError::Unavailable, QStringLiteral("采集失败")});
+        else
+        {
+            h.capture.complete(1);
+            QVERIFY(h.picker);
+            if (outcome == QStringLiteral("cancelled"))
+                h.picker->cancel();
+            else if (outcome == QStringLiteral("picker-destroyed"))
+                delete h.picker.data();
+            else if (outcome == QStringLiteral("invalid-region"))
+                h.picker->select({0, 0, 15, 16});
+            else
+            {
+                const auto path = h.temp.filePath(QStringLiteral("settings.ini"));
+                if (outcome == QStringLiteral("save-failed"))
+                {
+                    QVERIFY(QFile::rename(path, path + QStringLiteral(".old")));
+                    QVERIFY(QDir().mkdir(path));
+                }
+                h.picker->select({100, 100, 160, 120});
+                if (outcome == QStringLiteral("save-failed"))
+                {
+                    QVERIFY(QDir().rmdir(path));
+                    QVERIFY(QFile::rename(path + QStringLiteral(".old"), path));
+                }
+            }
+        }
+        QVERIFY(h.controller.active());
+        QCOMPARE(states.size(), 2);
+        QCOMPARE(states.at(1).at(0).value<QuickGunnerController::State>(),
+                 QuickGunnerController::State::Active);
+        if (outcome == QStringLiteral("selected"))
+            QCOMPARE(h.controller.preferences().region->pixelRect, QRect(100, 100, 160, 120));
+        else
+            QCOMPARE(h.controller.preferences().region->toJson(), previous);
+        QCOMPARE(h.settings.loadQuickGunnerPreferences().region->toJson(),
+                 h.controller.preferences().region->toJson());
+        const bool failed = outcome == QStringLiteral("capture-failed") ||
+                            outcome == QStringLiteral("invalid-region") ||
+                            outcome == QStringLiteral("save-failed");
+        QCOMPARE(notices.size(), failed ? 1 : 0);
+        h.controller.deactivate();
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+    }
+    void activeDeactivationDuringFraming_data()
+    {
+        QTest::addColumn<bool>("pickerShown");
+        QTest::newRow("capture-pending") << false;
+        QTest::newRow("picker-shown") << true;
+    }
+    void activeDeactivationDuringFraming()
+    {
+        QFETCH(bool, pickerShown);
+        Harness h;
+        QVERIFY(h.activate().isEmpty());
+        const auto previous = h.controller.preferences().region->toJson();
+        QVERIFY(h.controller.beginFraming().isEmpty());
+        if (pickerShown)
+            h.capture.complete(1);
+        auto oldPicker = h.picker;
+        h.controller.deactivate();
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+        if (pickerShown)
+            oldPicker->select({100, 100, 160, 120});
+        else
+            h.capture.complete(1);
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+        QCOMPARE(h.controller.preferences().region->toJson(), previous);
+        // 显式停用必须清除恢复意图，下一次从 Idle 框选取消仍回 Idle。
+        QVERIFY(h.controller.beginFraming().isEmpty());
+        h.capture.complete(2);
+        h.picker->cancel();
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+    }
+    void activeResumeRejectsChangedDisplay_data()
+    {
+        QTest::addColumn<bool>("captureFailed");
+        QTest::newRow("cancel-after-layout-change") << false;
+        QTest::newRow("capture-fails-after-layout-change") << true;
+    }
+    void activeResumeRejectsChangedDisplay()
+    {
+        QFETCH(bool, captureFailed);
+        Harness h;
+        QVERIFY(h.activate().isEmpty());
+        const auto previous = h.controller.preferences().region->toJson();
+        QSignalSpy notices(&h.controller, &QuickGunnerController::noticeChanged);
+        QVERIFY(h.controller.beginFraming().isEmpty());
+        if (!captureFailed)
+            h.capture.complete(1);
+        h.displays.matches = false;
+        if (captureFailed)
+            h.capture.complete(1, {{}, CaptureError::Unavailable, QStringLiteral("采集失败")});
+        else
+            h.picker->cancel();
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+        QCOMPARE(h.controller.preferences().region->toJson(), previous);
+        QCOMPARE(notices.size(), 1);
+        const auto notice = notices.at(0).at(0).toString();
+        QVERIFY(notice.contains(QStringLiteral("机位")));
+        if (captureFailed)
+            QVERIFY(notice.contains(QStringLiteral("采集失败")));
+    }
+    void framingPermissionRequest_data()
+    {
+        QTest::addColumn<bool>("initiallyActive");
+        QTest::addColumn<bool>("granted");
+        QTest::newRow("idle-granted") << false << true;
+        QTest::newRow("idle-denied") << false << false;
+        QTest::newRow("active-granted") << true << true;
+        QTest::newRow("active-denied") << true << false;
+    }
+    void framingPermissionRequest()
+    {
+        QFETCH(bool, initiallyActive);
+        QFETCH(bool, granted);
+        Harness h;
+        if (initiallyActive)
+            QVERIFY(h.activate().isEmpty());
+        const auto previousState = h.controller.state();
+        const int previousCalls = h.capture.calls;
+        QSignalSpy states(&h.controller, &QuickGunnerController::stateChanged);
+        h.capture.permission = false;
+        h.capture.grantOnRequest = granted;
+        // 故意与实际权限相反，验证请求后重查 hasPermission，而非只信返回值。
+        h.capture.requestResult = !granted;
+        const auto error = h.controller.beginFraming();
+        QCOMPARE(h.capture.permissionRequests, 1);
+        if (granted)
+        {
+            QVERIFY(error.isEmpty());
+            QCOMPARE(h.controller.state(), QuickGunnerController::State::Framing);
+            QCOMPARE(h.capture.calls, previousCalls + 1);
+            h.capture.complete(previousCalls);
+            h.picker->cancel();
+        }
+        else
+        {
+            QCOMPARE(error, h.capture.permissionExplanation());
+            QCOMPARE(h.capture.calls, previousCalls);
+            QCOMPARE(states.size(), 0);
+        }
+        QCOMPARE(h.controller.state(), previousState);
+    }
+    void activeFramingPreflightFailureKeepsState()
+    {
+        Harness h;
+        QVERIFY(h.activate().isEmpty());
+        const auto previous = h.controller.preferences().region->toJson();
+        QSignalSpy states(&h.controller, &QuickGunnerController::stateChanged);
+        h.displays.result.error = QStringLiteral("找不到显示器");
+        QCOMPARE(h.controller.beginFraming(), h.displays.result.error);
+        QVERIFY(h.controller.active());
+        h.displays.result.error.clear();
+        h.displays.result.target.devicePixelRatio = 0;
+        QVERIFY(!h.controller.beginFraming().isEmpty());
+        QVERIFY(h.controller.active());
+        QCOMPARE(h.controller.preferences().region->toJson(), previous);
+        QCOMPARE(h.capture.calls, 1);
+        QCOMPARE(h.capture.permissionRequests, 0);
+        QCOMPARE(states.size(), 0);
     }
     void framingFailuresAndLateCallbacks()
     {

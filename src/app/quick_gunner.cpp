@@ -128,7 +128,7 @@ QString QuickGunnerController::setDirectory(const QString& directory,
 }
 void QuickGunnerController::finishFraming(const QString& notice)
 {
-    ++token_;
+    const auto token = ++token_;
     if (picker_)
     {
         auto picker = picker_;
@@ -136,21 +136,45 @@ void QuickGunnerController::finishFraming(const QString& notice)
         disconnect(picker, nullptr, this, nullptr);
         picker->close();
     }
-    setState(State::Idle);
-    if (!notice.isEmpty())
-        emit noticeChanged(notice);
+    // 关闭窗口期间若发生显式停用或新会话，旧结束路径不能覆盖新状态。
+    if (token_ != token)
+        return;
+    State next = State::Idle;
+    QString finalNotice = notice;
+    if (resumeActive_)
+    {
+        if (preferences_.region && preferences_.region->isValid() &&
+            displays_.stillMatches(preferences_.region->display))
+            next = State::Active;
+        else
+        {
+            if (!finalNotice.isEmpty())
+                finalNotice += QLatin1Char('\n');
+            finalNotice +=
+                QStringLiteral("机位无效或显示器布局已变化，快枪手模式已退出，请重新框选机位。");
+        }
+    }
+    resumeActive_ = false;
+    setState(next);
+    if (!finalNotice.isEmpty())
+        emit noticeChanged(finalNotice);
 }
 QString QuickGunnerController::beginFraming(QWidget* parent)
 {
     if (state_ == State::Framing)
         return QStringLiteral("正在框选快枪手机位，请先确认或取消。");
     if (!capture_.hasPermission())
-        return capture_.permissionExplanation();
+    {
+        capture_.requestPermission();
+        if (!capture_.hasPermission())
+            return capture_.permissionExplanation();
+    }
     const auto display = displays_.cursorDisplay();
     if (!display.error.isEmpty())
         return display.error;
     if (quickGunnerPixelSize(display.target).isEmpty() || !displays_.stillMatches(display.target))
         return QStringLiteral("显示器信息无效或布局已变化，请重新框选机位。");
+    resumeActive_ = active();
     const auto token = ++token_;
     setState(State::Framing);
     QPointer<QuickGunnerController> self(this);
@@ -243,5 +267,9 @@ QString QuickGunnerController::activate(const QStringList& reservedDirectories)
     setState(State::Active);
     return {};
 }
-void QuickGunnerController::deactivate() { finishFraming(); }
+void QuickGunnerController::deactivate()
+{
+    resumeActive_ = false;
+    finishFraming();
+}
 }
