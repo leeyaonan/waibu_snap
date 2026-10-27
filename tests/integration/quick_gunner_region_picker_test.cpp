@@ -1,6 +1,7 @@
 #include "app/quick_gunner.h"
 #include "ui/quick_gunner_region_picker.h"
 #include <QApplication>
+#include <QDateTime>
 #include <QFile>
 #include <QLabel>
 #include <QMouseEvent>
@@ -241,6 +242,57 @@ class QuickGunnerRegionPickerTest final : public QObject
         QVERIFY(QFile::setPermissions(path, old));
         QVERIFY(!error.isEmpty());
         QVERIFY(h.controller.preferences().directory.isEmpty());
+    }
+    void settingsSameSizeAndTimestampUpdates()
+    {
+        Harness h;
+        const auto path = h.temp.filePath(QStringLiteral("settings.ini"));
+        QuickGunnerPreferences previous{h.temp.path(),
+                                        QuickGunnerRegion{frame().display, {20, 20, 50, 50}}};
+        QVERIFY(h.settings.saveQuickGunnerPreferences(previous).isEmpty());
+        QCOMPARE(h.settings.loadQuickGunnerPreferences().region->pixelRect,
+                 previous.region->pixelRect);
+        const auto timestamp = QFileInfo(path).lastModified();
+        auto next = previous;
+        next.region->pixelRect.translate(10, 0);
+        QVERIFY(h.settings.saveQuickGunnerPreferences(next).isEmpty());
+        // 模拟 Windows 快速连续保存落在相同文件时间戳内，尺寸也保持一致。
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QVERIFY(file.setFileTime(timestamp, QFileDevice::FileModificationTime));
+        file.close();
+        QCOMPARE(h.settings.loadQuickGunnerPreferences().region->pixelRect, next.region->pixelRect);
+    }
+    void settingsAtomicSyncFailureKeepsOldValues()
+    {
+        QTemporaryDir temp;
+        const auto folder = temp.filePath(QStringLiteral("settings"));
+        QVERIFY(QDir().mkdir(folder));
+        const auto path = QDir(folder).filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        const QuickGunnerPreferences old{temp.path(),
+                                         QuickGunnerRegion{frame().display, {20, 20, 50, 50}}};
+        QVERIFY(settings.saveQuickGunnerPreferences(old).isEmpty());
+        const auto before = read(path);
+        const auto permissions = QFileInfo(folder).permissions();
+        if (!QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::ExeOwner))
+            QSKIP("当前文件系统不支持通过 Qt 权限位制造原子同步失败。");
+        QTemporaryFile probe(QDir(folder).filePath(QStringLiteral("probe-XXXXXX")));
+        if (probe.open())
+        {
+            probe.remove();
+            QVERIFY(QFile::setPermissions(folder, permissions));
+            QSKIP("当前文件系统或运行身份仍允许写入目录，不能制造原子同步失败。");
+        }
+        auto next = old;
+        next.region->pixelRect.translate(10, 0);
+        const auto error = settings.saveQuickGunnerPreferences(next);
+        QVERIFY(QFile::setPermissions(folder, permissions));
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(read(path), before);
+        // 无关设置的后续同步也不能把失败的机位夹带落盘。
+        QVERIFY(settings.saveStickerCloseReminder(false).isEmpty());
+        QCOMPARE(settings.loadQuickGunnerPreferences().region->pixelRect, old.region->pixelRect);
     }
     void savingFailureKeepsOldValues()
     {

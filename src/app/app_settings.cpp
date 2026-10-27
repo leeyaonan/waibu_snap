@@ -11,7 +11,6 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
-#include <QTemporaryFile>
 #include <QUuid>
 #include <algorithm>
 namespace waibusnap
@@ -95,41 +94,39 @@ QString AppSettings::saveQuickGunnerPreferences(const QuickGunnerPreferences& pr
     const QString parent = QFileInfo(filePath_).absolutePath();
     if (!QDir().mkpath(parent) || QFileInfo(filePath_).isDir())
         return error;
-    QTemporaryFile staged(QDir(parent).filePath(QStringLiteral(".quick-gunner-settings-XXXXXX")));
-    if (!staged.open())
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.setAtomicSyncRequired(true);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
         return error;
-    staged.close();
+    const QString directoryKey = QStringLiteral("quickGunner/directory");
+    const QString regionKey = QStringLiteral("quickGunner/region");
+    const auto oldDirectory = settings.value(directoryKey);
+    const auto oldRegion = settings.value(regionKey);
+    settings.setValue(directoryKey, preferences.directory.isEmpty()
+                                        ? QString()
+                                        : QDir::cleanPath(preferences.directory));
+    if (preferences.region)
+        settings.setValue(
+            regionKey,
+            QString::fromUtf8(
+                QJsonDocument(preferences.region->toJson()).toJson(QJsonDocument::Compact)));
+    else
+        settings.remove(regionKey);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
     {
-        // 只修改临时 INI；失败不会在原文件的 QSettings 共享缓存里留下待写值。
-        QSettings original(filePath_, QSettings::IniFormat);
-        original.sync();
-        if (original.status() != QSettings::NoError)
-            return error;
-        QSettings settings(staged.fileName(), QSettings::IniFormat);
-        for (const auto& key : original.allKeys())
-            settings.setValue(key, original.value(key));
-        settings.setValue(QStringLiteral("quickGunner/directory"),
-                          preferences.directory.isEmpty() ? QString()
-                                                          : QDir::cleanPath(preferences.directory));
-        if (preferences.region)
-            settings.setValue(
-                QStringLiteral("quickGunner/region"),
-                QString::fromUtf8(
-                    QJsonDocument(preferences.region->toJson()).toJson(QJsonDocument::Compact)));
+        // 与其他设置入口一致：原子同步失败时恢复共享缓存，避免后续保存夹带失败值。
+        if (oldDirectory.isValid())
+            settings.setValue(directoryKey, oldDirectory);
         else
-            settings.remove(QStringLiteral("quickGunner/region"));
-        settings.sync();
-        if (settings.status() != QSettings::NoError)
-            return error;
+            settings.remove(directoryKey);
+        if (oldRegion.isValid())
+            settings.setValue(regionKey, oldRegion);
+        else
+            settings.remove(regionKey);
+        return error;
     }
-    QFile source(staged.fileName());
-    QSaveFile destination(filePath_);
-    if (!source.open(QIODevice::ReadOnly) || !destination.open(QIODevice::WriteOnly))
-        return error;
-    const auto bytes = source.readAll();
-    if (source.error() != QFileDevice::NoError || destination.write(bytes) != bytes.size() ||
-        !destination.commit())
-        return error;
     return {};
 }
 HistoryPreferences AppSettings::loadHistoryPreferences(QString* notice) const
