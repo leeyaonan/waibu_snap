@@ -22,10 +22,13 @@ HistoryResourceSource::HistoryResourceSource(HistoryManager& manager, HistoryWin
 }
 QString HistoryResourceSource::id() const { return QStringLiteral("history"); }
 QString HistoryResourceSource::displayName() const { return QStringLiteral("历史"); }
-bool HistoryResourceSource::visible() const
+bool HistoryResourceSource::visible() const { return enabled_ && manager_.ready(); }
+void HistoryResourceSource::setEnabled(bool enabled)
 {
-    // 本批只在历史已初始化的入口创建来源；关闭历史时控制器仍关闭整个窗口。
-    return manager_.ready();
+    if (enabled_ == enabled)
+        return;
+    enabled_ = enabled;
+    emit changed();
 }
 ResourceCapabilities HistoryResourceSource::capabilities() const
 {
@@ -34,6 +37,8 @@ ResourceCapabilities HistoryResourceSource::capabilities() const
 ResourceSnapshot HistoryResourceSource::snapshot() const
 {
     ResourceSnapshot result;
+    if (!enabled_)
+        return result;
     const auto history = manager_.snapshot();
     result.error = history.error;
     result.notice = manager_.lastCleanup().message();
@@ -62,6 +67,7 @@ ResourceSnapshot HistoryResourceSource::snapshot() const
                                 item.hasOriginal,
                                 item.starred,
                                 item.managed,
+                                item.managed && bool(actions_.trash),
                                 item.createdAtMs,
                                 item.pixelSize,
                                 {}};
@@ -76,7 +82,11 @@ ResourceSnapshot HistoryResourceSource::snapshot() const
     }
     return result;
 }
-void HistoryResourceSource::refresh() { manager_.refresh(); }
+void HistoryResourceSource::refresh()
+{
+    if (enabled_)
+        manager_.refresh();
+}
 ResourceImageResult HistoryResourceSource::loadImage(const QString& id, QSize bounds,
                                                      bool original) const
 {

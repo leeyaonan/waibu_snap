@@ -9,14 +9,18 @@
 #include <QGraphicsScene>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPainter>
+#include <QPointer>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollBar>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStandardItemModel>
@@ -120,10 +124,15 @@ void HistoryImageView::drawBackground(QPainter* painter, const QRectF&)
     painter->restore();
 }
 HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
-                             HistoryWindowActions actions)
+                             HistoryWindowActions actions, ResourceSource* additionalSource,
+                             bool historyEnabled)
     : historySource_(new HistoryResourceSource(manager, std::move(actions), this)),
       source_(historySource_), settings_(std::move(settings))
 {
+    historySource_->setEnabled(historyEnabled);
+    sources_.append(historySource_);
+    if (additionalSource)
+        sources_.append(additionalSource);
     setObjectName(QStringLiteral("historyWindow"));
     setWindowTitle(QStringLiteral("资源浏览器"));
     setAttribute(Qt::WA_DeleteOnClose);
@@ -188,6 +197,13 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
                            QStringLiteral("在文件夹中显示当前图片"));
     delete_ = actionButton("historyDelete", QStringLiteral("删除"),
                            QStringLiteral("将当前受管图片移入系统回收站"));
+    clear_ = actionButton("resourceClearAll", QStringLiteral("清空全部"),
+                          QStringLiteral("将此来源全部图片移入系统回收站（包含星标）"));
+    configure_ = actionButton("resourceChooseDirectory", QStringLiteral("选择目录…"),
+                              QStringLiteral("配置此来源的图片目录"));
+    connect(clear_, &QToolButton::clicked, this, &HistoryWindow::clearSource);
+    connect(configure_, &QToolButton::clicked, this,
+            [this] { emit directoryRequested(source_->id()); });
     actionBar->addStretch();
     layout->addLayout(actionBar);
     connect(star_, &QToolButton::clicked, this, &HistoryWindow::toggleStar);
@@ -213,9 +229,16 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
     sourcesLayout->setContentsMargins(0, 0, 0, 0);
     sourceCombo_ = new QComboBox(sources);
     sourceCombo_->setObjectName(QStringLiteral("resourceSourceCombo"));
-    if (source_->visible())
-        sourceCombo_->addItem(source_->displayName(), source_->id());
-    sourcesLayout->addWidget(sourceCombo_);
+
+    // 来源入口始终可达，分组列折叠与窄窗口不会把来源选择器藏起来。
+    sourceCombo_->setParent(this);
+    toolbar->insertWidget(0, sourceCombo_);
+    connect(sourceCombo_, &QComboBox::currentIndexChanged, this,
+            [this](int row)
+            {
+                if (row >= 0)
+                    selectSource(sourceCombo_->itemData(row).toString());
+            });
     groups_ = new QListWidget(sources);
     sourcesLayout->addWidget(groups_, 1);
     groups_->setObjectName(QStringLiteral("historyGroups"));
@@ -297,7 +320,25 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
             &HistoryWindow::scheduleThumbnails);
     connect(imageSplitter_, &QSplitter::splitterMoved, this, &HistoryWindow::scheduleThumbnails);
     thumbnails_->viewport()->installEventFilter(this);
-    connect(source_, &ResourceSource::changed, this, &HistoryWindow::refreshFromSource);
+    for (auto* source : sources_)
+        connect(source, &ResourceSource::changed, this,
+                [this, source]
+                {
+                    if (source == source_ || !source_->visible())
+                        refreshFromSource();
+                    else
+                        rebuildSources();
+                });
+    if (additionalSource)
+        connect(additionalSource, &QObject::destroyed, this,
+                [this, additionalSource]
+                {
+                    sources_.removeAll(additionalSource);
+                    if (!source_)
+                        selectSource({});
+                    else
+                        rebuildSources();
+                });
     connect(historySource_, &HistoryResourceSource::groupDialogOpenChanged, this,
             &HistoryWindow::groupDialogOpenChanged);
     connect(historySource_, &HistoryResourceSource::groupViewRequested, this,
@@ -311,20 +352,127 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
                       view_ != QStringLiteral("starred"))
                  ? ResourceSort::OldestFirst
                  : ResourceSort::NewestFirst;
-    source_->refresh();
-    snapshot_ = source_->snapshot();
-    rebuildGroups(view_);
-    rebuildItems(saved.lastSelection);
+    sourceViews_.insert(saved.lastSource, {view_, saved.lastSelection, order_});
+    source_ = nullptr;
+    selectSource(saved.lastSource);
     restoreWindowState(saved);
     // 子控件也遵循窗口级方向键 / Esc，避免列表自己再移动一遍。
     installEventFilter(this);
     for (auto* widget : findChildren<QWidget*>())
         widget->installEventFilter(this);
 }
+void HistoryWindow::rebuildSources()
+{
+    const QSignalBlocker block(sourceCombo_);
+    sourceCombo_->clear();
+    for (auto* candidate : sources_)
+        if (candidate->visible() ||
+            (candidate == source_ && candidate->capabilities().configureDirectory))
+            sourceCombo_->addItem(candidate->displayName(), candidate->id());
+    sourceCombo_->setCurrentIndex(sourceCombo_->findData(source_->id()));
+}
+void HistoryWindow::selectSource(const QString& sourceId)
+{
+    ResourceSource* next = nullptr;
+    for (auto* candidate : sources_)
+        if (candidate->id() == sourceId &&
+            (candidate->visible() || candidate->capabilities().configureDirectory))
+            next = candidate;
+    if (!next)
+        for (auto* candidate : sources_)
+            if (candidate->visible())
+            {
+                next = candidate;
+                break;
+            }
+    if (!next)
+        for (auto* candidate : sources_)
+            if (candidate->capabilities().configureDirectory)
+            {
+                next = candidate;
+                break;
+            }
+    if (!next)
+        next = historySource_;
+    if (next == source_)
+    {
+        rebuildSources();
+        return;
+    }
+    if (source_)
+    {
+        sourceViews_.insert(source_->id(), {view_, selectedId(), order_});
+        source_->setProtectedItem({});
+        source_->setActive(false);
+    }
+    source_ = next;
+    const auto state = sourceViews_.value(source_->id());
+    view_ = state.view;
+    order_ = state.order;
+    showOriginal_ = false;
+    displayedId_.clear();
+    source_->refresh();
+    snapshot_ = source_->snapshot();
+    rebuildSources();
+    rebuildGroups(view_);
+    rebuildItems(state.selected);
+    source_->setActive(isVisible());
+    emit sourceChanged(source_->id());
+}
+void HistoryWindow::setHistoryEnabled(bool enabled)
+{
+    historySource_->setEnabled(enabled);
+    refreshFromSource();
+}
+void HistoryWindow::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    source_->setActive(true);
+}
+void HistoryWindow::hideEvent(QHideEvent* event)
+{
+    source_->setActive(false);
+    QWidget::hideEvent(event);
+}
+void HistoryWindow::clearSource()
+{
+    if (!source_->capabilities().clearAll)
+        return;
+    const QPointer<ResourceSource> target(source_);
+    const QPointer<HistoryWindow> guard(this);
+    QMessageBox confirm(
+        QMessageBox::Warning, QStringLiteral("清空全部"),
+        QStringLiteral("将“%1”中的全部图片移入系统回收站？\n包含星标图片及当前筛选外图片。")
+            .arg(target->displayName()),
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    confirm.setObjectName(QStringLiteral("resourceClearConfirm"));
+    confirm.setDefaultButton(QMessageBox::Cancel);
+    confirm.button(QMessageBox::Yes)->setText(QStringLiteral("移入回收站"));
+    confirm.button(QMessageBox::Cancel)->setText(QStringLiteral("取消"));
+    // 复用已有模态状态通知，托盘目录 / 设置入口在确认期间也受控。
+    emit groupDialogOpenChanged(true);
+    const int answer = confirm.exec();
+    if (!guard || !target)
+        return;
+    emit groupDialogOpenChanged(false);
+    if (answer == QMessageBox::Yes && target == source_)
+    {
+        const auto result = target->clearAll();
+        refreshFromSource();
+        showActionResult(result);
+        if (result.success)
+        {
+            notice_->setText(QStringLiteral("已移入回收站 %1 张。").arg(result.processedCount));
+            notice_->show();
+        }
+    }
+}
 void HistoryWindow::setGroupActionsEnabled(bool enabled)
 {
     groupActionsEnabled_ = enabled;
     historySource_->setGroupActionsEnabled(enabled);
+    if (!source_->capabilities().groups)
+        return;
     if (groups_->count())
         groups_->item(groups_->count() - 1)
             ->setFlags(enabled ? Qt::ItemIsEnabled | Qt::ItemIsSelectable : Qt::NoItemFlags);
@@ -344,10 +492,13 @@ bool HistoryWindow::dismissGroupDialogs()
 }
 void HistoryWindow::editGroupName(const QString& groupId)
 {
-    historySource_->editGroupName(groupId, this);
+    if (source_->capabilities().groups)
+        historySource_->editGroupName(groupId, this);
 }
 void HistoryWindow::showGroupMenu(const QPoint& point)
 {
+    if (!source_->capabilities().groups)
+        return;
     if (const auto* entry = groups_->itemAt(point))
         historySource_->showGroupMenu(entry->data(Qt::UserRole).toString(),
                                       groups_->viewport()->mapToGlobal(point), this);
@@ -366,14 +517,16 @@ void HistoryWindow::rebuildGroups(const QString& view)
         item->setData(Qt::UserRole, id);
         groupCombo_->addItem(text, id);
     };
-    add(QStringLiteral("全部历史"), QStringLiteral("all"), total);
+    const bool grouped = source_->capabilities().groups;
+    add(grouped ? QStringLiteral("全部历史") : QStringLiteral("全部"), QStringLiteral("all"),
+        total);
     add(QStringLiteral("星标"), QStringLiteral("starred"), starred);
     auto groups = snapshot_.groups;
     std::stable_sort(groups.begin(), groups.end(),
                      [](const auto& a, const auto& b) { return a.isDefault && !b.isDefault; });
     for (const auto& group : groups)
     {
-        if (group.id.isEmpty())
+        if (!grouped || group.id.isEmpty())
             continue;
         const QString dot = group.isCurrent ? QStringLiteral("● ") : QString();
         add(dot + group.name, group.id,
@@ -384,9 +537,12 @@ void HistoryWindow::rebuildGroups(const QString& view)
                                           : QStringLiteral("仅查看此分组\n")) +
                          QStringLiteral("目录：") + group.absolutePath);
     }
-    auto* create = new QListWidgetItem(QStringLiteral("新建分组…"), groups_);
-    create->setData(Qt::UserRole, QStringLiteral("new-group"));
-    groupCombo_->addItem(QStringLiteral("新建分组…"), QStringLiteral("new-group"));
+    if (grouped)
+    {
+        auto* create = new QListWidgetItem(QStringLiteral("新建分组…"), groups_);
+        create->setData(Qt::UserRole, QStringLiteral("new-group"));
+        groupCombo_->addItem(QStringLiteral("新建分组…"), QStringLiteral("new-group"));
+    }
     setGroupActionsEnabled(groupActionsEnabled_);
     int row = groupCombo_->findData(view);
     if (row < 0)
@@ -476,7 +632,14 @@ void HistoryWindow::rebuildItems(const QString& selected, int fallbackRow)
     showSelection();
     scheduleThumbnails();
 }
-HistoryWindow::~HistoryWindow() { source_->setProtectedItem({}); }
+HistoryWindow::~HistoryWindow()
+{
+    if (source_)
+    {
+        source_->setProtectedItem({});
+        source_->setActive(false);
+    }
+}
 void HistoryWindow::showSelection()
 {
     source_->setProtectedItem(selectedId());
@@ -491,7 +654,11 @@ void HistoryWindow::showSelection()
     {
         imageView_->setImage({});
         imageView_->hide();
-        empty_->setText(view_ == QStringLiteral("all")
+        empty_->setText(!snapshot_.error.isEmpty() ? snapshot_.error
+                        : view_ == QStringLiteral("starred") ? QStringLiteral("还没有星标图片。")
+                        : !source_->capabilities().groups
+                            ? QStringLiteral("此来源暂无图片。可选择目录，或添加图片后查看。")
+                        : view_ == QStringLiteral("all")
                             ? QStringLiteral("还没有截图历史。完成截图后可在这里查看。")
                         : view_ == QStringLiteral("starred") ? QStringLiteral("还没有星标图片。")
                                                              : QStringLiteral("此分组暂无记录。"));
@@ -544,9 +711,12 @@ void HistoryWindow::updateActions()
     }
     pin_->setEnabled(item && source_->canPin());
     reveal_->setEnabled(item && capabilities.reveal);
-    delete_->setEnabled(item && item->managed && capabilities.deleteItem);
-    delete_->setToolTip(item && !item->managed ? QStringLiteral("请在文件管理器中操作")
-                                               : QStringLiteral("将当前受管图片移入系统回收站"));
+    delete_->setEnabled(item && item->deletable && capabilities.deleteItem);
+    delete_->setToolTip(delete_->isEnabled() ? QStringLiteral("移入系统回收站")
+                                             : QStringLiteral("请在文件管理器中操作"));
+    clear_->setVisible(capabilities.clearAll);
+    clear_->setEnabled(!snapshot_.items.isEmpty());
+    configure_->setVisible(capabilities.configureDirectory);
 }
 void HistoryWindow::updateNotice()
 {
@@ -574,6 +744,14 @@ void HistoryWindow::updateStatus()
         }
     for (const auto& item : items_)
         bytes += item.bytes + item.originalBytes;
+    if (!source_->capabilities().cleanup)
+    {
+        status_->setText(QStringLiteral("%1 · %2 张 · %3 MiB")
+                             .arg(source_->displayName())
+                             .arg(items_.size())
+                             .arg(bytes / 1048576.0, 0, 'f', 2));
+        return;
+    }
     status_->setText(
         QStringLiteral("%1 张 · %2 MiB · 受保护 %3 张 / %4 MiB%5")
             .arg(items_.size())
@@ -621,6 +799,12 @@ void HistoryWindow::refresh()
 }
 void HistoryWindow::refreshFromSource()
 {
+    if (!source_->visible() && !source_->capabilities().configureDirectory)
+    {
+        selectSource({});
+        return;
+    }
+    rebuildSources();
     const QString selected = selectedId();
     const int row = thumbnails_->currentRow();
     snapshot_ = source_->snapshot();
@@ -780,6 +964,7 @@ void HistoryWindow::saveWindowState()
     state.geometry = saveGeometry();
     QDataStream stream(&state.splitterState, QIODevice::WriteOnly);
     stream << splitter_->saveState() << imageSplitter_->saveState() << collapse_->isChecked();
+    state.lastSource = source_->id();
     state.lastView = view_;
     if (const auto* selected = thumbnails_->currentItem())
         state.lastSelection = selected->data(Qt::UserRole).toString();
@@ -792,6 +977,7 @@ void HistoryWindow::saveWindowState()
 void HistoryWindow::closeEvent(QCloseEvent* event)
 {
     source_->setProtectedItem({});
+    source_->setActive(false);
     saveWindowState();
     event->accept();
 }

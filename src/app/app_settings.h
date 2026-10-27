@@ -31,6 +31,7 @@ struct HistoryWindowState
     QByteArray splitterState;
     QString lastView = QStringLiteral("all");
     QString lastSelection;
+    QString lastSource = QStringLiteral("history");
     // 空值为各视图默认顺序；其余为 oldest / newest。
     QString sortOrder;
 };
@@ -43,6 +44,7 @@ class AppSettings
     HistoryPreferences loadHistoryPreferences(QString* notice = nullptr) const;
     QString saveHistoryPreferences(const HistoryPreferences& preferences) const;
     QString saveHistoryCurrentGroupId(const QString& groupId) const;
+    QString quickGunnerStarsPath() const;
     HistoryWindowState loadHistoryWindowState() const;
     QString saveHistoryWindowState(const HistoryWindowState& state) const;
     LoadedHotkey loadHotkey(HotkeyAction action = HotkeyAction::Screenshot) const;

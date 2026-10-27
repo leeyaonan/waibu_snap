@@ -1,4 +1,6 @@
+#include "app/application_controller.h"
 #include "ui/history_resource_source.h"
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QLockFile>
@@ -58,6 +60,24 @@ class ResourceSourceTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void disabledHistoryStillOpensBrowser()
+    {
+        QTemporaryDir temp;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = temp.filePath(QStringLiteral("settings.ini"));
+        options.historyRoot = temp.filePath(QStringLiteral("历史"));
+        options.historyEnabledOverride = false;
+        ApplicationController controller(*qApp, options);
+        controller.openHistory();
+        HistoryWindow* browser = nullptr;
+        for (auto* widget : QApplication::topLevelWidgets())
+            if (widget->objectName() == QStringLiteral("historyWindow"))
+                browser = qobject_cast<HistoryWindow*>(widget);
+        QVERIFY(browser);
+        QVERIFY(!QFileInfo::exists(options.historyRoot));
+        browser->close();
+    }
     void identityCapabilitiesAndVisibility()
     {
         Fixture f;
@@ -112,6 +132,7 @@ class ResourceSourceTest final : public QObject
             QCOMPARE(item.hasOriginal, history->hasOriginal);
             QCOMPARE(item.starred, history->starred);
             QCOMPARE(item.managed, history->managed);
+            QCOMPARE(item.deletable, history->managed);
             QCOMPARE(item.createdAtMs, history->createdAtMs);
             QCOMPARE(item.pixelSize, history->pixelSize);
             if (item.managed)
@@ -167,6 +188,7 @@ class ResourceSourceTest final : public QObject
         QVERIFY(!source.revealItem(QStringLiteral("不存在")).success);
         HistoryResourceSource unavailable(f.manager);
         QVERIFY(!unavailable.outputImage(id, false, false).success);
+        QVERIFY(!unavailable.snapshot().items.first().deletable);
         QVERIFY(!unavailable.deleteItem(id).success);
         QVERIFY(QFileInfo::exists(record.absolutePath));
     }

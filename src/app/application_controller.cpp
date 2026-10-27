@@ -110,6 +110,16 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
             const auto result = fileManager_->moveToTrash(path);
             return HistoryStatus{result.success, result.error};
         };
+    quickGunnerSource_ = std::make_unique<QuickGunnerResourceSource>(
+        [this] { return quickGunner_->preferences().directory; }, settings_.quickGunnerStarsPath(),
+        historyActions_);
+    connect(quickGunner_.get(), &QuickGunnerController::preferencesChanged, this,
+            [this]
+            {
+                quickGunnerSource_->directoryChanged();
+                if (historyEnabled_ && historyWindow_)
+                    historyWindow_->refresh();
+            });
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
         const std::shared_ptr<Autostart> autostart = createAutostart();
@@ -159,6 +169,10 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     quickGunnerModeAction_->setCheckable(true);
     connect(quickGunnerModeAction_, &QAction::toggled, this,
             &ApplicationController::setQuickGunnerMode);
+    quickGunnerOpenAction_ =
+        quickGunnerMenu_->addAction(QStringLiteral("打开快枪手"), this, [this]
+                                    { openResourceBrowser(QStringLiteral("quick-gunner")); });
+    quickGunnerOpenAction_->setObjectName(QStringLiteral("quickGunnerOpenAction"));
     quickGunnerFrameAction_ =
         quickGunnerMenu_->addAction(QStringLiteral("调整拍摄区域…"), this,
                                     [this]
@@ -359,11 +373,13 @@ QStringList ApplicationController::reservedQuickGunnerDirectories() const
 }
 bool ApplicationController::chooseQuickGunnerDirectory()
 {
-    if (!quickGunnerActionsEnabled())
+    const auto interactive = [this]
+    { return !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_; };
+    if (!interactive())
         return false;
     const auto directory = QFileDialog::getExistingDirectory(
         nullptr, QStringLiteral("选择快枪手目录"), quickGunner_->preferences().directory);
-    if (directory.isEmpty() || !quickGunnerActionsEnabled())
+    if (directory.isEmpty() || !interactive())
         return false;
     const auto error = quickGunner_->setDirectory(directory, reservedQuickGunnerDirectories());
     showQuickGunnerNotice(error);
@@ -414,13 +430,15 @@ void ApplicationController::refreshQuickGunnerActions()
         return;
     const QSignalBlocker blocker(quickGunnerModeAction_);
     quickGunnerModeAction_->setChecked(quickGunnerModeRequested_);
-    for (auto* action :
-         {quickGunnerModeAction_, quickGunnerFrameAction_, quickGunnerDirectoryAction_})
+    for (auto* action : {quickGunnerModeAction_, quickGunnerFrameAction_})
     {
         action->setEnabled(quickGunnerActionsEnabled());
         action->setToolTip(regionCaptureSupported() ? QString()
                                                     : QStringLiteral("Windows 原生采集后补"));
     }
+    const bool browserEnabled = !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_;
+    quickGunnerOpenAction_->setEnabled(browserEnabled);
+    quickGunnerDirectoryAction_->setEnabled(browserEnabled);
     const auto& preferences = quickGunner_->preferences();
     QString status =
         quickGunner_->active() ? QStringLiteral("快枪手：开") : QStringLiteral("快枪手：关");
@@ -823,7 +841,7 @@ void ApplicationController::openSettings()
                 return error;
             historyEnabled_ = false;
             if (historyWindow_)
-                historyWindow_->close();
+                historyWindow_->setHistoryEnabled(false);
             // 关闭后同步清空 / 置灰当前分组菜单，不能等下一次菜单重建。
             rebuildCurrentGroupMenu();
             refreshStickerActions();
@@ -852,8 +870,12 @@ void ApplicationController::openSettings()
             // 重新建组并刷新标题，才能立即显示默认分组的当前状态。
             rebuildCurrentGroupMenu();
             if (historyWindow_)
+            {
+                historyWindow_->setHistoryEnabled(true);
                 historyWindow_->refresh();
-            if (!oldRoot.isEmpty() && oldRoot != history_.rootDirectory() && historyWindow_)
+            }
+            if (!oldRoot.isEmpty() && oldRoot != history_.rootDirectory() && historyWindow_ &&
+                historyWindow_->selectedSourceId() == QStringLiteral("history"))
                 historyWindow_->navigate(0, true);
             refreshStickerActions();
         }
@@ -931,33 +953,31 @@ void ApplicationController::navigateHistory(int step)
         historyWindow_->navigate(step, opening);
     refreshStickerActions();
 }
-void ApplicationController::openHistory()
+void ApplicationController::openHistory() { openResourceBrowser(QStringLiteral("history")); }
+void ApplicationController::openResourceBrowser(const QString& sourceId)
 {
     if (active_ || settingsOpen_ || quitting_ || resolvingQuit_)
         return;
-    if (!historyEnabled_ || !history_.ready())
-    {
-        const QString message =
-            QStringLiteral("截图历史未启用。请在「设置 → 历史」中阅读隐私提示并手动开启。");
-        if (!options_.testMode && !options_.smokeTest)
-            tray_.showMessage(QStringLiteral("截图历史未启用"), message,
-                              QSystemTrayIcon::Information);
-        else
-            qWarning().noquote() << message;
-        return;
-    }
     if (!historyWindow_)
     {
-        historyWindow_ = new HistoryWindow(history_, settings_, historyActions_);
+        historyWindow_ = new HistoryWindow(history_, settings_, historyActions_,
+                                           quickGunnerSource_.get(), historyEnabled_);
         connect(historyWindow_, &HistoryWindow::groupDialogOpenChanged, this,
                 [this](bool open)
                 {
                     settingsOpen_ = open;
                     refreshStickerActions();
                 });
+        connect(historyWindow_, &HistoryWindow::directoryRequested, this,
+                [this](const QString& id)
+                {
+                    if (id == quickGunnerSource_->id())
+                        chooseQuickGunnerDirectory();
+                });
     }
-    else
-        historyWindow_->refresh();
+    if (!sourceId.isEmpty())
+        historyWindow_->selectSource(sourceId);
+    historyWindow_->refresh();
     historyWindow_->show();
     historyWindow_->raise();
     historyWindow_->activateWindow();

@@ -133,9 +133,10 @@ HistoryStatus HistoryManager::initialize()
         return {true, {}};
     QString notice;
     preferences_ = settings_.loadHistoryPreferences(&notice);
-    store_ = std::make_unique<HistoryStore>(rootOverride_.isEmpty() ? preferences_.rootDirectory
-                                                                    : rootOverride_,
-                                            preferences_.defaultCleanup);
+    store_ = std::make_unique<HistoryStore>(
+        rootOverride_.isEmpty() ? preferences_.rootDirectory : rootOverride_,
+        preferences_.defaultCleanup, HistoryTrash{},
+        [this] { return settings_.loadQuickGunnerPreferences().directory; });
     const auto scanned = store_->initialize();
     snapshot_ = {scanned.groups, {}, scanned.error};
     groups_.clear();
@@ -178,8 +179,9 @@ HistoryStatus HistoryManager::savePreferences(HistoryPreferences preferences)
     HistoryScanResult scanned;
     if (switching)
     {
-        candidate =
-            std::make_unique<HistoryStore>(preferences.rootDirectory, preferences.defaultCleanup);
+        candidate = std::make_unique<HistoryStore>(
+            preferences.rootDirectory, preferences.defaultCleanup, HistoryTrash{},
+            [this] { return settings_.loadQuickGunnerPreferences().directory; });
         scanned = candidate->initialize();
         if (!scanned.error.isEmpty())
             return {false, QStringLiteral("历史根目录切换失败，旧目录保留：%1").arg(scanned.error)};

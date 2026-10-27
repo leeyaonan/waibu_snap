@@ -458,3 +458,14 @@ target_link_libraries(resource_source_test PRIVATE waibusnap_ui Qt6::Test waibus
 set_target_properties(resource_source_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME resource_source COMMAND resource_source_test)
 set_tests_properties(resource_source PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+qt_add_executable(quick_gunner_resource_test integration/quick_gunner_resource_test.cpp)
+target_link_libraries(quick_gunner_resource_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(quick_gunner_resource_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME quick_gunner_resource COMMAND quick_gunner_resource_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-resource-output.txt,txt")
+set_tests_properties(quick_gunner_resource PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+add_test(NAME quick_gunner_resource_high_dpi COMMAND quick_gunner_resource_test
+    -o "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-resource-high-dpi-output.txt,txt")
+set_tests_properties(quick_gunner_resource_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)

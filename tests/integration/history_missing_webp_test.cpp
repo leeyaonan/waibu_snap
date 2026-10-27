@@ -1,5 +1,6 @@
 #include "app/history_manager.h"
 #include "ui/history_window.h"
+#include "ui/quick_gunner_resource_source.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -14,6 +15,21 @@ class HistoryMissingWebpTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void quickGunnerMissingPluginIsExplicit()
+    {
+        QTemporaryDir temp;
+        QCoreApplication::setLibraryPaths({temp.path()});
+        QVERIFY(!QImageReader::supportedImageFormats().contains("webp"));
+        const auto webp = temp.filePath(QStringLiteral("图片.webp"));
+        QVERIFY(QFile::copy(QString::fromUtf8(WAIBUSNAP_WEBP_FIXTURE), webp));
+        QuickGunnerResourceSource source([&] { return temp.path(); },
+                                         temp.filePath(QStringLiteral("stars.json")));
+        QCOMPARE(source.snapshot().items.size(), 1);
+        const auto loaded = source.loadImage(source.snapshot().items.first().id);
+        QVERIFY(!loaded.success);
+        QVERIFY(loaded.error.contains(QStringLiteral("缺少 WebP 图片插件")));
+        QVERIFY(loaded.image.isNull());
+    }
     void missingPluginIsExplicitAndOtherRecordsSurvive()
     {
         QTemporaryDir temp;

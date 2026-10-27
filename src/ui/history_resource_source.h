@@ -21,6 +21,7 @@ class HistoryResourceSource final : public ResourceSource
     QString id() const override;
     QString displayName() const override;
     bool visible() const override;
+    void setEnabled(bool enabled);
     ResourceCapabilities capabilities() const override;
     ResourceSnapshot snapshot() const override;
     void refresh() override;
@@ -48,5 +49,6 @@ class HistoryResourceSource final : public ResourceSource
     HistoryManager& manager_;
     HistoryWindowActions actions_;
     bool groupActionsEnabled_ = true;
+    bool enabled_ = true;
 };
 }

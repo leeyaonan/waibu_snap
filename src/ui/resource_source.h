@@ -18,6 +18,7 @@ struct ResourceItem
     bool hasOriginal = false;
     bool starred = false;
     bool managed = false;
+    bool deletable = false;
     qint64 createdAtMs = 0;
     QSize pixelSize;
     // 来源提供展示标签，窗口不判断历史记录的内部类型。
@@ -39,6 +40,8 @@ struct ResourceCapabilities
     bool star = false;
     bool deleteItem = false;
     bool reveal = false;
+    bool clearAll = false;
+    bool configureDirectory = false;
 };
 struct ResourceUsage
 {
@@ -68,6 +71,10 @@ struct ResourceImageResult : ResourceStatus
 {
     QImage image;
 };
+struct ResourceClearResult : ResourceStatus
+{
+    qsizetype processedCount = 0;
+};
 enum class ResourceSort
 {
     OldestFirst,
@@ -85,6 +92,11 @@ class ResourceSource : public QObject
     // 快照只读内存；手动刷新由 refresh 显式重扫，不发布 changed。
     virtual ResourceSnapshot snapshot() const = 0;
     virtual void refresh() = 0;
+    virtual void setActive(bool) {}
+    virtual ResourceClearResult clearAll()
+    {
+        return {{false, QStringLiteral("此来源不支持清空。")}, 0};
+    }
     virtual ResourceImageResult loadImage(const QString& id, QSize bounds = {},
                                           bool original = false) const = 0;
     virtual ResourceStatus setStarred(const QString& id, bool starred) = 0;
