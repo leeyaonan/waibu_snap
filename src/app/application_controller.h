@@ -17,6 +17,7 @@
 #include "session/session_metrics.h"
 #include "ui/clipboard_sticker_toast.h"
 #include "ui/history_window.h"
+#include "ui/quick_gunner_resource_source.h"
 #include "ui/scroll_capture_windows.h"
 #include "ui/scroll_result_window.h"
 #include "ui/selection_overlay.h"
@@ -63,6 +64,7 @@ class ApplicationController final : public QObject
     void trigger(const QString& source);
     void quit();
     void openHistory();
+    void openResourceBrowser(const QString& sourceId = {});
     void navigateHistory(int step);
     QMenu* menu() { return &menu_; }
     bool active() const { return active_; }
@@ -113,6 +115,7 @@ class ApplicationController final : public QObject
     RunOptions options_;
     QAction* scrollAction_ = nullptr;
     QMenu* quickGunnerMenu_ = nullptr;
+    QAction* quickGunnerOpenAction_ = nullptr;
     QAction* quickGunnerModeAction_ = nullptr;
     bool quickGunnerModeRequested_ = false;
     bool quickGunnerActivationPending_ = false;
@@ -157,6 +160,7 @@ class ApplicationController final : public QObject
     AutostartActions autostartActions_;
     HistoryWindowActions historyActions_;
     std::shared_ptr<FileManager> fileManager_;
+    std::unique_ptr<QuickGunnerResourceSource> quickGunnerSource_;
     quint64 historyStickerSequence_ = 0;
     std::unique_ptr<ClipboardStickerToast> clipboardToast_;
     quint64 clipboardStickerSequence_ = 0;

@@ -329,8 +329,10 @@ const HistoryGroupSnapshot* findGroup(const HistoryScanResult& scan, const QStri
     return error.isEmpty() ? found : nullptr;
 }
 }
-HistoryStore::HistoryStore(QString rootDirectory, CleanupPolicy defaultCleanup, HistoryTrash trash)
-    : rootDirectory_(rootDirectory.isEmpty() ? defaultRootDirectory() : std::move(rootDirectory)),
+HistoryStore::HistoryStore(QString rootDirectory, CleanupPolicy defaultCleanup, HistoryTrash trash,
+                           std::function<QString()> excludedDirectory)
+    : excludedDirectory_(std::move(excludedDirectory)),
+      rootDirectory_(rootDirectory.isEmpty() ? defaultRootDirectory() : std::move(rootDirectory)),
       defaultCleanup_(defaultCleanup), trash_(std::move(trash))
 {
 }
@@ -345,6 +347,24 @@ HistoryScanResult HistoryStore::scanUnlocked() const
     result.error = rootError(rootDirectory_);
     if (!result.error.isEmpty())
         return result;
+    const QString excluded = excludedDirectory_ ? excludedDirectory_() : QString();
+    const auto excludedPath = QFileInfo(excluded).canonicalFilePath();
+    const QString excludedRoot =
+        excluded.isEmpty()
+            ? QString()
+            : (excludedPath.isEmpty() ? QDir::cleanPath(QFileInfo(excluded).absoluteFilePath())
+                                      : excludedPath);
+    const auto excludedFile = [&](const QFileInfo& file)
+    {
+        if (excludedRoot.isEmpty())
+            return false;
+        const auto real = file.canonicalFilePath();
+        const auto relative =
+            QDir(excludedRoot).relativeFilePath(real.isEmpty() ? file.absoluteFilePath() : real);
+        return relative == QStringLiteral(".") ||
+               (!QDir::isAbsolutePath(relative) && relative != QStringLiteral("..") &&
+                !relative.startsWith(QStringLiteral("../")));
+    };
     QStringList paths;
     const QString registryError = readRegistry(rootDirectory_, paths);
     if (!registryError.isEmpty())
@@ -409,7 +429,7 @@ HistoryScanResult HistoryStore::scanUnlocked() const
         for (const auto& file :
              QDir(clean).entryInfoList(QDir::Files | QDir::NoSymLinks, QDir::Name))
         {
-            if (!imageFileName(file.fileName()))
+            if (excludedFile(file) || !imageFileName(file.fileName()))
                 continue;
             const auto metadata = index.value(file.fileName()).toObject();
             HistoryItem item;

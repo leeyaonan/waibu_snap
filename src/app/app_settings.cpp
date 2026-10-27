@@ -255,6 +255,12 @@ QString AppSettings::saveHistoryCurrentGroupId(const QString& groupId) const
     }
     return {};
 }
+QString AppSettings::quickGunnerStarsPath() const
+{
+    // 默认配置位于 AppLocalDataLocation；测试自定义配置时，元数据同步隔离。
+    return QDir(QFileInfo(filePath_).absolutePath())
+        .filePath(QStringLiteral("quick-gunner-stars.json"));
+}
 HistoryWindowState AppSettings::loadHistoryWindowState() const
 {
     QFile file(filePath_);
@@ -272,6 +278,9 @@ HistoryWindowState AppSettings::loadHistoryWindowState() const
         result.geometry = geometry.toByteArray();
     if (splitter.metaType().id() == QMetaType::QByteArray)
         result.splitterState = splitter.toByteArray();
+    const QString source = settings.value(prefix + QStringLiteral("lastSource")).toString();
+    if (source == QStringLiteral("history") || source == QStringLiteral("quick-gunner"))
+        result.lastSource = source;
     const QString view = settings.value(prefix + QStringLiteral("lastView")).toString();
     if (view == QStringLiteral("all") || view == QStringLiteral("starred") ||
         (!QUuid(view).isNull() && QUuid(view).toString(QUuid::WithoutBraces) == view))
@@ -293,11 +302,11 @@ QString AppSettings::saveHistoryWindowState(const HistoryWindowState& state) con
     if (settings.status() != QSettings::NoError)
         return error;
     const QString prefix = QStringLiteral("history/window/");
-    const QStringList names{QStringLiteral("geometry"), QStringLiteral("splitterState"),
-                            QStringLiteral("lastView"), QStringLiteral("lastSelection"),
-                            QStringLiteral("sortOrder")};
-    const QVector<QVariant> values{state.geometry, state.splitterState, state.lastView,
-                                   state.lastSelection, state.sortOrder};
+    const QStringList names{QStringLiteral("geometry"),  QStringLiteral("splitterState"),
+                            QStringLiteral("lastView"),  QStringLiteral("lastSelection"),
+                            QStringLiteral("sortOrder"), QStringLiteral("lastSource")};
+    const QVector<QVariant> values{state.geometry,      state.splitterState, state.lastView,
+                                   state.lastSelection, state.sortOrder,     state.lastSource};
     QVector<QVariant> previous;
     for (qsizetype i = 0; i < names.size(); ++i)
     {

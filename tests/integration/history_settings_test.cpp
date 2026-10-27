@@ -362,7 +362,12 @@ class HistorySettingsTest final : public QObject
         auto* open = child<QAction>(controller.menu(), "openHistoryAction");
         QVERIFY(!open->isEnabled());
         controller.openHistory();
-        QVERIFY(!ApplicationControllerTestAccess::window(controller));
+        auto* browser = ApplicationControllerTestAccess::window(controller);
+        QVERIFY(browser);
+        QCOMPARE(child<QComboBox>(browser, "resourceSourceCombo")->count(), 1);
+        QCOMPARE(browser->selectedSourceId(), QStringLiteral("quick-gunner"));
+        QVERIFY(!manager.ready());
+        QVERIFY(!QFileInfo::exists(root));
         QTimer::singleShot(
             0, qApp,
             []

@@ -677,27 +677,31 @@ class QuickGunnerCaptureTest : public QObject
             controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerDirectoryAction"));
         auto* status =
             controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerStatusAction"));
-        QVERIFY(mode && frame && directory && status);
+        auto* open =
+            controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerOpenAction"));
+        QVERIFY(mode && frame && directory && status && open);
+        QVERIFY(open->isEnabled());
         QVERIFY(mode->isCheckable());
         QVERIFY(!mode->isChecked());
         QVERIFY(!controller.menu()->findChild<QAction*>(QStringLiteral("quickGunnerShootAction")));
         QVERIFY(!status->isEnabled());
         QCOMPARE(mode->isEnabled(), regionCaptureSupported());
         QCOMPARE(frame->isEnabled(), regionCaptureSupported());
-        QCOMPARE(directory->isEnabled(), regionCaptureSupported());
+        QVERIFY(directory->isEnabled());
         for (int which = 0; which < 4; ++which)
         {
             ApplicationControllerTestAccess::guard(controller, which, true);
             QVERIFY(!mode->isEnabled());
             QVERIFY(!frame->isEnabled());
             QVERIFY(!directory->isEnabled());
+            QVERIFY(!open->isEnabled());
             ApplicationControllerTestAccess::guard(controller, which, false);
             QCOMPARE(mode->isEnabled(), regionCaptureSupported());
         }
         const auto actions = controller.menu()->actions();
         auto* quickMenu = controller.menu()->findChild<QMenu*>(QStringLiteral("quickGunnerMenu"));
         QVERIFY(quickMenu);
-        QCOMPARE(quickMenu->actions(), (QList<QAction*>{mode, frame, directory, status}));
+        QCOMPARE(quickMenu->actions(), (QList<QAction*>{mode, open, frame, directory, status}));
         const auto position = actions.indexOf(quickMenu->menuAction());
         QVERIFY(position > 0);
         QCOMPARE(actions[position - 1]->objectName(), QStringLiteral("scrollCaptureAction"));
