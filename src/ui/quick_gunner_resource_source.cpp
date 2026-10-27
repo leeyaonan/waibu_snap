@@ -13,7 +13,8 @@ namespace
 bool imageFile(const QFileInfo& file)
 {
     const auto suffix = file.suffix().toLower();
-    return file.isFile() && !file.isSymLink() && !file.isJunction() &&
+    // Windows 的 QFile::link 生成带目标后缀的快捷方式，不能当作图片扫描或删除。
+    return file.isFile() && !file.isSymLink() && !file.isJunction() && !file.isShortcut() &&
            (suffix == QStringLiteral("png") || suffix == QStringLiteral("jpg") ||
             suffix == QStringLiteral("jpeg") || suffix == QStringLiteral("webp"));
 }
