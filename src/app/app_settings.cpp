@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QTemporaryFile>
 #include <QUuid>
 #include <algorithm>
 namespace waibusnap
@@ -42,6 +43,94 @@ AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
     if (filePath_.isEmpty())
         filePath_ = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
                         .filePath(QStringLiteral("settings.ini"));
+}
+QuickGunnerPreferences AppSettings::loadQuickGunnerPreferences(QString* notice) const
+{
+    if (notice)
+        notice->clear();
+    const auto fail = [notice](const QString& reason)
+    {
+        if (notice)
+            *notice = QStringLiteral("快枪手设置无法读取或已损坏，已回退为空设置；原文件未改写。%1")
+                          .arg(reason);
+        return QuickGunnerPreferences{};
+    };
+    QFile file(filePath_);
+    if (!file.open(QIODevice::ReadOnly))
+        return QFileInfo::exists(filePath_) ? fail(QStringLiteral("文件不可读。"))
+                                            : QuickGunnerPreferences{};
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return fail(QStringLiteral("INI 格式无效。"));
+    QuickGunnerPreferences result;
+    const auto directory = settings.value(QStringLiteral("quickGunner/directory"), QString());
+    if (directory.metaType().id() != QMetaType::QString ||
+        directory.toString().contains(QChar::Null) ||
+        (!directory.toString().isEmpty() && !QDir::isAbsolutePath(directory.toString())))
+        return fail(QStringLiteral("目录必须为绝对路径。"));
+    if (!directory.toString().isEmpty())
+        result.directory = QDir::cleanPath(directory.toString());
+    const auto value = settings.value(QStringLiteral("quickGunner/region"));
+    if (value.isValid())
+    {
+        const auto document = QJsonDocument::fromJson(value.toString().toUtf8());
+        QString reason;
+        if (value.metaType().id() != QMetaType::QString || !document.isObject())
+            return fail(QStringLiteral("机位 JSON 格式无效。"));
+        result.region = QuickGunnerRegion::fromJson(document.object(), &reason);
+        if (!result.region)
+            return fail(reason);
+    }
+    return result;
+}
+QString AppSettings::saveQuickGunnerPreferences(const QuickGunnerPreferences& preferences) const
+{
+    if (preferences.directory.contains(QChar::Null) ||
+        (!preferences.directory.isEmpty() && !QDir::isAbsolutePath(preferences.directory)))
+        return QStringLiteral("快枪手目录必须为绝对路径。");
+    if (preferences.region && !preferences.region->isValid())
+        return QStringLiteral("快枪手机位无效，必须在显示器内且至少为 16×16 物理像素。");
+    const QString error = QStringLiteral("快枪手设置写入失败，原设置已保留，请重试保存。");
+    const QString parent = QFileInfo(filePath_).absolutePath();
+    if (!QDir().mkpath(parent) || QFileInfo(filePath_).isDir())
+        return error;
+    QTemporaryFile staged(QDir(parent).filePath(QStringLiteral(".quick-gunner-settings-XXXXXX")));
+    if (!staged.open())
+        return error;
+    staged.close();
+    {
+        // 只修改临时 INI；失败不会在原文件的 QSettings 共享缓存里留下待写值。
+        QSettings original(filePath_, QSettings::IniFormat);
+        original.sync();
+        if (original.status() != QSettings::NoError)
+            return error;
+        QSettings settings(staged.fileName(), QSettings::IniFormat);
+        for (const auto& key : original.allKeys())
+            settings.setValue(key, original.value(key));
+        settings.setValue(QStringLiteral("quickGunner/directory"),
+                          preferences.directory.isEmpty() ? QString()
+                                                          : QDir::cleanPath(preferences.directory));
+        if (preferences.region)
+            settings.setValue(
+                QStringLiteral("quickGunner/region"),
+                QString::fromUtf8(
+                    QJsonDocument(preferences.region->toJson()).toJson(QJsonDocument::Compact)));
+        else
+            settings.remove(QStringLiteral("quickGunner/region"));
+        settings.sync();
+        if (settings.status() != QSettings::NoError)
+            return error;
+    }
+    QFile source(staged.fileName());
+    QSaveFile destination(filePath_);
+    if (!source.open(QIODevice::ReadOnly) || !destination.open(QIODevice::WriteOnly))
+        return error;
+    const auto bytes = source.readAll();
+    if (source.error() != QFileDevice::NoError || destination.write(bytes) != bytes.size() ||
+        !destination.commit())
+        return error;
+    return {};
 }
 HistoryPreferences AppSettings::loadHistoryPreferences(QString* notice) const
 {

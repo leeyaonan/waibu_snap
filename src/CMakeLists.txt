@@ -1,7 +1,7 @@
 add_subdirectory(platform)
 
 add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp core/aspect_ratio.cpp core/text_layout.cpp core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
-    core/history_types.cpp core/history_cleanup.cpp core/watermark.cpp
+    core/history_types.cpp core/history_cleanup.cpp core/watermark.cpp core/quick_gunner.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options)
@@ -12,6 +12,8 @@ add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp 
 target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp ui/selection_overlay.h
+    app/quick_gunner.cpp app/quick_gunner.h
+    ui/quick_gunner_region_picker.cpp ui/quick_gunner_region_picker.h
     ui/annotation_toolbar_style.cpp ui/annotation_toolbar_style.h
     ui/toolbar_icons.cpp ui/toolbar_icons.h
     ui/annotation_color_palette.cpp ui/annotation_color_palette.h

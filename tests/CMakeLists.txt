@@ -414,3 +414,19 @@ target_link_libraries(annotation_transform_test PRIVATE waibusnap_ui Qt6::Test w
 set_target_properties(annotation_transform_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME annotation_transform COMMAND annotation_transform_test)
 set_tests_properties(annotation_transform PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(quick_gunner_test unit/quick_gunner_test.cpp)
+target_link_libraries(quick_gunner_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(quick_gunner_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME quick_gunner COMMAND quick_gunner_test)
+set_tests_properties(quick_gunner PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(quick_gunner_region_picker_test integration/quick_gunner_region_picker_test.cpp)
+target_link_libraries(quick_gunner_region_picker_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(quick_gunner_region_picker_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME quick_gunner_region_picker COMMAND quick_gunner_region_picker_test)
+set_tests_properties(quick_gunner_region_picker PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+add_test(NAME quick_gunner_region_picker_high_dpi COMMAND quick_gunner_region_picker_test
+    pickerGeometryAndReplacement pickerClampMinimumAndEscape pickerPaintAndClose)
+set_tests_properties(quick_gunner_region_picker_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 30)
