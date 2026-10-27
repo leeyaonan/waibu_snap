@@ -38,6 +38,10 @@ void HistoryManager::setProtectedItem(const QString& itemId)
 }
 HistoryCleanupReport HistoryManager::runCleanup(qint64 nowMs)
 {
+    return runCleanupInternal(nowMs, true);
+}
+HistoryCleanupReport HistoryManager::runCleanupInternal(qint64 nowMs, bool notifyItems)
+{
     HistoryCleanupReport report;
     if (nowMs < 0)
         nowMs = QDateTime::currentMSecsSinceEpoch();
@@ -88,6 +92,8 @@ HistoryCleanupReport HistoryManager::runCleanup(qint64 nowMs)
         qInfo().noquote() << "截图历史：" << report.message();
     emit groupsChanged();
     emit cleanupFinished();
+    if (notifyItems && (report.error.isEmpty() || report.deletedCount))
+        emit itemsChanged();
     return report;
 }
 HistoryManager::HistoryManager(AppSettings settings, QString rootOverride, QObject* parent)
@@ -426,7 +432,10 @@ HistoryStatus HistoryManager::setStarred(const QString& itemId, bool starred)
         return {false, QStringLiteral("历史记录已不存在，请刷新历史。")};
     const auto result = store_->setStarred(item->groupId, item->fileName, starred);
     if (result.success)
-        runCleanup();
+    {
+        runCleanupInternal(-1, false);
+        emit itemsChanged();
+    }
     return result;
 }
 HistoryStatus HistoryManager::deleteItem(const QString& itemId, const HistoryTrash& trash)
@@ -436,7 +445,10 @@ HistoryStatus HistoryManager::deleteItem(const QString& itemId, const HistoryTra
         return {false, QStringLiteral("历史记录已不存在，请刷新历史。")};
     const auto result = store_->deleteManagedItem(*item, trash);
     if (result.success)
+    {
         refresh();
+        emit itemsChanged();
+    }
     return result;
 }
 HistoryStatus HistoryManager::revealItem(const QString& itemId, const HistoryTrash& reveal) const
@@ -511,7 +523,10 @@ HistoryWriteResult HistoryManager::record(const HistorySession& session, const Q
         sessions_.insert(session.id, result.item);
     status(result.error);
     if (result.success)
-        runCleanup();
+    {
+        runCleanupInternal(-1, false);
+        emit itemsChanged();
+    }
     return result;
 }
 }

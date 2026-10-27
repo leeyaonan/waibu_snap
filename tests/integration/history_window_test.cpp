@@ -115,6 +115,88 @@ class HistoryWindowTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void resourceBrowserIdentity()
+    {
+        Fixture f;
+        auto* w = f.open();
+        QCOMPARE(w->objectName(), QStringLiteral("historyWindow"));
+        QCOMPARE(w->windowTitle(), QStringLiteral("资源浏览器"));
+        auto* sources = child<QComboBox>(w, "resourceSourceCombo");
+        QCOMPARE(sources->count(), 1);
+        QCOMPARE(sources->currentText(), QStringLiteral("历史"));
+        QCOMPARE(sources->currentData().toString(), QStringLiteral("history"));
+    }
+    void liveRecordAndStarPreserveView()
+    {
+        Fixture f;
+        const auto session = f.manager.beginSession();
+        const auto first =
+            f.manager.record(session, picture(Qt::blue, {600, 4000}), HistorySource::Scroll);
+        QVERIFY(first.success);
+        auto* w = f.open();
+        auto* view = preview(w);
+        view->actualSize();
+        view->verticalScrollBar()->setValue(400);
+        const int scroll = view->verticalScrollBar()->value();
+        const auto imageKey = view->image().cacheKey();
+        QVERIFY(
+            f.manager.record(f.manager.beginSession(), picture(), HistorySource::Overlay).success);
+        QCOMPARE(thumbnails(w)->count(), 2);
+        QCOMPARE(selected(w), historyItemId(first.item));
+        QCOMPARE(view->zoom(), qreal(1));
+        QCOMPARE(view->verticalScrollBar()->value(), scroll);
+        QCOMPARE(view->image().cacheKey(), imageKey);
+        QVERIFY(f.manager.setStarred(historyItemId(first.item), true).success);
+        QCOMPARE(thumbnails(w)->currentItem()->checkState(), Qt::Checked);
+        QCOMPARE(selected(w), historyItemId(first.item));
+        QCOMPARE(view->zoom(), qreal(1));
+        QCOMPARE(view->verticalScrollBar()->value(), scroll);
+        choose(w, QStringLiteral("starred"));
+        QCOMPARE(thumbnails(w)->count(), 1);
+        QVERIFY(f.manager.setStarred(historyItemId(first.item), false).success);
+        QCOMPARE(thumbnails(w)->count(), 0);
+        QVERIFY(view->image().isNull());
+    }
+    void liveDeleteFallsBackNearSelection()
+    {
+        Fixture f;
+        QVector<HistoryItem> records;
+        for (int i = 0; i < 5; ++i)
+            records.append(f.write(f.manager.currentGroupId(), picture()));
+        auto* w = f.open();
+        auto* list = thumbnails(w);
+        list->setCurrentRow(3);
+        const auto adjacent = list->item(4)->data(Qt::UserRole).toString();
+        const HistoryTrash remove = [](const QString& path)
+        { return HistoryStatus{QFile::remove(path), {}}; };
+        QVERIFY(f.manager.deleteItem(selected(w), remove).success);
+        QCOMPARE(list->count(), 4);
+        QCOMPARE(selected(w), adjacent);
+        QCOMPARE(list->currentRow(), 3);
+        QCOMPARE(f.manager.protectedItemId(), adjacent);
+        QVERIFY(f.manager.deleteItem(historyItemId(records[4]), remove).success);
+        QCOMPARE(list->count(), 3);
+        QCOMPARE(selected(w), adjacent);
+    }
+    void liveSameSessionReplacesPreview()
+    {
+        Fixture f;
+        const auto session = f.manager.beginSession();
+        QVERIFY(f.manager.record(session, picture(Qt::red, {600, 4000}), HistorySource::Overlay)
+                    .success);
+        auto* w = f.open();
+        const auto id = selected(w);
+        preview(w)->actualSize();
+        preview(w)->verticalScrollBar()->setValue(300);
+        const auto scroll = preview(w)->verticalScrollBar()->value();
+        QVERIFY(f.manager.record(session, picture(Qt::blue, {600, 4000}), HistorySource::Overlay)
+                    .success);
+        QCOMPARE(thumbnails(w)->count(), 1);
+        QCOMPARE(selected(w), id);
+        QCOMPARE(preview(w)->image().pixelColor(0, 0), QColor(Qt::blue));
+        QCOMPARE(preview(w)->zoom(), qreal(1));
+        QCOMPARE(preview(w)->verticalScrollBar()->value(), scroll);
+    }
     void emptyHistory()
     {
         Fixture f;
@@ -323,6 +405,7 @@ class HistoryWindowTest final : public QObject
         QCOMPARE(thumbnails(w)->flow(), QListView::LeftToRight);
         child<QToolButton>(w, "historyToggleGroups")->click();
         QVERIFY(!child<QListWidget>(w, "historyGroups")->isVisible());
+        QVERIFY(!child<QSplitter>(w, "historySplitter")->widget(0)->isVisible());
         QVERIFY(child<QComboBox>(w, "historyGroupCombo")->isVisible());
         choose(w, group.group.id);
         QVERIFY(child<QLabel>(w, "historyEmpty")->text().contains(QStringLiteral("此分组")));

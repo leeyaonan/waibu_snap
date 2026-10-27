@@ -1,8 +1,8 @@
 #pragma once
-#include "app/history_manager.h"
-#include "output/image_output.h"
+#include "ui/history_resource_source.h"
 #include <QGraphicsView>
 #include <QWidget>
+#include <optional>
 class QComboBox;
 class QLabel;
 class QListWidget;
@@ -10,20 +10,13 @@ class QSplitter;
 class QToolButton;
 namespace waibusnap
 {
-struct HistoryWindowActions
-{
-    std::function<ImageOutputResult(const QImage&)> copyImage;
-    std::function<ImageOutputResult(const QImage&)> pinImage;
-    HistoryTrash trash;
-    HistoryTrash reveal;
-};
 class HistoryImageItem;
 class HistoryImageView final : public QGraphicsView
 {
     Q_OBJECT
   public:
     explicit HistoryImageView(QWidget* parent = nullptr);
-    void setImage(QImage image);
+    void setImage(QImage image, bool preserveView = false);
     QImage image() const;
     qreal zoom() const { return transform().m11(); }
     void fitImage();
@@ -59,36 +52,39 @@ class HistoryWindow final : public QWidget
     bool eventFilter(QObject* watched, QEvent* event) override;
 
   private:
+    void refreshFromSource();
     void rebuildGroups(const QString& view);
     void editGroupName(const QString& groupId = {});
     void showGroupMenu(const QPoint& point);
-    void openGroupSettings(const QString& groupId);
-    void deleteGroup(const QString& groupId);
     void selectView(const QString& view, bool useDefaultSort);
-    void rebuildItems(const QString& selected);
+    void rebuildItems(const QString& selected, int fallbackRow = 0);
     void showSelection();
     QString selectedId() const;
+    std::optional<ResourceItem> findItem(const QString& id) const;
     void updateActions();
     void toggleStar();
     void outputImage(bool pin, bool closeAfter = false);
     void deleteSelection();
     void updateNotice();
     void updateStatus();
-    void showActionResult(const HistoryStatus& result);
+    void showActionResult(const ResourceStatus& result);
     void scheduleThumbnails();
     void loadVisibleThumbnails();
     void updateLayout();
     void restoreWindowState(const HistoryWindowState& state);
     void saveWindowState();
-    HistoryManager& manager_;
+    HistoryResourceSource* historySource_;
+    ResourceSource* source_;
     AppSettings settings_;
-    HistoryWindowActions actions_;
-    HistorySnapshot snapshot_;
-    QVector<HistoryItem> items_;
+    ResourceSnapshot snapshot_;
+    QVector<ResourceItem> items_;
+    QString displayedId_;
+    bool displayedOriginal_ = false;
     QString view_ = QStringLiteral("all");
-    HistorySort order_ = HistorySort::NewestFirst;
+    ResourceSort order_ = ResourceSort::NewestFirst;
     QListWidget* groups_;
     QListWidget* thumbnails_;
+    QComboBox* sourceCombo_;
     QComboBox* groupCombo_;
     QComboBox* sortCombo_;
     QToolButton* collapse_;

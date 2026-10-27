@@ -78,9 +78,11 @@ class HistoryManager final : public QObject
     void currentGroupChanged(QString groupId);
     void groupsChanged();
     void cleanupFinished();
+    void itemsChanged();
 
   private:
     friend struct HistoryCleanupExecutionTestAccess;
+    HistoryCleanupReport runCleanupInternal(qint64 nowMs, bool notifyItems);
     HistoryStatus status(QString error = {});
     HistoryStatus persistCurrentGroup(const QString& groupId);
     AppSettings settings_;
