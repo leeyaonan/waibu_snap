@@ -1,5 +1,6 @@
 #include "app/application_controller.h"
 #include "ui/quick_gunner_resource_source.h"
+#include <QApplication>
 #include <QComboBox>
 #include <QFile>
 #include <QFileSystemWatcher>
@@ -122,11 +123,35 @@ struct Fixture
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
 };
+void answerClearConfirmation(HistoryWindow* window, QMessageBox::StandardButton button,
+                             bool* sawCancelDefault = nullptr)
+{
+    // Windows 上 QTimer::singleShot(0) 可能先于 QMessageBox::exec 执行，
+    // 导致模态框无人关闭。改为在嵌套事件循环内轮询，直到确认框真正出现。
+    auto* timer = new QTimer(window);
+    timer->setInterval(10);
+    QObject::connect(timer, &QTimer::timeout, window,
+                     [window, timer, button, sawCancelDefault]
+                     {
+                         auto* confirm = window->findChild<QMessageBox*>(
+                             QStringLiteral("resourceClearConfirm"));
+                         if (!confirm)
+                             return;
+                         if (sawCancelDefault)
+                             *sawCancelDefault =
+                                 confirm->defaultButton() == confirm->button(QMessageBox::Cancel);
+                         timer->stop();
+                         timer->deleteLater();
+                         confirm->done(button);
+                     });
+    timer->start();
+}
 }
 class QuickGunnerResourceTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void initTestCase() { QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs); }
     void scanFlatImagesAndFields()
     {
         Fixture f;
@@ -445,26 +470,11 @@ class QuickGunnerResourceTest final : public QObject
         QCOMPARE(child<QListWidget>(w, "historyThumbnails")->count(), 1);
         auto* clear = child<QToolButton>(w, "resourceClearAll");
         bool sawConfirmation = false;
-        QTimer::singleShot(
-            0, w,
-            [&]
-            {
-                auto* confirm = w->findChild<QMessageBox*>(QStringLiteral("resourceClearConfirm"));
-                sawConfirmation =
-                    confirm && confirm->defaultButton() == confirm->button(QMessageBox::Cancel);
-                if (confirm)
-                    confirm->done(QMessageBox::Cancel);
-            });
+        answerClearConfirmation(w, QMessageBox::Cancel, &sawConfirmation);
         clear->click();
         QVERIFY(sawConfirmation);
         QCOMPARE(f.source->snapshot().items.size(), 2);
-        QTimer::singleShot(0, w,
-                           [&]
-                           {
-                               if (auto* confirm = w->findChild<QMessageBox*>(
-                                       QStringLiteral("resourceClearConfirm")))
-                                   confirm->done(QMessageBox::Yes);
-                           });
+        answerClearConfirmation(w, QMessageBox::Yes);
         clear->click();
         QVERIFY(f.source->snapshot().items.isEmpty());
         QCOMPARE(f.trashed.size(), 2);
