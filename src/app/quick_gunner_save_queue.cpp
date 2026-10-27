@@ -35,7 +35,8 @@ void QuickGunnerSaveQueue::enqueue(QImage image)
 {
     if (image.isNull())
     {
-        emit failed(QStringLiteral("快枪手图片为空，无法保存。"));
+        if (!failureEpisode_)
+            emit failed(QStringLiteral("快枪手图片为空，无法保存。"));
         return;
     }
     if (image.sizeInBytes() > maximumBytes)
@@ -63,6 +64,8 @@ void QuickGunnerSaveQueue::bound()
         oldest.pop_front();
         ++count;
     }
+    if (retries_.empty() && !retryInFlight_)
+        failureEpisode_ = false;
     if (count)
         emit dropped(count);
 }
@@ -77,29 +80,33 @@ void QuickGunnerSaveQueue::pump()
     if (saving_)
         return;
     retryTimer_.stop();
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    const auto due = std::find_if(retries_.begin(), retries_.end(),
+                                  [now](const Frame& item) { return item.retryAt <= now; });
     Frame frame;
-    if (!waiting_.empty())
+    // 到期重试始终优先；新帧不等待未到期项，但也不能让失败帧长期饿死。
+    if (due != retries_.end())
+    {
+        frame = std::move(*due);
+        retries_.erase(due);
+        retryInFlight_ = true;
+    }
+    else if (!waiting_.empty())
     {
         frame = std::move(waiting_.front());
         waiting_.pop_front();
+        retryInFlight_ = false;
     }
     else
     {
-        if (retries_.empty())
-            return;
-        const auto now = QDateTime::currentMSecsSinceEpoch();
-        const auto due = std::find_if(retries_.begin(), retries_.end(),
-                                      [now](const Frame& item) { return item.retryAt <= now; });
-        if (due == retries_.end())
+        if (!retries_.empty())
         {
             const auto first = std::min_element(retries_.begin(), retries_.end(),
                                                 [](const Frame& a, const Frame& b)
                                                 { return a.retryAt < b.retryAt; });
             retryTimer_.start(int(std::min(first->retryAt - now, qint64(2000))));
-            return;
         }
-        frame = std::move(*due);
-        retries_.erase(due);
+        return;
     }
     pendingBytes_ -= frame.image.sizeInBytes();
     saving_ = true;
@@ -112,8 +119,13 @@ void QuickGunnerSaveQueue::pump()
                 [this, frame = std::move(frame), result = std::move(result), directory]() mutable
                 {
                     saving_ = false;
+                    retryInFlight_ = false;
                     if (result.result.success)
+                    {
+                        if (retries_.empty())
+                            failureEpisode_ = false;
                         emit saved(result.path);
+                    }
                     else
                     {
                         // 更换目录期间失败的在途帧也立即重试；仍保留快门时的格式与时间。
@@ -126,8 +138,11 @@ void QuickGunnerSaveQueue::pump()
                                              [](const Frame& item, quint64 sequence)
                                              { return item.sequence < sequence; });
                         retries_.insert(position, std::move(frame));
+                        const bool notify = !failureEpisode_;
+                        failureEpisode_ = true;
                         bound();
-                        emit failed(result.result.explanation);
+                        if (notify)
+                            emit failed(result.result.explanation);
                     }
                     pump();
                 },

@@ -25,6 +25,20 @@ struct ApplicationControllerTestAccess
             controller.resolvingQuit_ = enabled;
         controller.refreshQuickGunnerActions();
     }
+    static void installForFramingTest(ApplicationController& controller,
+                                      std::unique_ptr<QuickGunnerController> quickGunner,
+                                      std::unique_ptr<DisplayTopology> displays,
+                                      std::unique_ptr<CaptureProvider> capture)
+    {
+        controller.quickGunner_ = std::move(quickGunner);
+        controller.displays_ = std::move(displays);
+        controller.capture_ = std::move(capture);
+    }
+    static QuickGunnerController& quickGunner(ApplicationController& controller)
+    {
+        return *controller.quickGunner_;
+    }
+    static quint64 token(ApplicationController& controller) { return controller.token_; }
     static QImage watermark(ApplicationController& controller, const QImage& image)
     {
         return controller.quickGunnerWatermark(image);
@@ -298,6 +312,30 @@ class QuickGunnerCaptureTest : public QObject
         QCOMPARE(ApplicationControllerTestAccess::watermark(controller, image), image);
         QVERIFY(ApplicationControllerTestAccess::warned(controller));
         QCOMPARE(ApplicationControllerTestAccess::watermark(controller, image), image);
+    }
+    void framingGuardsOrdinaryScreenshot()
+    {
+        Harness h;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.temp.filePath(QStringLiteral("application.ini"));
+        ApplicationController controller(*qobject_cast<QApplication*>(qApp), options);
+        ApplicationControllerTestAccess::installForFramingTest(controller, std::move(h.controller),
+                                                               std::make_unique<Displays>(),
+                                                               std::make_unique<Capture>());
+        auto& quickGunner = ApplicationControllerTestAccess::quickGunner(controller);
+        QVERIFY(quickGunner.beginFraming().isEmpty());
+        QCOMPARE(quickGunner.state(), QuickGunnerController::State::Framing);
+        const auto token = ApplicationControllerTestAccess::token(controller);
+        controller.trigger(QStringLiteral("hotkey"));
+        QVERIFY(!controller.active());
+        QCOMPARE(ApplicationControllerTestAccess::token(controller), token);
+        QCOMPARE(quickGunner.state(), QuickGunnerController::State::Framing);
+        // 取消框选后，普通截图恢复，使用 fake 采集避免测试读取真实屏幕。
+        quickGunner.deactivate();
+        controller.trigger(QStringLiteral("hotkey"));
+        QVERIFY(controller.active());
+        QVERIFY(ApplicationControllerTestAccess::token(controller) > token);
     }
     void trayEntriesAndGuards()
     {

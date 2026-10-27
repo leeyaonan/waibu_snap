@@ -1,5 +1,6 @@
 #include "app/quick_gunner_save_queue.h"
 #include <QDir>
+#include <QElapsedTimer>
 #include <QSemaphore>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -112,7 +113,8 @@ class QuickGunnerSaveQueueTest : public QObject
         QCOMPARE(queue.pendingCount(), 1);
         QCOMPARE(queue.retryCount(), 1);
         queue.enqueue(picture(Qt::green));
-        QTRY_COMPARE(failed.size(), 2);
+        QTRY_COMPARE(queue.retryCount(), 2);
+        QCOMPARE(failed.size(), 1);
         QCOMPARE(queue.pendingCount(), 2);
         QVERIFY(QDir().mkdir(directory));
         // 不调用 retryNow，验证 2 秒定时恢复。
@@ -120,13 +122,97 @@ class QuickGunnerSaveQueueTest : public QObject
         QCOMPARE(queue.pendingCount(), 0);
         QVERIFY(QDir(directory).removeRecursively());
         queue.enqueue(picture(Qt::blue));
-        QTRY_COMPARE(failed.size(), 3);
+        QTRY_COMPARE(failed.size(), 2);
         const auto other = temp.filePath(QStringLiteral("new-shots"));
         QVERIFY(QDir().mkdir(other));
         queue.setDirectory(other);
         queue.retryNow();
         QTRY_COMPARE(saved.size(), 3);
         QVERIFY(saved.last()[0].toString().startsWith(other));
+    }
+    void retriesPrecedeWaiting_data()
+    {
+        QTest::addColumn<bool>("immediate");
+        QTest::newRow("due-after-two-seconds") << false;
+        QTest::newRow("retry-now-with-backlog") << true;
+    }
+    void retriesPrecedeWaiting()
+    {
+        QFETCH(bool, immediate);
+        QTemporaryDir temp;
+        const auto directory = temp.filePath(QStringLiteral("shots"));
+        QSemaphore gate;
+        std::atomic<bool> blocked{false};
+        QuickGunnerSaveActions actions;
+        actions.write =
+            [&](const QImage& image, const QString& target, ImageFormat format, QDateTime stamp)
+        {
+            if (image.pixelColor(0, 0).red() == 2)
+            {
+                blocked = true;
+                gate.acquire();
+            }
+            return exportImageToNewPath(image, target, format, stamp);
+        };
+        QuickGunnerSaveQueue queue(AppSettings(temp.filePath(QStringLiteral("settings.ini"))),
+                                   actions);
+        Release release{gate};
+        queue.setDirectory(directory);
+        QSignalSpy saved(&queue, &QuickGunnerSaveQueue::saved);
+        queue.enqueue(picture(QColor(1, 0, 0)));
+        QTRY_COMPARE(queue.retryCount(), 1);
+        queue.enqueue(picture(QColor(2, 0, 0)));
+        QTRY_VERIFY(blocked.load());
+        queue.enqueue(picture(QColor(3, 0, 0)));
+        queue.enqueue(picture(QColor(4, 0, 0)));
+        QCOMPARE(queue.pendingCount(), 4);
+        QVERIFY(QDir().mkdir(directory));
+        QElapsedTimer elapsed;
+        elapsed.start();
+        if (immediate)
+            queue.retryNow();
+        else
+            QTest::qWait(2100);
+        // 当前写入结束时 waiting 仍非空，下一次写入必须优先补旧帧。
+        gate.release();
+        QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 4, 1000);
+        QCOMPARE(QImage(saved[0][0].toString()).pixelColor(0, 0).red(), 2);
+        QCOMPARE(QImage(saved[1][0].toString()).pixelColor(0, 0).red(), 1);
+        QCOMPARE(QImage(saved[2][0].toString()).pixelColor(0, 0).red(), 3);
+        QCOMPARE(QImage(saved[3][0].toString()).pixelColor(0, 0).red(), 4);
+        QVERIFY(elapsed.elapsed() < (immediate ? 1000 : 3500));
+    }
+    void failureEpisodeThrottlesButKeepsRetrying()
+    {
+        QTemporaryDir temp;
+        const auto directory = temp.filePath(QStringLiteral("shots"));
+        std::atomic<int> attempts{0};
+        QuickGunnerSaveActions actions;
+        actions.write =
+            [&](const QImage& image, const QString& target, ImageFormat format, QDateTime stamp)
+        {
+            ++attempts;
+            return exportImageToNewPath(image, target, format, stamp);
+        };
+        QuickGunnerSaveQueue queue(AppSettings(temp.filePath(QStringLiteral("settings.ini"))),
+                                   actions);
+        queue.setDirectory(directory);
+        QSignalSpy failed(&queue, &QuickGunnerSaveQueue::failed);
+        QSignalSpy saved(&queue, &QuickGunnerSaveQueue::saved);
+        queue.enqueue(picture());
+        QTRY_COMPARE(failed.size(), 1);
+        // 初次失败后继续按 2 秒间隔重试三次，通知仍只发一次。
+        QTRY_VERIFY_WITH_TIMEOUT(attempts.load() >= 4, 8000);
+        QTRY_COMPARE(queue.retryCount(), 1);
+        QCOMPARE(failed.size(), 1);
+        QVERIFY(QDir().mkdir(directory));
+        queue.retryNow();
+        QTRY_COMPARE(saved.size(), 1);
+        QCOMPARE(queue.pendingCount(), 0);
+        QVERIFY(QDir(directory).removeRecursively());
+        queue.enqueue(picture(Qt::green));
+        QTRY_COMPARE(failed.size(), 2);
+        QCOMPARE(queue.retryCount(), 1);
     }
     void retryBoundedAndOversized()
     {
@@ -138,7 +224,8 @@ class QuickGunnerSaveQueueTest : public QObject
         for (int i = 0; i < 10; ++i)
         {
             queue.enqueue(picture(QColor(i, 0, 0)));
-            QTRY_COMPARE(failed.size(), i + 1);
+            QTRY_COMPARE(queue.retryCount(), qMin(i + 1, 8));
+            QCOMPARE(failed.size(), 1);
         }
         QCOMPARE(queue.pendingCount(), 8);
         QCOMPARE(queue.retryCount(), 8);

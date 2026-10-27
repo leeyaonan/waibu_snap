@@ -861,6 +861,13 @@ void ApplicationController::openHistory()
 }
 void ApplicationController::trigger(const QString& source)
 {
+    if (quickGunner_ && quickGunner_->state() == QuickGunnerController::State::Framing)
+    {
+        if (!options_.testMode && !options_.smokeTest)
+            tray_.showMessage(QStringLiteral("快枪手"), QStringLiteral("请先完成或取消机位框选"),
+                              QSystemTrayIcon::Information);
+        return;
+    }
     const qint64 t0 = monotonicNs();
     if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
     {

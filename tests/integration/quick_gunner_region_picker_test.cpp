@@ -351,6 +351,10 @@ class QuickGunnerRegionPickerTest final : public QObject
         QPointer<QuickGunnerRegionPicker> picker = new QuickGunnerRegionPicker(frame());
         picker->show();
         QCOMPARE(picker->geometry(), frame().display.logicalGeometry);
+        QCOMPARE(picker->windowFlags() & Qt::WindowType_Mask, Qt::WindowFlags(Qt::Tool));
+        QVERIFY(picker->testAttribute(Qt::WA_MacAlwaysShowToolWindow));
+        QVERIFY(!picker->testAttribute(Qt::WA_ShowWithoutActivating));
+        QVERIFY(!picker->windowFlags().testFlag(Qt::WindowTransparentForInput));
         QVERIFY(picker->windowFlags().testFlag(Qt::FramelessWindowHint));
         QVERIFY(picker->windowFlags().testFlag(Qt::WindowStaysOnTopHint));
         QSignalSpy selected(picker, &QuickGunnerRegionPicker::regionSelected);

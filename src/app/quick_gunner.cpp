@@ -336,7 +336,8 @@ void QuickGunnerController::pumpCapture()
         return;
     const auto request = std::move(pending_.front());
     pending_.pop_front();
-    flash_->hide();
+    if (flash_)
+        flash_->hide();
     capturing_ = true;
     const auto token = ++captureToken_;
     once_ = captureFactory_();
@@ -372,7 +373,8 @@ void QuickGunnerController::pumpCapture()
                             QPoint(qRound(rect.x() / dpr), qRound(rect.y() / dpr)),
                         QSize(qRound(rect.width() / dpr), qRound(rect.height() / dpr)));
                     emit self->shotCaptured(logical);
-                    self->flash_->flash(logical);
+                    if (self->flash_)
+                        self->flash_->flash(logical);
                 }
                 if (self)
                     self->pumpCapture();

@@ -53,5 +53,7 @@ class QuickGunnerSaveQueue final : public QObject
     qint64 pendingBytes_ = 0;
     quint64 sequence_ = 0;
     bool saving_ = false;
+    bool retryInFlight_ = false;
+    bool failureEpisode_ = false;
 };
 }
