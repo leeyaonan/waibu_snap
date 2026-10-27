@@ -92,6 +92,12 @@ class ApplicationController final : public QObject
     void refreshStickerActions();
     void refreshQuickGunnerActions();
     bool quickGunnerActionsEnabled() const;
+    void connectQuickGunner();
+    void setQuickGunnerMode(bool enabled);
+    void quickGunnerShutter();
+    bool chooseQuickGunnerDirectory();
+    QStringList reservedQuickGunnerDirectories() const;
+    void showQuickGunnerNotice(const QString& notice);
     QImage quickGunnerWatermark(const QImage& image);
     void setHistoryMenusInstalled(bool installed);
     void rebuildCurrentGroupMenu();
@@ -107,7 +113,9 @@ class ApplicationController final : public QObject
     RunOptions options_;
     QAction* scrollAction_ = nullptr;
     QMenu* quickGunnerMenu_ = nullptr;
-    QAction* quickGunnerShootAction_ = nullptr;
+    QAction* quickGunnerModeAction_ = nullptr;
+    bool quickGunnerModeRequested_ = false;
+    bool quickGunnerActivationPending_ = false;
     QAction* quickGunnerFrameAction_ = nullptr;
     QAction* quickGunnerDirectoryAction_ = nullptr;
     QAction* quickGunnerStatusAction_ = nullptr;

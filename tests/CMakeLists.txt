@@ -373,6 +373,8 @@ add_test(NAME history_settings COMMAND history_settings_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/history_settings-output.txt,txt")
 set_tests_properties(history_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 add_test(NAME history_settings_high_dpi COMMAND history_settings_test
+    quickGunnerEditorExists quickGunnerHotkeyConflicts quickGunnerHotkeySaveRetryAndCancel
+    controllerQuickGunnerSettingsCallback
     pageControlsAndUsage groupsPageShowsAllGroupsAndIndependentDirectories
     privacyOptInRequiresAcknowledgement controllerPrivacyOptInAndEnable
     directoryChooseClearCancelAndEscape rootSwitchAndNoMigration
@@ -434,7 +436,8 @@ add_test(NAME quick_gunner_region_picker COMMAND quick_gunner_region_picker_test
     "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-region-picker-output.txt,txt")
 set_tests_properties(quick_gunner_region_picker PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 add_test(NAME quick_gunner_region_picker_high_dpi COMMAND quick_gunner_region_picker_test
-    pickerGeometryAndReplacement pickerClampMinimumAndEscape pickerPaintAndClose -o
+    pickerGeometryAndReplacement pickerClampMinimumAndEscape pickerPaintAndClose
+    activateAfterSelection activeReframingOutcomes activeResumeKeepsChangedDisplay -o
     "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-region-picker-high-dpi-output.txt,txt")
 set_tests_properties(quick_gunner_region_picker_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 30)

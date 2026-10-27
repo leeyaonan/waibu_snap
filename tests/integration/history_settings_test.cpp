@@ -162,6 +162,144 @@ class HistorySettingsTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void quickGunnerEditorExists()
+    {
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const auto&) { return QString(); }, {}, nullptr, {},
+            startup());
+        dialog.show();
+        auto* editor =
+            dialog.findChild<QKeySequenceEdit*>(QStringLiteral("quickGunnerHotkeyEditor"));
+        QVERIFY(editor);
+        QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F2));
+        QCOMPARE(editor->maximumSequenceLength(), qsizetype(1));
+        QVERIFY(editor->isVisible());
+        QVERIFY(!editor->visibleRegion().isEmpty());
+        QVERIFY(dialog.rect().contains(QRect(editor->mapTo(&dialog, QPoint()), editor->size())));
+    }
+    void quickGunnerHotkeyConflicts_data()
+    {
+        QTest::addColumn<int>("key");
+        for (int key : {int(Qt::Key_F1), int(Qt::Key_F7), int(Qt::Key_F8), int(Qt::Key_F9), 0})
+            QTest::newRow(qPrintable(QString::number(key))) << key;
+    }
+    void quickGunnerHotkeyConflicts()
+    {
+        QFETCH(int, key);
+        int writes = 0;
+        SaveSettingsActions actions;
+        actions.saveQuickGunnerHotkey = [&](const auto&)
+        {
+            ++writes;
+            return QString();
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(),
+            [&](const auto&)
+            {
+                ++writes;
+                return QString();
+            },
+            {}, nullptr, actions, startup());
+        dialog.show();
+        auto* editor = child<QKeySequenceEdit>(&dialog, "quickGunnerHotkeyEditor");
+        editor->setKeySequence(key ? QKeySequence(key) : QKeySequence());
+        save(dialog);
+        QCOMPARE(writes, 0);
+        QVERIFY(dialog.isVisible());
+        auto text = child<QLabel>(&dialog, "settingsStatus")->text();
+        QVERIFY(text.contains(QStringLiteral("快枪手快门")));
+        // 反向冲突也在任何写入前拦截。
+        editor->setKeySequence(QKeySequence(Qt::Key_F2));
+        child<QKeySequenceEdit>(&dialog, "hotkeyEditor")->setKeySequence(QKeySequence(Qt::Key_F2));
+        save(dialog);
+        QCOMPARE(writes, 0);
+        QVERIFY(dialog.isVisible());
+    }
+    void quickGunnerHotkeySaveRetryAndCancel_data()
+    {
+        QTest::addColumn<int>("decision");
+        QTest::newRow("save-retry") << 0;
+        QTest::newRow("cancel") << 1;
+        QTest::newRow("escape") << 2;
+    }
+    void quickGunnerHotkeySaveRetryAndCancel()
+    {
+        QFETCH(int, decision);
+        Fixture f;
+        int calls = 0;
+        SaveSettingsActions actions;
+        actions.quickGunnerHotkey = QKeySequence(Qt::Key_F3);
+        QVERIFY(f.settings.saveHotkey(actions.quickGunnerHotkey, HotkeyAction::QuickGunnerShutter)
+                    .isEmpty());
+        actions.saveQuickGunnerHotkey = [&](const QKeySequence& sequence)
+        {
+            if (++calls == 1)
+                return QStringLiteral("快门注册失败，原绑定保留");
+            return f.settings.saveHotkey(sequence, HotkeyAction::QuickGunnerShutter);
+        };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const auto&) { return QString(); }, {}, nullptr, actions,
+            startup());
+        dialog.show();
+        auto* editor = child<QKeySequenceEdit>(&dialog, "quickGunnerHotkeyEditor");
+        QCOMPARE(editor->keySequence(), actions.quickGunnerHotkey);
+        editor->setKeySequence(QKeySequence(Qt::Key_F4));
+        if (decision)
+        {
+            if (decision == 1)
+                child<QPushButton>(&dialog, "cancelSettingsButton")->click();
+            else
+                QTest::keyClick(editor, Qt::Key_Escape);
+            QCOMPARE(calls, 0);
+            QCOMPARE(dialog.result(), int(QDialog::Rejected));
+        }
+        else
+        {
+            save(dialog);
+            QCOMPARE(calls, 1);
+            QVERIFY(dialog.isVisible());
+            QCOMPARE(f.settings.loadHotkey(HotkeyAction::QuickGunnerShutter).sequence,
+                     actions.quickGunnerHotkey);
+            QVERIFY(child<QLabel>(&dialog, "settingsStatus")
+                        ->text()
+                        .contains(QStringLiteral("注册失败")));
+            save(dialog);
+            QCOMPARE(calls, 2);
+            QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        }
+        QCOMPARE(f.settings.loadHotkey(HotkeyAction::QuickGunnerShutter).sequence,
+                 decision ? actions.quickGunnerHotkey : QKeySequence(Qt::Key_F4));
+    }
+    void controllerQuickGunnerSettingsCallback()
+    {
+        Fixture f;
+        auto fake = std::make_unique<FakeHotkey>();
+        auto* raw = fake.get();
+        ApplicationController c(*qApp, options(f), {}, {}, startup(), {}, {}, std::move(fake));
+        ApplicationControllerTestAccess::initializeHotkeys(c);
+        QTimer::singleShot(0,
+                           [&]
+                           {
+                               auto* dialog =
+                                   qobject_cast<SettingsDialog*>(QApplication::activeModalWidget());
+                               QVERIFY(dialog);
+                               auto* editor =
+                                   child<QKeySequenceEdit>(dialog, "quickGunnerHotkeyEditor");
+                               QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F2));
+                               editor->setKeySequence(QKeySequence(Qt::Key_F3));
+                               save(*dialog);
+                           });
+        child<QAction>(c.menu(), "settingsAction")->trigger();
+        QCOMPARE(ApplicationControllerTestAccess::shutter(c).currentSequence(),
+                 QKeySequence(Qt::Key_F3));
+        QCOMPARE(AppSettings(options(f).settingsFile)
+                     .loadHotkey(HotkeyAction::QuickGunnerShutter)
+                     .sequence,
+                 QKeySequence(Qt::Key_F3));
+        QCOMPARE(raw->attempts.size(), 4);
+        QVERIFY(!ApplicationControllerTestAccess::shutter(c).registered());
+    }
     void pageControlsAndUsage()
     {
         Fixture f;

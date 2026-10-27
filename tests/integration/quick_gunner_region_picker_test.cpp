@@ -449,6 +449,58 @@ class QuickGunnerRegionPickerTest final : public QObject
         QVERIFY(restored.activate({}).isEmpty());
         QCOMPARE(h.capture.calls, 2);
     }
+    void activateAfterSelection_data()
+    {
+        QTest::addColumn<int>("outcome");
+        QTest::newRow("select") << 0;
+        QTest::newRow("cancel") << 1;
+        QTest::newRow("capture-failure") << 2;
+        QTest::newRow("invalid-selection") << 3;
+        QTest::newRow("explicit-deactivate") << 4;
+    }
+    void activateAfterSelection()
+    {
+        QFETCH(int, outcome);
+        Harness h;
+        QVERIFY(h.controller.setDirectory(h.temp.path(), {}).isEmpty());
+        QVERIFY(h.controller.beginFraming(nullptr, true).isEmpty());
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Framing);
+        if (outcome == 2)
+            h.capture.complete(0, {{}, CaptureError::Unavailable, QStringLiteral("采集失败")});
+        else if (outcome == 4)
+        {
+            h.controller.deactivate();
+            h.capture.complete();
+        }
+        else
+        {
+            h.capture.complete();
+            QVERIFY(h.picker);
+            if (outcome == 1)
+                h.picker->cancel();
+            else
+                h.picker->select(outcome == 0 ? QRect(20, 40, 100, 80) : QRect(0, 0, 1, 1));
+        }
+        QCOMPARE(h.controller.active(), outcome == 0);
+        if (outcome != 0)
+        {
+            QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+            QVERIFY(!h.controller.preferences().region);
+        }
+        else
+        {
+            // 调整机位取消仍恢复 Active，并且下一次普通框选不会沿用 activateAfter。
+            QVERIFY(h.controller.beginFraming().isEmpty());
+            h.capture.complete(1);
+            h.picker->cancel();
+            QVERIFY(h.controller.active());
+            h.controller.deactivate();
+            QVERIFY(h.controller.beginFraming().isEmpty());
+            h.capture.complete(2);
+            h.picker->select({20, 40, 100, 80});
+            QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+        }
+    }
     void activeReframingOutcomes_data()
     {
         QTest::addColumn<QString>("outcome");
@@ -541,13 +593,13 @@ class QuickGunnerRegionPickerTest final : public QObject
         h.picker->cancel();
         QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
     }
-    void activeResumeRejectsChangedDisplay_data()
+    void activeResumeKeepsChangedDisplay_data()
     {
         QTest::addColumn<bool>("captureFailed");
         QTest::newRow("cancel-after-layout-change") << false;
         QTest::newRow("capture-fails-after-layout-change") << true;
     }
-    void activeResumeRejectsChangedDisplay()
+    void activeResumeKeepsChangedDisplay()
     {
         QFETCH(bool, captureFailed);
         Harness h;
@@ -562,7 +614,7 @@ class QuickGunnerRegionPickerTest final : public QObject
             h.capture.complete(1, {{}, CaptureError::Unavailable, QStringLiteral("采集失败")});
         else
             h.picker->cancel();
-        QCOMPARE(h.controller.state(), QuickGunnerController::State::Idle);
+        QCOMPARE(h.controller.state(), QuickGunnerController::State::Active);
         QCOMPARE(h.controller.preferences().region->toJson(), previous);
         QCOMPARE(notices.size(), 1);
         const auto notice = notices.at(0).at(0).toString();

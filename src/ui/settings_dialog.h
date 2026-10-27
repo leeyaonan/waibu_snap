@@ -38,6 +38,8 @@ struct SaveSettingsActions
     // nullopt = 从未配置；关闭设置页时不应把未配置误写成 false。
     std::optional<bool> stickerDoubleClickClose;
     std::function<QString(bool)> saveStickerDoubleClickClose;
+    QKeySequence quickGunnerHotkey = QKeySequence(Qt::Key_F2);
+    std::function<QString(const QKeySequence&)> saveQuickGunnerHotkey;
 };
 struct HistorySettingsActions
 {
@@ -107,6 +109,7 @@ class SettingsDialog final : public QDialog
     QDoubleSpinBox* ratioWidthInput_ = nullptr;
     QDoubleSpinBox* ratioHeightInput_ = nullptr;
     QKeySequenceEdit* editor_ = nullptr;
+    QKeySequenceEdit* quickGunnerEditor_ = nullptr;
     QLabel* historyUsage_ = nullptr;
     QLabel* status_ = nullptr;
     SaveHotkey saveHotkey_;

@@ -19,6 +19,7 @@
 #include <QPushButton>
 #include <QScopedValueRollback>
 #include <QScreen>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <algorithm>
 namespace waibusnap
@@ -34,7 +35,8 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
       hotkey_(hotkey ? std::move(hotkey) : createGlobalHotkey()), settings_(options_.settingsFile),
       history_(settings_, options_.historyRoot), watermarks_(settings_),
       hotkeySettings_(settings_, *hotkey_, [this] { trigger(QStringLiteral("hotkey")); }),
-      quickGunnerHotkey_(std::make_unique<QuickGunnerHotkey>(settings_, *hotkey_, [] {})),
+      quickGunnerHotkey_(std::make_unique<QuickGunnerHotkey>(settings_, *hotkey_,
+                                                             [this] { quickGunnerShutter(); })),
       displays_(createDisplayTopology()), capture_(createCaptureProvider()),
       windows_(createWindowEnumerator()),
       stickers_(nullptr,
@@ -91,22 +93,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     quickGunner_ = std::make_unique<QuickGunnerController>(settings_, *displays_, *capture_,
                                                            RegionPickerFactory{},
                                                            std::move(quickGunnerDependencies));
-    const auto quickGunnerNotice = [this](const QString& error)
-    {
-        if (!error.isEmpty() && !options_.testMode && !options_.smokeTest)
-            tray_.showMessage(QStringLiteral("快枪手"), error, QSystemTrayIcon::Warning);
-    };
-    connect(quickGunner_.get(), &QuickGunnerController::noticeChanged, this, quickGunnerNotice);
-    connect(quickGunner_.get(), &QuickGunnerController::shotFailed, this, quickGunnerNotice);
-    connect(quickGunner_.get(), &QuickGunnerController::shotsDropped, this,
-            [quickGunnerNotice](int count) {
-                quickGunnerNotice(
-                    QStringLiteral("快枪手队列已满，已丢弃 %1 张待处理图片。").arg(count));
-            });
-    connect(quickGunner_.get(), &QuickGunnerController::preferencesChanged, this,
-            &ApplicationController::refreshQuickGunnerActions);
-    connect(quickGunner_.get(), &QuickGunnerController::stateChanged, this,
-            &ApplicationController::refreshQuickGunnerActions);
+    connectQuickGunner();
     if (!historyActions_.copyImage)
         historyActions_.copyImage = copyImageToClipboard;
     if (!historyActions_.pinImage)
@@ -167,42 +154,21 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     quickGunnerMenu_->setObjectName(QStringLiteral("quickGunnerMenu"));
     quickGunnerMenu_->setToolTipsVisible(true);
     quickGunnerMenu_->menuAction()->setObjectName(QStringLiteral("quickGunnerMenuAction"));
-    quickGunnerShootAction_ =
-        quickGunnerMenu_->addAction(QStringLiteral("拍一张"), this,
-                                    [this, quickGunnerNotice]
-                                    {
-                                        if (quickGunnerActionsEnabled())
-                                            quickGunnerNotice(quickGunner_->shutter());
-                                    });
-    quickGunnerShootAction_->setObjectName(QStringLiteral("quickGunnerShootAction"));
+    quickGunnerModeAction_ = quickGunnerMenu_->addAction(QStringLiteral("快枪手模式"));
+    quickGunnerModeAction_->setObjectName(QStringLiteral("quickGunnerModeAction"));
+    quickGunnerModeAction_->setCheckable(true);
+    connect(quickGunnerModeAction_, &QAction::toggled, this,
+            &ApplicationController::setQuickGunnerMode);
     quickGunnerFrameAction_ =
         quickGunnerMenu_->addAction(QStringLiteral("调整拍摄区域…"), this,
-                                    [this, quickGunnerNotice]
+                                    [this]
                                     {
                                         if (quickGunnerActionsEnabled())
-                                            quickGunnerNotice(quickGunner_->beginFraming(nullptr));
+                                            showQuickGunnerNotice(quickGunner_->beginFraming());
                                     });
     quickGunnerFrameAction_->setObjectName(QStringLiteral("quickGunnerFrameAction"));
     quickGunnerDirectoryAction_ = quickGunnerMenu_->addAction(
-        QStringLiteral("选择快枪手目录…"), this,
-        [this, quickGunnerNotice]
-        {
-            if (!quickGunnerActionsEnabled())
-                return;
-            const auto directory = QFileDialog::getExistingDirectory(
-                nullptr, QStringLiteral("选择快枪手目录"), quickGunner_->preferences().directory);
-            if (directory.isEmpty() || !quickGunnerActionsEnabled())
-                return;
-            QStringList reserved;
-            if (historyEnabled_)
-            {
-                reserved << history_.rootDirectory();
-                for (const auto& group : history_.groups())
-                    if (history_.ready() && !group.absolutePath.isEmpty())
-                        reserved << group.absolutePath;
-            }
-            quickGunnerNotice(quickGunner_->setDirectory(directory, reserved));
-        });
+        QStringLiteral("选择快枪手目录…"), this, [this] { chooseQuickGunnerDirectory(); });
     quickGunnerDirectoryAction_->setObjectName(QStringLiteral("quickGunnerDirectoryAction"));
     quickGunnerStatusAction_ = quickGunnerMenu_->addAction(QString());
     quickGunnerStatusAction_->setObjectName(QStringLiteral("quickGunnerStatusAction"));
@@ -326,34 +292,148 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
 ApplicationController::~ApplicationController() { cleanup(); }
 bool ApplicationController::quickGunnerActionsEnabled() const
 {
-    return regionCaptureSupported() && !active_ && !settingsOpen_ && !quitting_ &&
-           !resolvingQuit_ && quickGunner_->state() != QuickGunnerController::State::Framing;
+    return regionCaptureSupported() && !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_;
+}
+void ApplicationController::connectQuickGunner()
+{
+    connect(quickGunner_.get(), &QuickGunnerController::noticeChanged, this,
+            &ApplicationController::showQuickGunnerNotice);
+    connect(quickGunner_.get(), &QuickGunnerController::shotFailed, this,
+            &ApplicationController::showQuickGunnerNotice);
+    connect(quickGunner_.get(), &QuickGunnerController::shotsDropped, this,
+            [this](int count) {
+                showQuickGunnerNotice(
+                    QStringLiteral("快枪手队列已满，已丢弃 %1 张待处理图片。").arg(count));
+            });
+    connect(quickGunner_.get(), &QuickGunnerController::preferencesChanged, this,
+            &ApplicationController::refreshQuickGunnerActions);
+    connect(quickGunner_.get(), &QuickGunnerController::stateChanged, this,
+            [this](QuickGunnerController::State state)
+            {
+                if (state == QuickGunnerController::State::Active)
+                {
+                    const auto error = quickGunnerHotkey_->activate();
+                    if (!error.isEmpty())
+                    {
+                        quickGunnerModeRequested_ = false;
+                        quickGunnerActivationPending_ = false;
+                        quickGunner_->deactivate();
+                        showQuickGunnerNotice(QStringLiteral("快枪手快门无法注册：") + error);
+                    }
+                    else
+                        quickGunnerActivationPending_ = false;
+                }
+                else
+                {
+                    quickGunnerHotkey_->deactivate();
+                    if (state == QuickGunnerController::State::Idle &&
+                        quickGunnerActivationPending_)
+                    {
+                        quickGunnerModeRequested_ = false;
+                        quickGunnerActivationPending_ = false;
+                    }
+                }
+                refreshQuickGunnerActions();
+            });
+}
+void ApplicationController::showQuickGunnerNotice(const QString& notice)
+{
+    if (notice.isEmpty())
+        return;
+    qWarning().noquote() << "快枪手：" + notice;
+    if (!options_.testMode && !options_.smokeTest)
+        tray_.showMessage(QStringLiteral("快枪手"), notice, QSystemTrayIcon::Warning);
+}
+QStringList ApplicationController::reservedQuickGunnerDirectories() const
+{
+    QStringList reserved;
+    const auto root = history_.rootDirectory();
+    reserved << (root.isEmpty() ? (options_.historyRoot.isEmpty()
+                                       ? settings_.loadHistoryPreferences().rootDirectory
+                                       : options_.historyRoot)
+                                : root);
+    for (const auto& group : history_.groups())
+        if (!group.absolutePath.isEmpty())
+            reserved << group.absolutePath;
+    return reserved;
+}
+bool ApplicationController::chooseQuickGunnerDirectory()
+{
+    if (!quickGunnerActionsEnabled())
+        return false;
+    const auto directory = QFileDialog::getExistingDirectory(
+        nullptr, QStringLiteral("选择快枪手目录"), quickGunner_->preferences().directory);
+    if (directory.isEmpty() || !quickGunnerActionsEnabled())
+        return false;
+    const auto error = quickGunner_->setDirectory(directory, reservedQuickGunnerDirectories());
+    showQuickGunnerNotice(error);
+    return error.isEmpty();
+}
+void ApplicationController::setQuickGunnerMode(bool enabled)
+{
+    if (!enabled)
+    {
+        quickGunnerModeRequested_ = false;
+        quickGunnerActivationPending_ = false;
+        quickGunner_->deactivate();
+    }
+    else if (quickGunnerActionsEnabled())
+    {
+        quickGunnerModeRequested_ = true;
+        if (quickGunner_->preferences().directory.isEmpty() && !chooseQuickGunnerDirectory())
+            quickGunnerModeRequested_ = false;
+        if (quickGunnerModeRequested_)
+        {
+            QString error;
+            if (!quickGunner_->preferences().region)
+            {
+                quickGunnerActivationPending_ = true;
+                error = quickGunner_->beginFraming(nullptr, true);
+            }
+            else
+                error = quickGunner_->activate(reservedQuickGunnerDirectories());
+            if (!error.isEmpty())
+            {
+                quickGunnerModeRequested_ = false;
+                quickGunnerActivationPending_ = false;
+                showQuickGunnerNotice(error);
+            }
+        }
+    }
+    refreshQuickGunnerActions();
+}
+void ApplicationController::quickGunnerShutter()
+{
+    if (!quickGunner_->active() || active_ || settingsOpen_ || quitting_ || resolvingQuit_)
+        return;
+    showQuickGunnerNotice(quickGunner_->shutter());
 }
 void ApplicationController::refreshQuickGunnerActions()
 {
     if (!quickGunnerStatusAction_)
         return;
+    const QSignalBlocker blocker(quickGunnerModeAction_);
+    quickGunnerModeAction_->setChecked(quickGunnerModeRequested_);
     for (auto* action :
-         {quickGunnerShootAction_, quickGunnerFrameAction_, quickGunnerDirectoryAction_})
+         {quickGunnerModeAction_, quickGunnerFrameAction_, quickGunnerDirectoryAction_})
     {
         action->setEnabled(quickGunnerActionsEnabled());
         action->setToolTip(regionCaptureSupported() ? QString()
                                                     : QStringLiteral("Windows 原生采集后补"));
     }
     const auto& preferences = quickGunner_->preferences();
-    QString status;
+    QString status =
+        quickGunner_->active() ? QStringLiteral("快枪手：开") : QStringLiteral("快枪手：关");
+    status += QStringLiteral(" · ") + (preferences.region
+                                           ? QStringLiteral("机位 %1×%2 px")
+                                                 .arg(preferences.region->pixelRect.width())
+                                                 .arg(preferences.region->pixelRect.height())
+                                           : QStringLiteral("机位未设置"));
+    status +=
+        QStringLiteral(" · ") +
+        (preferences.directory.isEmpty() ? QStringLiteral("目录未设置") : preferences.directory);
     if (!regionCaptureSupported())
-        status = QStringLiteral("Windows 原生采集后补");
-    else
-    {
-        status = preferences.region ? QStringLiteral("机位 %1×%2 px")
-                                          .arg(preferences.region->pixelRect.width())
-                                          .arg(preferences.region->pixelRect.height())
-                                    : QStringLiteral("机位未设置");
-        status +=
-            QStringLiteral(" · ") + (preferences.directory.isEmpty() ? QStringLiteral("目录未设置")
-                                                                     : preferences.directory);
-    }
+        status += QStringLiteral(" · Windows 原生采集后补");
     quickGunnerStatusAction_->setText(
         QFontMetrics(menu_.font()).elidedText(status, Qt::ElideMiddle, 440));
     quickGunnerStatusAction_->setToolTip(status);
@@ -799,7 +879,10 @@ void ApplicationController::openSettings()
          settings_.loadStickerCloseReminder(),
          [this](bool enabled) { return settings_.saveStickerCloseReminder(enabled); },
          settings_.loadStickerDoubleClickClose(),
-         [this](bool enabled) { return settings_.saveStickerDoubleClickClose(enabled); }},
+         [this](bool enabled) { return settings_.saveStickerDoubleClickClose(enabled); },
+         quickGunnerHotkey_->currentSequence(),
+         [this](const QKeySequence& sequence)
+         { return changeHotkey(sequence, HotkeyAction::QuickGunnerShutter); }},
         autostartActions_, std::move(historySettings), std::move(watermarkSettings));
     connect(&history_, &HistoryManager::groupsChanged, &dialog,
             [this, &dialog]
@@ -1541,6 +1624,7 @@ void ApplicationController::cleanup()
     stickers_.closeAll();
     if (closingOverlay)
         delete closingOverlay.data();
+    setQuickGunnerMode(false);
     quickGunnerHotkey_->deactivate();
     hotkey_->unregister();
     tray_.hide();
@@ -1552,6 +1636,11 @@ void ApplicationController::quit()
     const QPointer<SelectionOverlay> pausedOverlay = overlay_;
     const quint64 pausedToken = token_;
     const bool restoreOverlay = pausedOverlay && pausedOverlay->isVisible();
+    const QPointer<ScrollBorderWindow> pausedBorder = scrollBorder_;
+    const QPointer<ScrollControlBar> pausedBar = scrollBar_;
+    const bool restoreBorder = pausedBorder && pausedBorder->isVisible();
+    const bool restoreBar = pausedBar && pausedBar->isVisible();
+    bool backlogCancelled = false;
     bool resolved = false;
     {
         QScopedValueRollback<bool> resolving(resolvingQuit_, true);
@@ -1565,13 +1654,39 @@ void ApplicationController::quit()
             scrollBorder_->hide();
         if (scrollBar_)
             scrollBar_->hide();
-        if (scrollFlowActive_)
-            finish({}, scrollCancelledOutcome);
-        resolved = resolveScrollResultsForQuit() && stickers_.resolveUnsavedForQuit();
+        const int pending = quickGunner_->pendingCaptureCount() + quickGunner_->pendingSaveCount();
+        if (pending > 0)
+        {
+            QMessageBox box(
+                QMessageBox::Warning, QStringLiteral("退出快枪手"),
+                QStringLiteral("快枪手还有 %1 张图片待保存或重试，退出会丢失。").arg(pending),
+                QMessageBox::NoButton);
+            auto* cancel = box.addButton(QStringLiteral("取消退出"), QMessageBox::RejectRole);
+            cancel->setObjectName(QStringLiteral("quickGunnerQuitCancel"));
+            auto* discard = box.addButton(QStringLiteral("仍然退出"), QMessageBox::DestructiveRole);
+            discard->setObjectName(QStringLiteral("quickGunnerQuitDiscard"));
+            box.setDefaultButton(cancel);
+            box.setEscapeButton(cancel);
+            box.exec();
+            backlogCancelled = box.clickedButton() != discard;
+        }
+        if (!backlogCancelled)
+        {
+            if (scrollFlowActive_)
+                finish({}, scrollCancelledOutcome);
+            resolved = resolveScrollResultsForQuit() && stickers_.resolveUnsavedForQuit();
+        }
     }
     refreshStickerActions();
     if (!resolved)
     {
+        if (backlogCancelled && active_ && token_ == pausedToken)
+        {
+            if (restoreBorder && scrollBorder_ == pausedBorder)
+                pausedBorder->show();
+            if (restoreBar && scrollBar_ == pausedBar)
+                pausedBar->show();
+        }
         // 嵌套事件循环可能已取消或销毁会话，不能复活旧覆盖层。
         if (restoreOverlay && active_ && token_ == pausedToken && overlay_ == pausedOverlay)
         {

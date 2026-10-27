@@ -125,6 +125,22 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     help->setObjectName(QStringLiteral("hotkeyHelp"));
     help->setWordWrap(true);
     generalLayout->addWidget(help);
+    auto* quickGunnerTitle = new QLabel(QStringLiteral("快枪手快门"), generalPage);
+    generalLayout->addWidget(quickGunnerTitle);
+    quickGunnerEditor_ = new QKeySequenceEdit(saveSettings_.quickGunnerHotkey, generalPage);
+    quickGunnerEditor_->setObjectName(QStringLiteral("quickGunnerHotkeyEditor"));
+    quickGunnerEditor_->setMaximumSequenceLength(1);
+    quickGunnerEditor_->setClearButtonEnabled(true);
+    quickGunnerTitle->setBuddy(quickGunnerEditor_);
+    generalLayout->addWidget(quickGunnerEditor_);
+    quickGunnerEditor_->installEventFilter(this);
+    for (auto* child : quickGunnerEditor_->findChildren<QObject*>())
+        child->installEventFilter(this);
+    auto* quickGunnerHelp = new QLabel(
+        QStringLiteral("仅在快枪手模式开启时生效；不能与截图键或其他全局热键重复。"), generalPage);
+    quickGunnerHelp->setObjectName(QStringLiteral("quickGunnerHotkeyHelp"));
+    quickGunnerHelp->setWordWrap(true);
+    generalLayout->addWidget(quickGunnerHelp);
     auto* saveGroup = new QGroupBox(QStringLiteral("保存"), savePage);
     auto* saveLayout = new QVBoxLayout(saveGroup);
     saveLayout->addWidget(
@@ -897,9 +913,9 @@ void SettingsDialog::save()
         return;
     }
     const auto sequence = editor_->keySequence();
-    const std::array<QKeySequence, 4> sequences = {sequence, historyEditors_[0]->keySequence(),
-                                                   historyEditors_[1]->keySequence(),
-                                                   historyEditors_[2]->keySequence()};
+    const std::array<QKeySequence, 5> sequences = {
+        sequence, historyEditors_[0]->keySequence(), historyEditors_[1]->keySequence(),
+        historyEditors_[2]->keySequence(), quickGunnerEditor_->keySequence()};
     QString error = hotkeyConflictError(sequences);
     const auto historyPreferences = collectHistoryPreferences();
     if (error.isEmpty())
@@ -919,6 +935,13 @@ void SettingsDialog::save()
             if (error.isEmpty())
                 historySettings_.hotkeys[i] = sequences[i + 1];
         }
+    if (error.isEmpty() && sequences[4] != saveSettings_.quickGunnerHotkey &&
+        saveSettings_.saveQuickGunnerHotkey)
+    {
+        error = saveSettings_.saveQuickGunnerHotkey(sequences[4]);
+        if (error.isEmpty())
+            saveSettings_.quickGunnerHotkey = sequences[4];
+    }
     if (error.isEmpty() && saveSettings_.savePreferences)
         error = saveSettings_.savePreferences({directory_->text(), format_->currentIndex() == 1
                                                                        ? ImageFormat::Jpeg
