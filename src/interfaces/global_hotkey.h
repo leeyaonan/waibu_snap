@@ -12,7 +12,9 @@ enum class HotkeyAction
     HistoryPrevious,
     HistoryNext,
     HistoryOpen,
-    QuickGunnerShutter
+    QuickGunnerShutter,
+    RecordingStartStop,
+    RecordingPauseResume
 };
 constexpr std::array<HotkeyAction, 5> hotkeyActions = {
     HotkeyAction::Screenshot, HotkeyAction::HistoryPrevious, HotkeyAction::HistoryNext,

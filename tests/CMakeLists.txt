@@ -55,6 +55,12 @@ set_target_properties(hotkey_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME hotkey_settings COMMAND hotkey_settings_test)
 set_tests_properties(hotkey_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+qt_add_executable(recording_core_test unit/recording_core_test.cpp)
+target_link_libraries(recording_core_test PRIVATE waibusnap_core waibusnap_settings Qt6::Test
+    waibusnap_options)
+set_target_properties(recording_core_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME recording_core COMMAND recording_core_test)
+
 qt_add_executable(quick_gunner_hotkey_test unit/quick_gunner_hotkey_test.cpp)
 target_link_libraries(quick_gunner_hotkey_test PRIVATE waibusnap_settings Qt6::Test waibusnap_options)
 set_target_properties(quick_gunner_hotkey_test PROPERTIES WIN32_EXECUTABLE FALSE)

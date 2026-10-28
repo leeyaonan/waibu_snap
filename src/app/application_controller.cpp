@@ -737,6 +737,10 @@ HotkeySettings& ApplicationController::hotkeySettings(HotkeyAction action)
         return *historyHotkeys_[size_t(action) - 1];
     case HotkeyAction::QuickGunnerShutter:
         break;
+    case HotkeyAction::RecordingStartStop:
+    case HotkeyAction::RecordingPauseResume:
+        // R1 只落模型层；R4 接入托盘与 UI 后再切换为常驻热键设置。
+        break;
     }
     qFatal("此动作不使用常驻热键设置。");
 }

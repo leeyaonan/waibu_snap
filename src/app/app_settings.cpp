@@ -13,6 +13,7 @@
 #include <QStringList>
 #include <QUuid>
 #include <algorithm>
+#include <initializer_list>
 namespace waibusnap
 {
 namespace
@@ -31,6 +32,10 @@ QString sequenceKey(HotkeyAction action)
         return QStringLiteral("hotkey/historyOpen");
     case HotkeyAction::QuickGunnerShutter:
         return QStringLiteral("hotkey/quickGunner");
+    case HotkeyAction::RecordingStartStop:
+        return QStringLiteral("hotkey/recordingStartStop");
+    case HotkeyAction::RecordingPauseResume:
+        return QStringLiteral("hotkey/recordingPauseResume");
     }
     return {};
 }
@@ -38,6 +43,125 @@ const QString stickerCloseReminderKey = QStringLiteral("sticker/confirmUnsavedCl
 const QString stickerDoubleClickCloseKey = QStringLiteral("sticker/doubleClickClose");
 const QString watermarkPreferencesKey = QStringLiteral("watermark/preferences");
 const QString watermarkAutoEnabledKey = QStringLiteral("watermark/autoEnabled");
+const QString recordingVideoDirectoryKey = QStringLiteral("recording/videoDirectory");
+const QString recordingGifDirectoryKey = QStringLiteral("recording/gifDirectory");
+const QString recordingOutputKey = QStringLiteral("recording/output");
+const QString recordingVideoFpsKey = QStringLiteral("recording/videoFps");
+const QString recordingResolutionKey = QStringLiteral("recording/resolution");
+const QString recordingQualityKey = QStringLiteral("recording/quality");
+const QString recordingGifMaxEdgeKey = QStringLiteral("recording/gifMaxEdge");
+const QString recordingGifFpsKey = QStringLiteral("recording/gifFps");
+const QString recordingGifMaxSecondsKey = QStringLiteral("recording/gifMaxSeconds");
+const QString recordingCountdownSecondsKey = QStringLiteral("recording/countdownSeconds");
+const QString recordingShowCursorKey = QStringLiteral("recording/showCursor");
+const QString recordingSystemAudioKey = QStringLiteral("recording/systemAudio");
+const QString recordingMicrophoneKey = QStringLiteral("recording/microphone");
+const QString recordingMicrophoneDeviceIdKey = QStringLiteral("recording/microphoneDeviceId");
+const QString recordingSystemVolumeKey = QStringLiteral("recording/systemVolumePercent");
+const QString recordingMicrophoneVolumeKey = QStringLiteral("recording/microphoneVolumePercent");
+bool readRecordingString(const QSettings& settings, const QString& key, QString& value)
+{
+    const QVariant variant = settings.value(key);
+    if (variant.metaType().id() != QMetaType::QString)
+        return false;
+    value = variant.toString();
+    return true;
+}
+bool readRecordingInt(const QSettings& settings, const QString& key, int& value)
+{
+    const QVariant variant = settings.value(key);
+    const auto type = variant.metaType().id();
+    if (type != QMetaType::QString && type != QMetaType::Int && type != QMetaType::UInt &&
+        type != QMetaType::LongLong && type != QMetaType::ULongLong)
+        return false;
+    bool ok = false;
+    const int parsed = variant.toString().toInt(&ok);
+    if (!ok)
+        return false;
+    value = parsed;
+    return true;
+}
+bool readRecordingBool(const QSettings& settings, const QString& key, bool& value)
+{
+    const QVariant variant = settings.value(key);
+    if (variant.metaType().id() == QMetaType::Bool)
+    {
+        value = variant.toBool();
+        return true;
+    }
+    if (variant.metaType().id() != QMetaType::QString)
+        return false;
+    const QString text = variant.toString();
+    if (text == QStringLiteral("true"))
+    {
+        value = true;
+        return true;
+    }
+    if (text == QStringLiteral("false"))
+    {
+        value = false;
+        return true;
+    }
+    return false;
+}
+bool readRecordingChoice(const QSettings& settings, const QString& key,
+                         std::initializer_list<int> choices, int& value)
+{
+    int parsed = 0;
+    if (!readRecordingInt(settings, key, parsed))
+        return false;
+    for (const int choice : choices)
+    {
+        if (parsed == choice)
+        {
+            value = parsed;
+            return true;
+        }
+    }
+    return false;
+}
+QString recordingOutputValue(RecordingOutput output)
+{
+    return output == RecordingOutput::Gif ? QStringLiteral("gif") : QStringLiteral("video");
+}
+QString recordingResolutionValue(RecordingResolution resolution)
+{
+    switch (resolution)
+    {
+    case RecordingResolution::Native:
+        return QStringLiteral("native");
+    case RecordingResolution::P1080:
+        return QStringLiteral("1080p");
+    case RecordingResolution::P720:
+        return QStringLiteral("720p");
+    }
+    return {};
+}
+QString recordingQualityValue(RecordingQuality quality)
+{
+    switch (quality)
+    {
+    case RecordingQuality::High:
+        return QStringLiteral("high");
+    case RecordingQuality::Medium:
+        return QStringLiteral("medium");
+    case RecordingQuality::Low:
+        return QStringLiteral("low");
+    }
+    return {};
+}
+QString recordingGifMaxEdgeValue(int edge)
+{
+    return edge == 0 ? QStringLiteral("native") : QString::number(edge);
+}
+QString recordingDirectoryError(const QString& directory, const QString& label)
+{
+    if (directory.isEmpty())
+        return {};
+    if (directory.contains(QChar::Null) || !QDir::isAbsolutePath(directory))
+        return QStringLiteral("%1必须为绝对路径且不能包含空字符。").arg(label);
+    return {};
+}
 }
 AppSettings::AppSettings(QString filePath) : filePath_(std::move(filePath))
 {
@@ -128,6 +252,287 @@ QString AppSettings::saveQuickGunnerPreferences(const QuickGunnerPreferences& pr
         else
             settings.remove(regionKey);
         return error;
+    }
+    return {};
+}
+RecordingPreferences AppSettings::loadRecordingPreferences(QString* notice) const
+{
+    RecordingPreferences result;
+    result.videoDirectory = defaultRecordingVideoDirectory();
+    result.gifDirectory = defaultRecordingGifDirectory();
+    if (notice)
+        notice->clear();
+    QFile file(filePath_);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        if (notice && QFileInfo::exists(filePath_))
+            *notice = QStringLiteral("录制设置无法读取，已回退默认设置；原文件未改写。");
+        return result;
+    }
+    file.close();
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        if (notice)
+            *notice = QStringLiteral("录制设置已损坏，已回退默认设置；原文件未改写。");
+        return result;
+    }
+    QStringList issues;
+    const auto invalid = [&issues](const QString& label) { issues.append(label); };
+    const auto readDirectory = [&](const QString& key, const QString& label, QString& target)
+    {
+        if (!settings.contains(key))
+            return;
+        QString value;
+        if (!readRecordingString(settings, key, value) || value.contains(QChar::Null) ||
+            (!value.isEmpty() && !QDir::isAbsolutePath(value)))
+        {
+            invalid(label);
+            return;
+        }
+        if (!value.isEmpty())
+            target = QDir::cleanPath(value);
+    };
+    readDirectory(recordingVideoDirectoryKey, QStringLiteral("视频目录"), result.videoDirectory);
+    readDirectory(recordingGifDirectoryKey, QStringLiteral("GIF 目录"), result.gifDirectory);
+    if (settings.contains(recordingOutputKey))
+    {
+        QString text;
+        if (!readRecordingString(settings, recordingOutputKey, text))
+            invalid(QStringLiteral("默认输出"));
+        else if (text == QStringLiteral("video"))
+            result.defaultOutput = RecordingOutput::Video;
+        else if (text == QStringLiteral("gif"))
+            result.defaultOutput = RecordingOutput::Gif;
+        else
+            invalid(QStringLiteral("默认输出"));
+    }
+    if (settings.contains(recordingVideoFpsKey) &&
+        !readRecordingChoice(settings, recordingVideoFpsKey, {30, 60}, result.videoFps))
+        invalid(QStringLiteral("视频帧率"));
+    if (settings.contains(recordingResolutionKey))
+    {
+        QString text;
+        if (!readRecordingString(settings, recordingResolutionKey, text))
+            invalid(QStringLiteral("视频分辨率"));
+        else if (text == QStringLiteral("native"))
+            result.resolution = RecordingResolution::Native;
+        else if (text == QStringLiteral("1080p"))
+            result.resolution = RecordingResolution::P1080;
+        else if (text == QStringLiteral("720p"))
+            result.resolution = RecordingResolution::P720;
+        else
+            invalid(QStringLiteral("视频分辨率"));
+    }
+    if (settings.contains(recordingQualityKey))
+    {
+        QString text;
+        if (!readRecordingString(settings, recordingQualityKey, text))
+            invalid(QStringLiteral("视频质量"));
+        else if (text == QStringLiteral("high"))
+            result.quality = RecordingQuality::High;
+        else if (text == QStringLiteral("medium"))
+            result.quality = RecordingQuality::Medium;
+        else if (text == QStringLiteral("low"))
+            result.quality = RecordingQuality::Low;
+        else
+            invalid(QStringLiteral("视频质量"));
+    }
+    if (settings.contains(recordingGifMaxEdgeKey))
+    {
+        QString text;
+        if (!readRecordingString(settings, recordingGifMaxEdgeKey, text))
+            invalid(QStringLiteral("GIF 最长边"));
+        else if (text == QStringLiteral("native"))
+            result.gifMaxEdge = 0;
+        else
+        {
+            bool ok = false;
+            const int edge = text.toInt(&ok);
+            if (!ok || (edge != 960 && edge != 1280))
+                invalid(QStringLiteral("GIF 最长边"));
+            else
+                result.gifMaxEdge = edge;
+        }
+    }
+    if (settings.contains(recordingGifFpsKey) &&
+        !readRecordingChoice(settings, recordingGifFpsKey, {10, 12, 15}, result.gifFps))
+        invalid(QStringLiteral("GIF 帧率"));
+    if (settings.contains(recordingGifMaxSecondsKey) &&
+        !readRecordingChoice(settings, recordingGifMaxSecondsKey, {15, 30, 60},
+                             result.gifMaxSeconds))
+        invalid(QStringLiteral("GIF 最长时长"));
+    if (settings.contains(recordingCountdownSecondsKey) &&
+        !readRecordingChoice(settings, recordingCountdownSecondsKey, {0, 3, 5},
+                             result.countdownSeconds))
+        invalid(QStringLiteral("倒计时"));
+    if (settings.contains(recordingShowCursorKey) &&
+        !readRecordingBool(settings, recordingShowCursorKey, result.showCursor))
+        invalid(QStringLiteral("显示光标"));
+    if (settings.contains(recordingSystemAudioKey) &&
+        !readRecordingBool(settings, recordingSystemAudioKey, result.systemAudio))
+        invalid(QStringLiteral("系统声音"));
+    if (settings.contains(recordingMicrophoneKey) &&
+        !readRecordingBool(settings, recordingMicrophoneKey, result.microphone))
+        invalid(QStringLiteral("麦克风"));
+    if (settings.contains(recordingMicrophoneDeviceIdKey))
+    {
+        QString id;
+        if (!readRecordingString(settings, recordingMicrophoneDeviceIdKey, id) ||
+            id.contains(QChar::Null))
+            invalid(QStringLiteral("麦克风设备"));
+        else
+            result.microphoneDeviceId = id;
+    }
+    const auto readVolume = [&](const QString& key, const QString& label, int& target)
+    {
+        if (!settings.contains(key))
+            return;
+        int value = 0;
+        if (!readRecordingInt(settings, key, value))
+        {
+            invalid(label);
+            return;
+        }
+        if (value < 0 || value > 200)
+        {
+            target = qBound(0, value, 200);
+            invalid(QStringLiteral("%1已修正").arg(label));
+            return;
+        }
+        target = value;
+    };
+    readVolume(recordingSystemVolumeKey, QStringLiteral("系统声音音量"),
+               result.systemVolumePercent);
+    readVolume(recordingMicrophoneVolumeKey, QStringLiteral("麦克风音量"),
+               result.microphoneVolumePercent);
+    if (notice && !issues.isEmpty())
+        *notice = QStringLiteral("录制设置部分内容无效，已回退默认值或修正；原文件未改写。%1")
+                      .arg(issues.join(QStringLiteral("、")));
+    return result;
+}
+QString AppSettings::saveRecordingPreferences(const RecordingPreferences& preferences) const
+{
+    QString error =
+        recordingDirectoryError(preferences.videoDirectory, QStringLiteral("录制视频目录"));
+    if (!error.isEmpty())
+        return error;
+    error = recordingDirectoryError(preferences.gifDirectory, QStringLiteral("录制 GIF 目录"));
+    if (!error.isEmpty())
+        return error;
+    switch (preferences.defaultOutput)
+    {
+    case RecordingOutput::Video:
+    case RecordingOutput::Gif:
+        break;
+    default:
+        return QStringLiteral("默认输出无效，只支持视频或 GIF。");
+    }
+    if (preferences.videoFps != 30 && preferences.videoFps != 60)
+        return QStringLiteral("视频帧率无效，只支持 30 或 60。");
+    switch (preferences.resolution)
+    {
+    case RecordingResolution::Native:
+    case RecordingResolution::P1080:
+    case RecordingResolution::P720:
+        break;
+    default:
+        return QStringLiteral("视频分辨率无效，只支持原尺寸、1080p 或 720p。");
+    }
+    switch (preferences.quality)
+    {
+    case RecordingQuality::High:
+    case RecordingQuality::Medium:
+    case RecordingQuality::Low:
+        break;
+    default:
+        return QStringLiteral("视频质量无效，只支持高、中、低。");
+    }
+    if (preferences.gifMaxEdge != 0 && preferences.gifMaxEdge != 960 &&
+        preferences.gifMaxEdge != 1280)
+        return QStringLiteral("GIF 最长边无效，只支持 960、1280 或原尺寸。");
+    if (preferences.gifFps != 10 && preferences.gifFps != 12 && preferences.gifFps != 15)
+        return QStringLiteral("GIF 帧率无效，只支持 10、12 或 15。");
+    if (preferences.gifMaxSeconds != 15 && preferences.gifMaxSeconds != 30 &&
+        preferences.gifMaxSeconds != 60)
+        return QStringLiteral("GIF 最长时长无效，只支持 15、30 或 60 秒。");
+    if (preferences.countdownSeconds != 0 && preferences.countdownSeconds != 3 &&
+        preferences.countdownSeconds != 5)
+        return QStringLiteral("倒计时无效，只支持 0、3 或 5 秒。");
+    if (preferences.systemVolumePercent < 0 || preferences.systemVolumePercent > 200 ||
+        preferences.microphoneVolumePercent < 0 || preferences.microphoneVolumePercent > 200)
+        return QStringLiteral("音量必须在 0–200% 之间。");
+    if (preferences.microphoneDeviceId.contains(QChar::Null))
+        return QStringLiteral("麦克风设备标识不能包含空字符。");
+    const auto prepareDirectory = [](const QString& directory, const QString& label) -> QString
+    {
+        if (directory.isEmpty())
+            return {};
+        const QString path = QDir::cleanPath(directory);
+        if (!QDir().mkpath(path))
+            return QStringLiteral("%1创建失败：%2").arg(label, path);
+        const QFileInfo info(path);
+        if (!info.isDir())
+            return QStringLiteral("%1不是目录：%2").arg(label, path);
+        if (!info.isWritable())
+            return QStringLiteral("%1不可写：%2").arg(label, path);
+        return {};
+    };
+    error = prepareDirectory(preferences.videoDirectory, QStringLiteral("录制视频目录"));
+    if (!error.isEmpty())
+        return error;
+    error = prepareDirectory(preferences.gifDirectory, QStringLiteral("录制 GIF 目录"));
+    if (!error.isEmpty())
+        return error;
+    const QVector<QPair<QString, QVariant>> entries = {
+        {recordingVideoDirectoryKey, preferences.videoDirectory.isEmpty()
+                                         ? QString()
+                                         : QDir::cleanPath(preferences.videoDirectory)},
+        {recordingGifDirectoryKey, preferences.gifDirectory.isEmpty()
+                                       ? QString()
+                                       : QDir::cleanPath(preferences.gifDirectory)},
+        {recordingOutputKey, recordingOutputValue(preferences.defaultOutput)},
+        {recordingVideoFpsKey, preferences.videoFps},
+        {recordingResolutionKey, recordingResolutionValue(preferences.resolution)},
+        {recordingQualityKey, recordingQualityValue(preferences.quality)},
+        {recordingGifMaxEdgeKey, recordingGifMaxEdgeValue(preferences.gifMaxEdge)},
+        {recordingGifFpsKey, preferences.gifFps},
+        {recordingGifMaxSecondsKey, preferences.gifMaxSeconds},
+        {recordingCountdownSecondsKey, preferences.countdownSeconds},
+        {recordingShowCursorKey, preferences.showCursor},
+        {recordingSystemAudioKey, preferences.systemAudio},
+        {recordingMicrophoneKey, preferences.microphone},
+        {recordingMicrophoneDeviceIdKey, preferences.microphoneDeviceId},
+        {recordingSystemVolumeKey, preferences.systemVolumePercent},
+        {recordingMicrophoneVolumeKey, preferences.microphoneVolumePercent}};
+    const QString writeError = QStringLiteral("录制设置写入失败，原设置已保留，请重试保存。");
+    const QString parent = QFileInfo(filePath_).absolutePath();
+    if (!QDir().mkpath(parent) || QFileInfo(filePath_).isDir())
+        return writeError;
+    QSettings settings(filePath_, QSettings::IniFormat);
+    settings.setAtomicSyncRequired(true);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return writeError;
+    QVector<QPair<QString, QVariant>> previous;
+    previous.reserve(entries.size());
+    for (const auto& entry : entries)
+        previous.append({entry.first, settings.value(entry.first)});
+    for (const auto& entry : entries)
+        settings.setValue(entry.first, entry.second);
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+    {
+        // 原子同步失败时恢复共享缓存，避免后续保存夹带半套录制值。
+        for (const auto& entry : previous)
+        {
+            if (entry.second.isValid())
+                settings.setValue(entry.first, entry.second);
+            else
+                settings.remove(entry.first);
+        }
+        return writeError;
     }
     return {};
 }
