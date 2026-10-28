@@ -100,6 +100,40 @@ if(APPLE)
     add_test(NAME sticker_window_behavior COMMAND sticker_window_behavior_test)
     set_tests_properties(sticker_window_behavior PROPERTIES TIMEOUT 30)
 
+    # 媒体探测不依赖屏幕录制权限：测试视频由 AVAssetWriter 现场生成。
+    qt_add_executable(recording_media_probe_test unit/recording_media_probe_test.mm)
+    target_link_libraries(recording_media_probe_test PRIVATE waibusnap_platform Qt6::Test
+        waibusnap_options "${AVFoundation_FRAMEWORK}" "${CoreMedia_FRAMEWORK}"
+        "${CoreVideo_FRAMEWORK}")
+    target_compile_options(recording_media_probe_test PRIVATE -fobjc-arc)
+    add_test(NAME recording_media_probe COMMAND recording_media_probe_test -o
+        "${CMAKE_CURRENT_BINARY_DIR}/recording_media_probe-output.txt,txt")
+    set_tests_properties(recording_media_probe PROPERTIES TIMEOUT 60)
+
+    # 请求校验在权限检查之前完成，无屏幕权限环境也能覆盖。
+    qt_add_executable(recording_request_test unit/recording_request_test.cpp)
+    target_link_libraries(recording_request_test PRIVATE waibusnap_platform Qt6::Test
+        waibusnap_options)
+    set_target_properties(recording_request_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME recording_request COMMAND recording_request_test -o
+        "${CMAKE_CURRENT_BINARY_DIR}/recording_request-output.txt,txt")
+    set_tests_properties(recording_request PROPERTIES TIMEOUT 30)
+
+    # 真实屏幕录制需要权限、可见桌面与真人核对，不注册 CTest。
+    qt_add_executable(recording_native_probe e2e/recording_native_probe.cpp
+        e2e/recording_native_probe_media.mm)
+    target_link_libraries(recording_native_probe PRIVATE waibusnap_platform Qt6::Gui
+        waibusnap_options "${AVFoundation_FRAMEWORK}")
+    target_compile_options(recording_native_probe PRIVATE -fobjc-arc)
+    set_target_properties(recording_native_probe PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST
+            "${CMAKE_CURRENT_SOURCE_DIR}/e2e/recording_native_probe_info.plist.in"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "local.waibusnap.recording-probe"
+        MACOSX_BUNDLE_BUNDLE_NAME "WaibuSnapRecordingProbe"
+        OUTPUT_NAME "WaibuSnapRecordingProbe"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
     add_test(NAME probe_cpu_calibration COMMAND waibusnap_measure_probe --self-test)
     set_tests_properties(probe_cpu_calibration PROPERTIES TIMEOUT 10)
 endif()
