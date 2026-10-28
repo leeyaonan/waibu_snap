@@ -301,10 +301,16 @@ QString QuickGunnerController::activate(const QStringList& reservedDirectories)
 }
 void QuickGunnerController::deactivate()
 {
+    const int dropped = pendingCaptureCount();
+    pending_.clear();
+    if (flash_)
+        flash_->hide();
     resumeActive_ = false;
     activateAfter_ = false;
     framingAccepted_ = false;
     finishFraming();
+    if (dropped)
+        emit shotsDropped(dropped);
 }
 int QuickGunnerController::pendingSaveCount() const { return saveQueue_->pendingCount(); }
 QString QuickGunnerController::shutter()
@@ -377,7 +383,7 @@ void QuickGunnerController::pumpCapture()
                             QPoint(qRound(rect.x() / dpr), qRound(rect.y() / dpr)),
                         QSize(qRound(rect.width() / dpr), qRound(rect.height() / dpr)));
                     emit self->shotCaptured(logical);
-                    if (self->flash_)
+                    if (self->flash_ && self->active())
                         self->flash_->flash(logical);
                 }
                 if (self)

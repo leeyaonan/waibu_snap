@@ -80,9 +80,29 @@ class QuickGunnerHotkeyTest final : public QObject
         QVERIFY(!fake.handler);
         QCOMPARE(fake.released, QVector<HotkeyAction>{shutter});
         key.deactivate();
-        QCOMPARE(fake.released, (QVector<HotkeyAction>{shutter, shutter}));
+        QCOMPARE(fake.released, QVector<HotkeyAction>{shutter});
         QVERIFY(key.activate().isEmpty());
         QCOMPARE(fake.enabled, QKeySequence(Qt::Key_F2));
+    }
+    void releaseOnlyOwnedRegistrationAndDestroyActive()
+    {
+        QTemporaryDir temp;
+        FakeHotkey fake;
+        {
+            QuickGunnerHotkey key(AppSettings(temp.filePath(QStringLiteral("settings.ini"))), fake,
+                                  [] {});
+            key.load();
+            key.deactivate();
+            QVERIFY(fake.released.isEmpty());
+            fake.rejected.append(QStringLiteral("F2"));
+            QVERIFY(!key.activate().isEmpty());
+            key.deactivate();
+            QVERIFY(fake.released.isEmpty());
+            fake.rejected.clear();
+            QVERIFY(key.activate().isEmpty());
+        }
+        QCOMPARE(fake.released, QVector<HotkeyAction>{shutter});
+        QVERIFY(!fake.handler);
     }
     void occupiedPreferredDoesNotFallBack_data()
     {

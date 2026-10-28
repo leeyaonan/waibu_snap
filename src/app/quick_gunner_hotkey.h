@@ -7,6 +7,7 @@ class QuickGunnerHotkey
 {
   public:
     QuickGunnerHotkey(AppSettings settings, GlobalHotkey& hotkey, std::function<void()> handler);
+    ~QuickGunnerHotkey();
     void load();
     QKeySequence currentSequence() const { return preferredSequence_; }
     QString change(const QKeySequence& sequence);

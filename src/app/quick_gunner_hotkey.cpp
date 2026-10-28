@@ -8,6 +8,7 @@ QuickGunnerHotkey::QuickGunnerHotkey(AppSettings settings, GlobalHotkey& hotkey,
       preferredSequence_(defaultHotkey(HotkeyAction::QuickGunnerShutter))
 {
 }
+QuickGunnerHotkey::~QuickGunnerHotkey() { deactivate(); }
 void QuickGunnerHotkey::load()
 {
     const auto loaded = settings_.loadHotkey(HotkeyAction::QuickGunnerShutter);
@@ -45,6 +46,8 @@ QString QuickGunnerHotkey::activate()
 }
 void QuickGunnerHotkey::deactivate()
 {
+    if (!registered_)
+        return;
     hotkey_.unregister(HotkeyAction::QuickGunnerShutter);
     registered_ = false;
 }

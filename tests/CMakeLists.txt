@@ -469,3 +469,9 @@ add_test(NAME quick_gunner_resource_high_dpi COMMAND quick_gunner_resource_test
     -o "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-resource-high-dpi-output.txt,txt")
 set_tests_properties(quick_gunner_resource_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+# 共享快枪手链路在 2 倍 DPR 下复验；采集、热键与系统输出均使用替身。
+add_test(NAME quick_gunner_capture_high_dpi COMMAND quick_gunner_capture_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-capture-high-dpi-output.txt,txt")
+set_tests_properties(quick_gunner_capture_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 90)
