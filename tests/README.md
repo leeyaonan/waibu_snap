@@ -31,7 +31,8 @@
 | `annotation_text_edit` | 透明 Base / viewport 与深浅彩色底逐像素保持、编辑框橙色虚线边框与四角节点、六种字体单行高度 / 最长行宽度 / 多行增长、400×240 上限与光标跟随、画布边缘及极小范围、预编辑布局 / 快捷键保护、文本撤销重做 |
 | `image_output` | 冻结帧逐像素裁剪与 DPR=1；已知矩形 / 直线逐像素颜色断言、选区外裁剪、1 / 1.5 / 2 倍 DPR 无缩放；七类渲染可见、撤销重做逐步恢复同一画面、共享预览绘制与物理合成全图一致、线宽 / 颜色 / 字号三档结果可区分；临时中文 / 空格路径 PNG 写出、格式 / 尺寸 / 全图像素回读一致；缺失目录与只读文件失败、原文件不变；无效图像 / 路径拒绝；补后缀与建议文件名冲突避让 |
 | `window_snapping` | 全局转屏内坐标与越屏裁剪、屏外丢弃且前后序不变；重叠取最前、缝隙 / 空列表未命中、半开命中边界；1.5× / 2×、半像素取整、按两端边缘求宽高、物理范围夹取与无效输入 |
-| `hotkey_settings` | 合法 / 非法键矩阵、Portable / Native 往返；临时 INI 往返、缺文件默认且不创建、损坏值 / 文件回退且不改写；替身验证存储键成功、存储键失败后 F1 成功、双失败仅托盘状态；改键非法不注册、冲突保旧与配置不变、注册前文件仍为旧值、成功持久化、写入失败不虚报重启保留；双击关闭贴图偏好的未配置 / true / false 往返与非法值回退 |
+| `hotkey_settings` | 合法 / 非法键矩阵、Portable / Native 往返；临时 INI 往返、缺文件默认且不创建、损坏值 / 文件回退且不改写；替身验证存储键成功、存储键失败后 F1 成功、双失败仅托盘状态；改键非法不注册、冲突保旧与配置不变、注册前文件仍为旧值、成功持久化、写入失败不虚报重启保留；双击关闭贴图偏好的未配置 / true / false 往返与非法值回退；v009 R1 录制开始 / 停止与暂停 / 继续动作索引 5 / 6、F3 / F4 默认与中文名称、`hotkeyActions` 仍为 5 项、保存往返与空值回退 |
+| `recording_core` | v009 R1 纯逻辑：默认目录后缀与空 / 相对路径回退、固定时间戳命名 + `_2` / `_3` 冲突避让、1 / 1.5 / 2 倍 DPR 来源 × 16:9 / 3:2 / 1:1 × 原尺寸 / 1080p / 720p / GIF 960 / 1280 / 原尺寸、只缩不放 / 视频偶数 / 2×2 下限、码率三档上下限、GIF 体积单调与 30 秒 1280 / 12 估算、2 GiB / 512 MiB 磁盘边界；临时 INI 全字段往返与目录自动创建、非法枚举 / 数值合并 notice、音量 clamp、相对与 NUL 目录拒绝、写入失败保留原设置、损坏 / 不可读文件不改写 |
 | `probe_cpu_calibration`（macOS） | libproc Mach 时间换算对照 getrusage CPU 微秒时间；原错误在 M3 Pro 上先失败，修正后通过 |
 | `platform_workarounds`（macOS） | 安装前 AppKitDefined 的 `clickCount` 确实抛 NSException；安装后返回 1、不抛，鼠标双击仍返回 2，重复安装不替换已安装实现；覆盖层抬升 / 降级接口对空指针、无原生窗口安全返回；Cocoa 隐藏 QWindow 验证 25→0→25，非 Cocoa / 无可用屏幕 / 无原生窗口明确跳过层级断言 |
 | `sticker_window_behavior`（macOS） | 真实 Qt Tool 创建 QNSPanel 后，检查 `NSWindowStyleMaskNonactivatingPanel` 与原生 `_preventsActivation`；运行中补 mask 若不同步 WindowServer tag，回归用例先失败，修复后通过；另验证非编辑态入口可显式成为 key window 以接收空格；非 Cocoa / 无屏幕 / 无原生窗口明确跳过 |
@@ -1174,3 +1175,12 @@ B6 人工验收（自动化不替代实机）：
 9. 仅一张在途、存在排队及保存重试三种积压分别取消 / 确认退出；取消后覆盖层 / 长图边框和控制条恢复，确认退出释放 F2。
 10. macOS 快门键占用 / 注册失败、开关模式与重复停用、重框期间菜单灰态和 Esc、焦点 / 层级 / 闪现时长；重启机位 / 目录 / 快门键保留但模式关闭、F2 未注册。
 11. Windows 实机后补：模式 / 框选禁用，目录配置与资源浏览可用，中文路径 / 高 DPI / Explorer 定位和系统回收站正常；原生采集仍未实现。
+
+## v009 R1 录制地基（2026-10-28）
+
+- 新增 `recording_core`：默认视频 / GIF 目录与空 / 相对路径回退；固定时间戳 `WaibuSnap_yyyy-MM-dd_HH-mm-ss-zzz` 的 `.mp4` / `.gif` 命名与 `_2` / `_3` 冲突避让；1 / 1.5 / 2 倍 DPR 来源 × 16:9 / 3:2 / 1:1 × 原尺寸 / 1080p / 720p / GIF 960 / 1280 / 原尺寸的输出尺寸，核对只缩不放、视频偶数、最小 2×2；三档码率上下限（1080p30 高 11.2 Mbps、4K60 高 40 Mbps、720p30 低 2.5 Mbps）；GIF 体积单调与 30 秒 1280 / 12 估算；2 GiB / 512 MiB 磁盘边界。
+- 同一目标覆盖 `AppSettings` 录制设置：临时 INI 全字段往返、缺失目录自动创建、非法枚举 / 数值合并为一次 notice、音量 clamp 到 0–200%、相对 / NUL 目录拒绝、写入失败保留原设置、损坏或不可读文件不改写；保存不覆盖既有热键。测试不写真实用户目录。
+- `hotkey_settings` 增加 R1 边界：`RecordingStartStop` / `RecordingPauseResume` 索引 5 / 6、默认 F3 / F4 与名称、`hotkeyActions.size() == 5`、两个新键的保存 / 读取往返与空值回退。
+- 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：构建与稳定签名通过；`recording_core` **41** 项（含初始化 / 收尾）、`hotkey_settings` **64** 项全绿；全量 CTest **56/56**；clang-format 18.1.8、`scripts/lint-code.sh` 与 `git diff --check` 通过。
+- [双端 CI 40691382331](https://github.com/leeyaonan/waibu_snap/actions/runs/40691382331)（macOS / Windows 构建、CTest、lint，含 macOS Intel 交叉构建）全绿，head `1fc1c8c`；macOS **56/56**、Windows **53/53**。
+- 本批只落模型层：未注册 F3 / F4、未扩 `hotkeyActions`、未接托盘 / 设置 UI、未实现平台采集 / 编码；真实录屏与原生行为留给 R2 起的批次及人工验收。

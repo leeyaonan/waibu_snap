@@ -56,6 +56,69 @@ class HotkeySettingsTest final : public QObject
         QCOMPARE(defaultHotkey(shutter), QKeySequence(Qt::Key_F2));
         QCOMPARE(hotkeyActionName(shutter), QStringLiteral("快枪手快门"));
     }
+    void recordingHotkeyActionsAreModelOnlyInR1()
+    {
+        using namespace waibusnap;
+        const auto start = HotkeyAction::RecordingStartStop;
+        const auto pause = HotkeyAction::RecordingPauseResume;
+        QCOMPARE(int(start), 5);
+        QCOMPARE(int(pause), 6);
+        // R1 只扩展模型层，平台注册与设置界面仍维持 5 项，R4 再扩到 7 项。
+        QCOMPARE(hotkeyActions.size(), size_t(5));
+        for (const auto action : hotkeyActions)
+        {
+            QVERIFY(action != start);
+            QVERIFY(action != pause);
+        }
+        QCOMPARE(defaultHotkey(start), QKeySequence(Qt::Key_F3));
+        QCOMPARE(defaultHotkey(pause), QKeySequence(Qt::Key_F4));
+        QCOMPARE(hotkeyActionName(start), QStringLiteral("录制开始 / 停止"));
+        QCOMPARE(hotkeyActionName(pause), QStringLiteral("录制暂停 / 继续"));
+    }
+    void recordingHotkeyPersistenceAndEmptyFallback()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const QString path = temporary.filePath(QStringLiteral("设置 空格/settings.ini"));
+        AppSettings settings(path);
+        QCOMPARE(settings.loadHotkey(HotkeyAction::RecordingStartStop).sequence,
+                 QKeySequence(Qt::Key_F3));
+        QCOMPARE(settings.loadHotkey(HotkeyAction::RecordingPauseResume).sequence,
+                 QKeySequence(Qt::Key_F4));
+        QVERIFY(settings.loadHotkey(HotkeyAction::RecordingStartStop).explanation.isEmpty());
+        QVERIFY(!QFile::exists(path));
+        const auto chosen = QKeySequence::fromString(QStringLiteral("Ctrl+Shift+3"));
+        QVERIFY(settings.saveHotkey(chosen, HotkeyAction::RecordingStartStop).isEmpty());
+        QVERIFY(settings.saveHotkey(QKeySequence(Qt::Key_F6), HotkeyAction::RecordingPauseResume)
+                    .isEmpty());
+        {
+            QSettings ini(path, QSettings::IniFormat);
+            QCOMPARE(ini.value(QStringLiteral("hotkey/recordingStartStop")).toString(),
+                     QStringLiteral("Ctrl+Shift+3"));
+            QCOMPARE(ini.value(QStringLiteral("hotkey/recordingPauseResume")).toString(),
+                     QStringLiteral("F6"));
+            QCOMPARE(ini.allKeys().size(), 2);
+        }
+        QCOMPARE(AppSettings(path).loadHotkey(HotkeyAction::RecordingStartStop).sequence, chosen);
+        QCOMPARE(AppSettings(path).loadHotkey(HotkeyAction::RecordingPauseResume).sequence,
+                 QKeySequence(Qt::Key_F6));
+        {
+            QSettings ini(path, QSettings::IniFormat);
+            ini.setValue(QStringLiteral("hotkey/recordingStartStop"), QString());
+            ini.sync();
+            QVERIFY(ini.value(QStringLiteral("hotkey/recordingStartStop")).toString().isEmpty());
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            const QByteArray before = file.readAll();
+            file.close();
+            const auto loaded = AppSettings(path).loadHotkey(HotkeyAction::RecordingStartStop);
+            QCOMPARE(loaded.sequence, QKeySequence(Qt::Key_F3));
+            QVERIFY(loaded.explanation.contains(QStringLiteral("回退默认 F3")));
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            QCOMPARE(file.readAll(), before);
+        }
+    }
     void stickerCloseReminderDefaultsRoundTripAndIsolation()
     {
         using namespace waibusnap;

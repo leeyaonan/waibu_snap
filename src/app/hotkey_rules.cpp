@@ -16,6 +16,10 @@ QKeySequence defaultHotkey(HotkeyAction action)
         return QKeySequence(Qt::Key_F9);
     case HotkeyAction::QuickGunnerShutter:
         return QKeySequence(Qt::Key_F2);
+    case HotkeyAction::RecordingStartStop:
+        return QKeySequence(Qt::Key_F3);
+    case HotkeyAction::RecordingPauseResume:
+        return QKeySequence(Qt::Key_F4);
     }
     return {};
 }
@@ -33,6 +37,10 @@ QString hotkeyActionName(HotkeyAction action)
         return QStringLiteral("打开历史");
     case HotkeyAction::QuickGunnerShutter:
         return QStringLiteral("快枪手快门");
+    case HotkeyAction::RecordingStartStop:
+        return QStringLiteral("录制开始 / 停止");
+    case HotkeyAction::RecordingPauseResume:
+        return QStringLiteral("录制暂停 / 继续");
     }
     return {};
 }

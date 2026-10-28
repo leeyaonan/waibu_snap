@@ -2,6 +2,7 @@ add_subdirectory(platform)
 
 add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp core/aspect_ratio.cpp core/text_layout.cpp core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
     core/history_types.cpp core/history_cleanup.cpp core/watermark.cpp core/quick_gunner.cpp
+    core/recording.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options)

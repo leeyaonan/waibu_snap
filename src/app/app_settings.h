@@ -2,6 +2,7 @@
 #include "core/aspect_ratio.h"
 #include "core/history_types.h"
 #include "core/quick_gunner.h"
+#include "core/recording.h"
 #include "core/shape_mask.h"
 #include "core/watermark.h"
 #include "interfaces/global_hotkey.h"
@@ -41,6 +42,8 @@ class AppSettings
     explicit AppSettings(QString filePath = {});
     QuickGunnerPreferences loadQuickGunnerPreferences(QString* notice = nullptr) const;
     QString saveQuickGunnerPreferences(const QuickGunnerPreferences& preferences) const;
+    RecordingPreferences loadRecordingPreferences(QString* notice = nullptr) const;
+    QString saveRecordingPreferences(const RecordingPreferences& preferences) const;
     HistoryPreferences loadHistoryPreferences(QString* notice = nullptr) const;
     QString saveHistoryPreferences(const HistoryPreferences& preferences) const;
     QString saveHistoryCurrentGroupId(const QString& groupId) const;
