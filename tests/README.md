@@ -1184,3 +1184,67 @@ B6 人工验收（自动化不替代实机）：
 - 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：构建与稳定签名通过；`recording_core` **41** 项（含初始化 / 收尾）、`hotkey_settings` **64** 项全绿；全量 CTest **56/56**；clang-format 18.1.8、`scripts/lint-code.sh` 与 `git diff --check` 通过。
 - [双端 CI 40691382331](https://github.com/leeyaonan/waibu_snap/actions/runs/40691382331)（macOS / Windows 构建、CTest、lint，含 macOS Intel 交叉构建）全绿，head `1fc1c8c`；macOS **56/56**、Windows **53/53**。
 - 本批只落模型层：未注册 F3 / F4、未扩 `hotkeyActions`、未接托盘 / 设置 UI、未实现平台采集 / 编码；真实录屏与原生行为留给 R2 起的批次及人工验收。
+
+## v009 R2 视频采集与编码管线（2026-10-28）
+
+- 新增 `recording_media_probe`（macOS，6 项含初始化 / 收尾）：AVAssetWriter 现场生成 1 秒 320×240 H.264 MP4，断言时长 900–1100 ms、尺寸 320×240、首帧缩略图不超过 bounds；不存在路径 / 非视频返回 `valid=false` + 中文原因；GIF 返回「R6 接入」。不需要屏幕录制权限。
+- 新增 `recording_request`（macOS，17 项含初始化 / 收尾）：GIF、非空麦克风 ID、零 / 奇数尺寸、非 30/60 帧、相对路径、非 `.part`、temp 与 final 相同、已存在 temp / final、目录不存在、显示器 ID 为 0、区域越界、窗口 ID 为 0 均在权限检查前拒绝，且不创建临时文件；未启动时 pause / resume / stop / discard 幂等。
+- 新增 `recording_native_probe`（macOS bundle，手动运行，不注册 CTest）：真实主屏 2 秒、区域、暂停 1 秒、系统声音、声音 + 暂停、丢弃六种模式；回读时长 / 尺寸 / 首帧、检查 `.part` 残留与音轨。
+- `tests/unit/objc_block_capture_test.py` 扩展为同时检查 `capture_services.mm` 与 `recording_services.mm`；本批前者 4 块 / 6 捕获、后者 20 块 / 26 捕获，无 C++ 引用捕获。
+- 本机 macOS 27.0.1 / arm64、Qt 6.11.2 Release：构建与稳定签名通过；全量 CTest **58/58**；clang-format 18.1.8、lint 与 `git diff --check` 通过。
+
+### 手动运行原生探针
+
+先构建并签名探针（macOS 27 必须从访达或 `open` 启动，直接执行 bundle 内二进制不会继承授权）：
+
+```bash
+cd waibu_snap
+bash scripts/build-project.sh
+codesign --force --sign "WaibuSnap Dev" --identifier local.waibusnap.recording-probe \
+    --timestamp=none build/macos/bin/WaibuSnapRecordingProbe.app
+```
+
+首次需要在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」允许 `WaibuSnapRecordingProbe`；可用 `--request-permission` 触发请求并等待最多 120 秒。
+
+```bash
+# 全屏 2 秒（无音频）
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args \
+    --report /tmp/r2-normal.txt --keep "$PWD/build/records"
+
+# 区域（主屏中央一半）
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --region \
+    --report /tmp/r2-region.txt
+
+# 1 秒 + 暂停 1 秒 + 1 秒（成片应约 2 秒）
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --pause \
+    --report /tmp/r2-pause.txt --keep "$PWD/build/records"
+
+# 系统声音（应生成 AAC 音轨）
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --audio \
+    --report /tmp/r2-audio.txt --keep "$PWD/build/records"
+
+# 系统声音 + 暂停
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --audio --pause \
+    --report /tmp/r2-audio-pause.txt --keep "$PWD/build/records"
+
+# 丢弃（应无 Finished / 成品 / .part）
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --discard \
+    --report /tmp/r2-discard.txt
+```
+
+2026-10-28 本机取证结果（macOS 27.0.1 / arm64，主屏 1920×1080 逻辑 / DPR 2，输出 1280×720）：
+
+| 模式 | 结果 |
+| --- | --- |
+| 全屏 2 秒 | `Finished` 1900 ms、226232 字节、丢帧 0、回读 1875 ms、无音轨、无 `.part` |
+| 区域（1920×1080 物理像素） | 1924 ms、226327 字节、回读 1925 ms；修复前仅 33 ms，静止补帧后通过 |
+| 暂停 1 秒 | 2021 ms（1 + 暂停 1 + 1），不是 3 秒 |
+| 系统声音 | 1916 ms、246185 字节，AAC 48 kHz / 2 声道音轨存在；默认无音频路径无空音轨 |
+| 声音 + 暂停 | 1992 ms、261596 字节；`ffprobe` 独立回读视频 1.991667 s、音频 1.950083 s，差约 42 ms |
+| 丢弃 | 无 `Finished`、无成品、无 temp / `.part` |
+
+`ffprobe` 独立核验：暂停文件仅 1 条 H.264 视频流 2.021667 s；声音文件 H.264 1280×720 + AAC 48000 Hz / 2 声道，格式时长 1.916667 s、音轨 1.884708 s。
+
+[双端 CI 40705643914](https://github.com/leeyaonan/waibu_snap/actions/runs/40705643914) 全绿（macOS / Windows，含 macOS Intel 交叉构建）；PR [#83](https://github.com/leeyaonan/waibu_snap/pull/83) 待合入。
+
+未覆盖：窗口目标真实取证、系统声音初始化失败降级、append / 磁盘写满 / rename 失败注入、4K60 / 长时段 / 多显示器 / 负坐标 / 混合 DPI、锁屏 / 睡眠、Windows 实机（仅桩）。这些留给 R3 起的批次与人工验收，本文不把编译或 CI 当作实机通过。
