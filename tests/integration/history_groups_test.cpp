@@ -13,6 +13,7 @@
 #include <QLockFile>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTemporaryDir>
@@ -56,6 +57,16 @@ QImage picture()
 {
     QImage image(120, 80, QImage::Format_ARGB32);
     image.fill(QColor(30, 100, 200, 120));
+    return image;
+}
+QImage noisyPicture()
+{
+    // 2 位小数的 MiB 输入最小可设 0.01 MiB，保护用例需要大于该阈值且不可高压缩的真实图片。
+    QImage image(192, 192, QImage::Format_ARGB32);
+    QRandomGenerator random(0x5a17);
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            image.setPixel(x, y, random.generate());
     return image;
 }
 struct Fixture
@@ -430,6 +441,7 @@ class HistoryGroupsTest final : public QObject
         Fixture f;
         GroupSettingsDialog dialog(f.manager, f.current(), f.trash);
         dialog.show();
+        QCOMPARE(child<QDoubleSpinBox>(&dialog, "groupMaxMiB")->decimals(), 2);
         for (const auto* key : {"groupAgeEnabled", "groupCountEnabled", "groupBytesEnabled"})
             child<QCheckBox>(&dialog, key)->setChecked(false);
         child<QPushButton>(&dialog, "groupSettingsSave")->click();
@@ -470,13 +482,13 @@ class HistoryGroupsTest final : public QObject
     {
         Fixture f;
         const auto session = f.manager.beginSession();
-        const auto first = f.manager.record(session, picture(), HistorySource::Overlay);
+        const auto first = f.manager.record(session, noisyPicture(), HistorySource::Overlay);
         QVERIFY(first.success);
         const auto second =
-            f.manager.record(f.manager.beginSession(), picture(), HistorySource::Overlay);
+            f.manager.record(f.manager.beginSession(), noisyPicture(), HistorySource::Overlay);
         QVERIFY(second.success);
         const auto third =
-            f.manager.record(f.manager.beginSession(), picture(), HistorySource::Overlay);
+            f.manager.record(f.manager.beginSession(), noisyPicture(), HistorySource::Overlay);
         QVERIFY(third.success);
         QVERIFY(f.store.setStarred(f.current(), first.item.fileName, true).success);
         QVERIFY(picture().save(
@@ -489,10 +501,10 @@ class HistoryGroupsTest final : public QObject
         QVERIFY(text.contains(QStringLiteral("外部图片：1 张")));
         QVERIFY(text.contains(QStringLiteral("受保护占用：3 张")));
         child<QSpinBox>(&dialog, "groupMaxCount")->setValue(1);
-        child<QDoubleSpinBox>(&dialog, "groupMaxMiB")->setValue(0.000001);
+        child<QDoubleSpinBox>(&dialog, "groupMaxMiB")->setValue(0.01);
         child<QPushButton>(&dialog, "groupSettingsSave")->click();
         QCOMPARE(f.store.scan().groups[0].items.size(), 4);
-        QVERIFY(f.manager.record(session, picture(), HistorySource::Overlay).success);
+        QVERIFY(f.manager.record(session, noisyPicture(), HistorySource::Overlay).success);
         QCOMPARE(f.store.scan().groups[0].items.size(), 4);
         QCOMPARE(f.trashCalls, 0);
     }

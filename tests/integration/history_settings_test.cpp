@@ -325,6 +325,7 @@ class HistorySettingsTest final : public QObject
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxAgeDays")->value(), 30);
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxCount")->value(), 100);
         QCOMPARE(child<QDoubleSpinBox>(&dialog, "historyMaxMiB")->value(), 100.0);
+        QCOMPARE(child<QDoubleSpinBox>(&dialog, "historyMaxMiB")->decimals(), 2);
         const auto text = child<QLabel>(&dialog, "historyTotalUsage")->text();
         QVERIFY(text.contains(QStringLiteral("受管：1 张")));
         QVERIFY(text.contains(QStringLiteral("外部：1 张")));
