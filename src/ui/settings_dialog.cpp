@@ -599,8 +599,8 @@ void SettingsDialog::buildHistoryPage(QWidget* page)
     historyCount_->setValue(original.maxCount);
     historyMiB_ = new QDoubleSpinBox(policy);
     historyMiB_->setObjectName(QStringLiteral("historyMaxMiB"));
-    historyMiB_->setDecimals(6);
-    historyMiB_->setRange(0.000001, 8589934591.999999);
+    historyMiB_->setDecimals(2);
+    historyMiB_->setRange(0.01, 8589934591.99);
     historyMiB_->setSuffix(QStringLiteral(" MiB"));
     historyMiB_->setValue(original.maxBytes / 1048576.0);
     originalHistoryMiB_ = historyMiB_->value();

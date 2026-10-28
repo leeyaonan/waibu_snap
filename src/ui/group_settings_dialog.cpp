@@ -93,8 +93,8 @@ GroupSettingsDialog::GroupSettingsDialog(HistoryManager& manager, QString groupI
     bytes_ = bytes.first;
     maxMiB_ = new QDoubleSpinBox(this);
     maxMiB_->setObjectName(QStringLiteral("groupMaxMiB"));
-    maxMiB_->setDecimals(6);
-    maxMiB_->setRange(0.000001, 8589934591.999999);
+    maxMiB_->setDecimals(2);
+    maxMiB_->setRange(0.01, 8589934591.99);
     maxMiB_->setSuffix(QStringLiteral(" MiB"));
     bytes.second->addWidget(maxMiB_);
     auto* explanation = new QLabel(
