@@ -5,6 +5,7 @@
 #include <QRect>
 #include <QSize>
 #include <QString>
+#include <QVector>
 #include <functional>
 #include <memory>
 namespace waibusnap
@@ -46,7 +47,8 @@ struct RecordingRequest
     int fps = 30;
     RecordingQuality quality = RecordingQuality::High;
     bool systemAudio = true;
-    // R2 必须为空；非空返回「麦克风将在 R3 接入」。
+    bool microphoneEnabled = false;
+    // 空表示系统默认输入；非空表示指定设备。
     QString microphoneDeviceId;
     double systemGain = 1.0;
     double microphoneGain = 1.0;
@@ -64,7 +66,7 @@ class RecordingSession
     virtual ~RecordingSession() = default;
     // GUI 线程 start / pause / resume / stop / discard；事件在 GUI 线程交付。
     // 对象必须存活到 Finished / Failed；析构后不得再回调。
-    // start 的校验失败（参数非法、输出为 GIF、麦克风非空）直接返回 false + 中文 error；
+    // start 的校验失败（参数非法、输出为 GIF）直接返回 false + 中文 error；
     // 屏幕录制权限拒绝时在 start 返回 false 前同步交付 PermissionDenied，回调内不得销毁会话。
     virtual bool start(const RecordingRequest& request, EventCallback callback, QString* error) = 0;
     // 暂停 / 恢复 / 停止 / 丢弃均幂等；终态后调用无副作用。
@@ -77,6 +79,26 @@ std::unique_ptr<RecordingSession> createRecordingSession();
 bool recordingCaptureSupported();
 bool hasScreenRecordingPermission();
 bool requestScreenRecordingPermission();
+// 只校验参数，不启动采集、不查询权限，合法请求返回空字符串。
+QString validateRecordingRequest(const RecordingRequest& request);
+enum class MicrophonePermission
+{
+    Authorized,
+    Denied,
+    NotDetermined
+};
+// 查询不触发权限弹窗；请求总是异步在 GUI 线程交付，超时 / 拒绝返回 false。
+MicrophonePermission microphonePermission();
+void requestMicrophonePermission(std::function<void(bool)> callback);
+QString microphonePermissionExplanation();
+struct MicrophoneDevice
+{
+    QString id;
+    QString name;
+    bool isDefault = false;
+};
+QVector<MicrophoneDevice> microphoneDevices();
+QString defaultMicrophoneDeviceId();
 struct RecordingMediaInfo
 {
     bool valid = false;

@@ -10,6 +10,7 @@ from pathlib import Path
 DEFAULT_SOURCES = (
     "src/platform/macos/capture_services.mm",
     "src/platform/macos/recording_services.mm",
+    "src/platform/macos/recording_audio_pipeline.mm",
 )
 
 

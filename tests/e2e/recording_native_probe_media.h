@@ -1,5 +1,13 @@
 #pragma once
 #include <QString>
-
-// 原生探针专用：用 AVFoundation 判断成品是否带音轨，避免把音频探测塞进 R2 公共接口。
-bool recordingProbeHasAudioTrack(const QString& path);
+struct RecordingProbeAudioInfo
+{
+    bool valid = false;
+    int tracks = 0;
+    bool aac = false;
+    double sampleRate = 0;
+    int channels = 0;
+    qint64 durationMs = 0;
+};
+// 仅探针使用，不改变 RecordingMediaProbe 的公共契约。
+RecordingProbeAudioInfo recordingProbeAudioInfo(const QString& path);

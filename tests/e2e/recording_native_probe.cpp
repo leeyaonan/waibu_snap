@@ -18,6 +18,7 @@
 #include <QTimer>
 #include <QUuid>
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -55,6 +56,13 @@ bool check(Transcript& transcript, bool condition, const QString& description)
 struct ProbeOptions
 {
     bool audio = false;
+    bool microphone = false;
+    bool requestMicrophonePermission = false;
+    bool expectMicrophoneFallback = false;
+    bool listMicrophones = false;
+    QString microphoneDeviceId;
+    double systemGain = 1;
+    double microphoneGain = 1;
     bool pause = false;
     bool discard = false;
     bool region = false;
@@ -71,7 +79,7 @@ struct ProbeResult
     bool discarded = false;
     bool failed = false;
     QString error;
-    QString lastWarning;
+    QStringList warnings;
     waibusnap::RecordingEvent finishedEvent;
 };
 
@@ -126,6 +134,52 @@ int runProbe(const ProbeOptions& options)
             "macOS 27 起请从访达或用 open 命令启动探针（终端直接执行不会继承授权）。"));
         return finish(transcript, options, 2);
     }
+    bool microphoneReady = false;
+    if (options.listMicrophones)
+    {
+        for (const auto& device : waibusnap::microphoneDevices())
+            transcript.line(QStringLiteral("麦克风：%1；ID=%2；默认=%3")
+                                .arg(device.name, device.id)
+                                .arg(device.isDefault));
+    }
+    if (options.microphone)
+    {
+        if (options.requestMicrophonePermission)
+        {
+            transcript.line(QStringLiteral("请求麦克风权限；请在系统弹窗中选择（30 秒超时）。"));
+            QEventLoop permissionLoop;
+            waibusnap::requestMicrophonePermission([&](bool) { permissionLoop.quit(); });
+            permissionLoop.exec();
+        }
+        const auto devices = waibusnap::microphoneDevices();
+        const QString selectedId = options.microphoneDeviceId.isEmpty()
+                                       ? waibusnap::defaultMicrophoneDeviceId()
+                                       : options.microphoneDeviceId;
+        const bool deviceExists =
+            std::any_of(devices.cbegin(), devices.cend(),
+                        [&selectedId](const waibusnap::MicrophoneDevice& device)
+                        { return device.id == selectedId; });
+        const auto permission = waibusnap::microphonePermission();
+        microphoneReady = permission == waibusnap::MicrophonePermission::Authorized && deviceExists;
+        if (!microphoneReady)
+        {
+            transcript.line(QStringLiteral(
+                "SKIP: 真实麦克风采集尚未验证（权限未授权或设备不可用）；仍可验证视频和降级。"));
+            transcript.line(
+                QStringLiteral("授权步骤：用 --microphone --request-microphone-permission 从 open "
+                               "启动，或在系统设置 → 隐私与安全性 → 麦克风中允许 "
+                               "WaibuSnapRecordingProbe 后重跑。"));
+            // 未决定时的真实麦克风矩阵单独 SKIP；无效设备不请求权限，可直接验证降级。
+            if (!options.expectMicrophoneFallback ||
+                (permission == waibusnap::MicrophonePermission::NotDetermined && deviceExists))
+                return finish(transcript, options, 2);
+        }
+    }
+    transcript.line(QStringLiteral("麦克风：%1；增益：系统 %2 / 麦克风 %3；预期降级：%4")
+                        .arg(options.microphone)
+                        .arg(options.systemGain)
+                        .arg(options.microphoneGain)
+                        .arg(options.expectMicrophoneFallback));
     const auto topology = waibusnap::createDisplayTopology();
     if (!topology)
     {
@@ -187,6 +241,10 @@ int runProbe(const ProbeOptions& options)
     request.fps = 30;
     request.quality = waibusnap::RecordingQuality::Low;
     request.systemAudio = options.audio;
+    request.microphoneEnabled = options.microphone;
+    request.microphoneDeviceId = options.microphoneDeviceId;
+    request.systemGain = options.systemGain;
+    request.microphoneGain = options.microphoneGain;
     request.showCursor = true;
     request.tempPath = tempPath;
     request.finalPath = finalPath;
@@ -209,7 +267,7 @@ int runProbe(const ProbeOptions& options)
                          result.error = QStringLiteral("等待会话终态超时（30 秒）。");
                          loop.quit();
                      });
-    timeout.start(30000);
+    timeout.start((options.seconds + 35) * 1000);
     QString startError;
     const bool started = session->start(
         request,
@@ -261,7 +319,7 @@ int runProbe(const ProbeOptions& options)
                                     .arg(event.droppedFrames));
                 break;
             case waibusnap::RecordingEventType::Warning:
-                result.lastWarning = event.message;
+                result.warnings.append(event.message);
                 transcript.line(QStringLiteral("事件：Warning %1").arg(event.message));
                 break;
             case waibusnap::RecordingEventType::AutoStop:
@@ -367,11 +425,35 @@ int runProbe(const ProbeOptions& options)
             expect(info.durationMs < 2900,
                    QStringLiteral("暂停 1 秒未进入成品（时长明显小于 3 秒）"));
     }
-    const bool hasAudio = recordingProbeHasAudioTrack(finalPath);
-    transcript.line(QStringLiteral("音轨：%1")
-                        .arg(hasAudio ? QStringLiteral("存在") : QStringLiteral("不存在")));
-    expect(hasAudio == options.audio, options.audio ? QStringLiteral("系统声音路径生成了音轨")
-                                                    : QStringLiteral("无声路径没有生成空音轨"));
+    const auto audioInfo = recordingProbeAudioInfo(finalPath);
+    const bool expectedAudio =
+        options.audio || (microphoneReady && !options.expectMicrophoneFallback);
+    transcript.line(QStringLiteral("音轨：%1 条；AAC=%2；采样率=%3；声道=%4；音轨时长=%5 ms")
+                        .arg(audioInfo.tracks)
+                        .arg(audioInfo.aac)
+                        .arg(audioInfo.sampleRate)
+                        .arg(audioInfo.channels)
+                        .arg(audioInfo.durationMs));
+    expect(audioInfo.valid, QStringLiteral("音轨信息读取成功"));
+    expect(audioInfo.tracks == (expectedAudio ? 1 : 0),
+           QStringLiteral("仅有预期的单音轨；无声时没有空轨"));
+    if (expectedAudio && audioInfo.tracks == 1)
+    {
+        expect(audioInfo.aac && audioInfo.sampleRate == 48000 && audioInfo.channels == 2,
+               QStringLiteral("唯一音轨为 AAC / 48 kHz / 双声道"));
+        const auto media = probe->probe(finalPath);
+        const qint64 difference = qAbs(media.durationMs - audioInfo.durationMs);
+        transcript.line(
+            QStringLiteral("音画时长差：%1 ms（NF-3 长时同步仍需另验）").arg(difference));
+        expect(difference <= 200, QStringLiteral("短样本音画时长接近（差值 ≤200 ms）"));
+    }
+    if (options.expectMicrophoneFallback)
+    {
+        expect(!microphoneReady, QStringLiteral("降级场景麦克风不可用"));
+        expect(std::any_of(result.warnings.cbegin(), result.warnings.cend(), [](const QString& text)
+                           { return text.contains(QStringLiteral("麦克风")); }),
+               QStringLiteral("麦克风降级发出中文 Warning，视频仍 Finished"));
+    }
     expect(result.finishedEvent.droppedFrames >= 0,
            QStringLiteral("丢帧计数已上报（%1）").arg(result.finishedEvent.droppedFrames));
 
@@ -398,9 +480,24 @@ int main(int argc, char* argv[])
     QGuiApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("WaibuSnapRecordingProbe"));
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("WaibuSnap v009 R2 录制原生探针"));
+    parser.setApplicationDescription(QStringLiteral("WaibuSnap v009 R3 录制原生探针"));
     parser.addHelpOption();
-    parser.addOption({QStringLiteral("audio"), QStringLiteral("开启系统声音并断言音轨存在。")});
+    parser.addOption({{QStringLiteral("audio"), QStringLiteral("system-audio")},
+                      QStringLiteral("开启系统声音并断言音轨存在。")});
+    parser.addOption(
+        {QStringLiteral("microphone"), QStringLiteral("开启麦克风；未授权时明确 SKIP。")});
+    parser.addOption({QStringLiteral("mic-device"),
+                      QStringLiteral("指定输入设备 ID；空为系统默认。"), QStringLiteral("id")});
+    parser.addOption({QStringLiteral("system-gain"), QStringLiteral("系统声音增益 0–2。"),
+                      QStringLiteral("gain"), QStringLiteral("1")});
+    parser.addOption({QStringLiteral("microphone-gain"), QStringLiteral("麦克风增益 0–2。"),
+                      QStringLiteral("gain"), QStringLiteral("1")});
+    parser.addOption({QStringLiteral("request-microphone-permission"),
+                      QStringLiteral("主动异步请求麦克风授权。")});
+    parser.addOption({QStringLiteral("expect-microphone-fallback"),
+                      QStringLiteral("验证麦克风不可用时 Warning + 视频继续。")});
+    parser.addOption(
+        {QStringLiteral("list-microphones"), QStringLiteral("打印只读麦克风设备列表。")});
     parser.addOption({QStringLiteral("pause"),
                       QStringLiteral("录 1 秒 → 暂停 1 秒 → 再录 1 秒，断言成片约 2 秒。")});
     parser.addOption({QStringLiteral("discard"),
@@ -418,11 +515,29 @@ int main(int argc, char* argv[])
     parser.process(app);
     ProbeOptions options;
     options.audio = parser.isSet(QStringLiteral("audio"));
+    options.microphone = parser.isSet(QStringLiteral("microphone"));
+    options.microphoneDeviceId = parser.value(QStringLiteral("mic-device"));
+    options.requestMicrophonePermission =
+        parser.isSet(QStringLiteral("request-microphone-permission"));
+    options.expectMicrophoneFallback = parser.isSet(QStringLiteral("expect-microphone-fallback"));
+    options.listMicrophones = parser.isSet(QStringLiteral("list-microphones"));
+    bool systemGainOk = false;
+    bool microphoneGainOk = false;
+    options.systemGain = parser.value(QStringLiteral("system-gain")).toDouble(&systemGainOk);
+    options.microphoneGain =
+        parser.value(QStringLiteral("microphone-gain")).toDouble(&microphoneGainOk);
+    if (!systemGainOk || !microphoneGainOk || !std::isfinite(options.systemGain) ||
+        !std::isfinite(options.microphoneGain) || options.systemGain < 0 ||
+        options.systemGain > 2 || options.microphoneGain < 0 || options.microphoneGain > 2)
+    {
+        QTextStream(stderr) << QStringLiteral("增益必须是 0–2.0 之间的数值。") << '\n';
+        return 1;
+    }
     options.pause = parser.isSet(QStringLiteral("pause"));
     options.discard = parser.isSet(QStringLiteral("discard"));
     options.region = parser.isSet(QStringLiteral("region"));
     options.requestPermission = parser.isSet(QStringLiteral("request-permission"));
-    options.seconds = qBound(1, parser.value(QStringLiteral("seconds")).toInt(), 10);
+    options.seconds = qBound(1, parser.value(QStringLiteral("seconds")).toInt(), 600);
     options.keepDirectory = parser.value(QStringLiteral("keep"));
     options.reportPath = parser.value(QStringLiteral("report"));
     if (!options.reportPath.isEmpty())
