@@ -51,9 +51,10 @@ class RecordingUiTest : public QObject
                 result = s;
             },
             [&] { ++cancelled; });
-        for (const auto* name : {"recordingPickerAreaButton", "recordingPickerWindowButton",
-                                 "recordingPickerDisplayButton", "recordingPickerOutputVideo",
-                                 "recordingPickerStart", "recordingPickerCancel"})
+        for (const auto* name :
+             {"recordingPickerAreaButton", "recordingPickerWindowButton",
+              "recordingPickerDisplayButton", "recordingPickerOutputVideo", "recordingPickerStart",
+              "recordingPickerCancel", "recordingPickerOutputGif"})
             QVERIFY(picker.findChild<QPushButton*>(QString::fromLatin1(name)));
         QTest::keyClick(&picker, Qt::Key_Return);
         QCOMPARE(selected, 0);
@@ -69,12 +70,21 @@ class RecordingUiTest : public QObject
         QTest::mouseMove(&picker, QPoint(200, 160));
         QTest::mouseClick(&picker, Qt::LeftButton, {}, QPoint(200, 160));
         QCOMPARE(picker.selection().windowId, quint64(123));
+        auto* gif = picker.findChild<QPushButton*>(QStringLiteral("recordingPickerOutputGif"));
+        auto* video = picker.findChild<QPushButton*>(QStringLiteral("recordingPickerOutputVideo"));
+        QVERIFY(video->isChecked() && !gif->isChecked() && gif->isVisible());
+        gif->click();
+        QVERIFY(gif->isChecked() && !video->isChecked());
+        QTest::keyClick(&picker, Qt::Key_V);
+        QCOMPARE(picker.selection().output, RecordingOutput::Video);
+        QTest::keyClick(&picker, Qt::Key_G);
         QTest::keyClick(&picker, Qt::Key_3);
         QCOMPARE(picker.selection().pixelRect, QRect(0, 0, 1600, 1200));
         QTest::keyClick(&picker, Qt::Key_Return);
         QCOMPARE(selected, 1);
         QCOMPARE(cancelled, 0);
         QCOMPARE(result.kind, RecordingTargetKind::Display);
+        QCOMPARE(result.output, RecordingOutput::Gif);
         QVERIFY(!picker.isVisible());
         RecordingTargetPicker escape(frame(), {});
         escape.open({}, [&] { ++cancelled; });
@@ -133,6 +143,21 @@ class RecordingUiTest : public QObject
                 fullPath |= label->toolTip() == event.path;
             QVERIFY(fullPath);
             QVERIFY(!toast.grab().isNull());
+        }
+    }
+    void gifToastTitles()
+    {
+        for (bool automatic : {false, true})
+        {
+            RecordingEvent e;
+            e.path = QStringLiteral("/example/test.gif");
+            e.autoStopped = automatic;
+            RecordingToast toast(e, true, {});
+            bool found = false;
+            for (auto* label : toast.findChildren<QLabel*>())
+                found |= label->text() == (automatic ? QStringLiteral("GIF 已自动停止")
+                                                     : QStringLiteral("GIF 已保存"));
+            QVERIFY(found);
         }
     }
     void iconStatesHaveBothScales()

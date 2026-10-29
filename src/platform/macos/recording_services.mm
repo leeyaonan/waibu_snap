@@ -1,3 +1,4 @@
+#include "core/gif_encoder.h"
 #include "interfaces/recording.h"
 #include "platform/macos/recording_audio_pipeline.h"
 #include "session/monotonic_clock.h"
@@ -15,6 +16,7 @@
 #include <QPointer>
 #include <QTimer>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#import <VideoToolbox/VideoToolbox.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -107,9 +109,19 @@ struct MicrophoneCapture
     id __strong disconnectObserver = nil;
 };
 
+struct GifPipeline
+{
+    dispatch_queue_t __strong queue =
+        dispatch_queue_create("local.waibusnap.recording.gif", DISPATCH_QUEUE_SERIAL);
+    GifEncoder encoder;
+};
 struct RecordingState
 {
     RecordingRequest request;
+    std::shared_ptr<GifPipeline> gif;
+    QImage latestGifFrame;
+    bool gifBusy = false;
+    bool gifLimitReached = false;
     RecordingSession::EventCallback callback;
     std::atomic<bool> destroyed{false};
     std::atomic<bool> terminal{false};
@@ -232,6 +244,14 @@ void stopMicrophone(const std::shared_ptr<RecordingState>& state)
 
 void releaseCaptureObjects(const std::shared_ptr<RecordingState>& state)
 {
+    if (state->gif)
+    {
+        const auto gif = std::move(state->gif);
+        dispatch_async(gif->queue, ^{
+          gif->encoder.cancel();
+        });
+    }
+    state->latestGifFrame = {};
     stopMicrophone(state);
     state->mixer.reset();
     state->systemConverter.reset();
@@ -525,6 +545,72 @@ bool acceptingSamplesAfter(const std::shared_ptr<RecordingState>& state)
            !state->paused.load(std::memory_order_acquire);
 }
 
+QImage imageFromCGImage(CGImageRef image);
+void tickGif(std::shared_ptr<RecordingState> state)
+{
+    if (!acceptingSamplesAfter(state) || state->gifLimitReached || state->latestGifFrame.isNull())
+        return;
+    if (state->gifBusy)
+    {
+        state->droppedFrames.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    state->gifBusy = true;
+    const QImage frame = state->latestGifFrame;
+    const auto gif = state->gif;
+    dispatch_async(gif->queue, ^{
+      @autoreleasepool
+      {
+          QString error;
+          const bool ok = !state->terminal.load(std::memory_order_acquire) &&
+                          gif->encoder.addFrame(frame, &error);
+          const qint64 frames = gif->encoder.frameCount();
+          dispatch_async(state->workQueue, ^{
+            state->gifBusy = false;
+            if (state->terminal.load(std::memory_order_acquire))
+                return;
+            if (!ok)
+            {
+                failSession(state, error);
+                return;
+            }
+            state->lastRecordedMs = frames * 1000 / state->request.fps;
+            maybeEmitProgress(state);
+            if (!state->gifLimitReached &&
+                frames * 1000 >= qint64(state->request.maxDurationMs) * state->request.fps)
+            {
+                state->gifLimitReached = true;
+                RecordingEvent event;
+                event.type = RecordingEventType::AutoStop;
+                event.recordedMs = state->lastRecordedMs;
+                event.autoStopped = true;
+                event.message = QStringLiteral("GIF 已达到最长时长");
+                postEvent(state, std::move(event));
+            }
+          });
+      }
+    });
+}
+void startGifTimer(std::shared_ptr<RecordingState> state)
+{
+    if (state->frameTimer)
+        return;
+    auto timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, state->workQueue);
+    if (!timer)
+    {
+        failSession(state, QStringLiteral("无法创建GIF帧定时器。"));
+        return;
+    }
+    const uint64_t interval = uint64_t(NSEC_PER_SEC) / uint64_t(state->request.fps);
+    dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, interval), interval,
+                              interval / 20);
+    dispatch_source_set_event_handler(timer, ^{
+      tickGif(state);
+    });
+    state->frameTimer = timer;
+    dispatch_resume(timer);
+}
+
 void handleScreenSample(const std::shared_ptr<RecordingState>& state,
                         CMSampleBufferRef sampleBuffer)
 {
@@ -536,6 +622,27 @@ void handleScreenSample(const std::shared_ptr<RecordingState>& state,
         CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
                       state->minimumSamplePts) < 0)
         return;
+    if (state->request.output == RecordingOutput::Gif)
+    {
+        CGImageRef image = nullptr;
+        const OSStatus status = VTCreateCGImageFromCVPixelBuffer(
+            CMSampleBufferGetImageBuffer(sampleBuffer), nullptr, &image);
+        if (status != noErr || !image)
+        {
+            failSession(state, QStringLiteral("GIF画面转换失败，录制已停止。"));
+            return;
+        }
+        state->latestGifFrame = imageFromCGImage(image);
+        CGImageRelease(image);
+        if (state->latestGifFrame.isNull() ||
+            state->latestGifFrame.size() != state->request.outputPixels)
+        {
+            failSession(state, QStringLiteral("GIF画面为空或尺寸不一致。"));
+            return;
+        }
+        startGifTimer(state);
+        return;
+    }
     if (!appendVideoBuffer(state, sampleBuffer))
         return;
     drainPendingAudio(state);
@@ -812,7 +919,7 @@ void finalizeWriter(const std::shared_ptr<RecordingState>& state)
     }
     const AVAssetWriterStatus status =
         state->writer ? state->writer.status : AVAssetWriterStatusFailed;
-    if (status != AVAssetWriterStatusCompleted)
+    if (state->request.output != RecordingOutput::Gif && status != AVAssetWriterStatusCompleted)
     {
         failSession(state,
                     QStringLiteral("视频写入未完成（状态 %1），未生成文件。").arg(int(status)));
@@ -848,6 +955,7 @@ void finalizeWriter(const std::shared_ptr<RecordingState>& state)
     state->terminal.store(true, std::memory_order_release);
     RecordingEvent event;
     event.type = RecordingEventType::Finished;
+    event.autoStopped = state->gifLimitReached;
     event.recordedMs = state->lastRecordedMs;
     event.bytes = fileSize(finalPath);
     event.path = finalPath;
@@ -891,6 +999,40 @@ void beginStop(const std::shared_ptr<RecordingState>& state)
 {
     if (state->terminal.load(std::memory_order_acquire))
         return;
+    if (state->request.output == RecordingOutput::Gif)
+    {
+        const auto gifState = state;
+        gifState->acceptingSamples.store(false, std::memory_order_release);
+        if (gifState->frameTimer)
+        {
+            dispatch_source_cancel(gifState->frameTimer);
+            gifState->frameTimer = nil;
+        }
+        [gifState->stream stopCaptureWithCompletionHandler:nil];
+        gifState->latestGifFrame = {};
+        const auto gif = gifState->gif;
+        if (!gif)
+        {
+            failSession(gifState, QStringLiteral("GIF录制尚未开始。"));
+            return;
+        }
+        dispatch_async(gif->queue, ^{
+          QString error;
+          const bool hasFrames = gif->encoder.frameCount() > 0;
+          const bool ok = gif->encoder.finish(&error);
+          dispatch_async(gifState->workQueue, ^{
+            if (gifState->terminal.load(std::memory_order_acquire))
+                return;
+            if (!ok)
+            {
+                failSession(gifState, error, hasFrames);
+                return;
+            }
+            finalizeWriter(gifState);
+          });
+        });
+        return;
+    }
     if (!state->stream || !state->writer)
     {
         failSession(state, QStringLiteral("录制尚未开始，已结束。"));
@@ -977,7 +1119,9 @@ void configureStream(SCStreamConfiguration* configuration, const RecordingReques
                            rectangle.height() / scale);
         }
     }
-    if (request.systemAudio)
+    if (request.output == RecordingOutput::Gif)
+        configuration.capturesAudio = NO;
+    else if (request.systemAudio)
         configureAudio(configuration);
 }
 
@@ -1177,6 +1321,30 @@ void configureAndStart(const std::shared_ptr<RecordingState>& state, SCShareable
             state->audioOutput = audioOutput;
         }
     }
+    if (state->request.output == RecordingOutput::Gif)
+    {
+        const auto gifState = state;
+        gifState->filter = filter;
+        gifState->gif = std::make_shared<GifPipeline>();
+        const auto gif = gifState->gif;
+        dispatch_async(gif->queue, ^{
+          QString error;
+          const bool ok =
+              gif->encoder.start(gifState->request.tempPath, gifState->request.outputPixels,
+                                 gifState->request.fps, &error);
+          dispatch_async(gifState->workQueue, ^{
+            if (sessionEnding(gifState))
+                return;
+            if (!ok)
+            {
+                failSession(gifState, error);
+                return;
+            }
+            startCapture(gifState, stream);
+          });
+        });
+        return;
+    }
     const bool microphoneAvailable = prepareMicrophone(state);
     state->mixer.setSources(state->systemAvailable, microphoneAvailable);
     state->mixer.setGains(float(state->request.systemGain), float(state->request.microphoneGain));
@@ -1290,6 +1458,8 @@ class MacRecordingSession final : public RecordingSession
           if (sessionEnding(state) || state->paused.exchange(true, std::memory_order_acq_rel))
               return;
           state->pauseStartNs.store(commandNs, std::memory_order_release);
+          if (state->request.output == RecordingOutput::Gif)
+              state->latestGifFrame = {};
           resetAudioForPause(state);
         });
     }
@@ -1304,6 +1474,8 @@ class MacRecordingSession final : public RecordingSession
         dispatch_async(state->workQueue, ^{
           if (sessionEnding(state) || !state->paused.load(std::memory_order_acquire))
               return;
+          if (state->request.output == RecordingOutput::Gif)
+              state->latestGifFrame = {};
           resetAudioForPause(state);
           state->minimumSamplePts = resumePts;
           const qint64 start = state->pauseStartNs.exchange(0, std::memory_order_acq_rel);

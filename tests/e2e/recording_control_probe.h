@@ -1,4 +1,6 @@
 #pragma once
 #include <QString>
-int runRecordingControlProbe(const QString& report, const QString& keep, bool retina = false);
-int runRecordingControlTarget(bool retina = false);
+int runRecordingControlProbe(const QString& report, const QString& keep, bool retina = false,
+                             bool gif = false);
+int runRecordingControlTarget(bool retina = false, bool stationary = false, bool large = false,
+                              bool fourK = false);

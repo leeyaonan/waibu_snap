@@ -34,8 +34,16 @@ QString validateTarget(const RecordingRequest& request)
 
 QString validateRecordingRequest(const RecordingRequest& request)
 {
-    if (request.output != RecordingOutput::Video)
-        return QStringLiteral("GIF 录制将在 R5 接入；当前仅支持 MP4 视频。");
+    const bool gif = request.output == RecordingOutput::Gif;
+    if (!gif && request.output != RecordingOutput::Video)
+        return QStringLiteral("录制输出类型无效。");
+    if (gif &&
+        (request.systemAudio || request.microphoneEnabled || !request.microphoneDeviceId.isEmpty()))
+        return QStringLiteral("GIF不支持系统声音或麦克风。");
+    if (gif && request.maxDurationMs <= 0)
+        return QStringLiteral("GIF最长录制时长必须为正数。");
+    if (gif && !request.finalPath.endsWith(QStringLiteral(".gif"), Qt::CaseInsensitive))
+        return QStringLiteral("GIF成品必须以.gif结尾。");
     for (QChar character : request.microphoneDeviceId)
         if (character.isNull() || character.category() == QChar::Other_Control)
             return QStringLiteral("麦克风设备 ID 含非法字符。");
@@ -45,9 +53,13 @@ QString validateRecordingRequest(const RecordingRequest& request)
         return QStringLiteral("音频增益必须在 0–2.0 之间。");
     if (request.outputPixels.width() <= 0 || request.outputPixels.height() <= 0)
         return QStringLiteral("输出尺寸必须为正数。");
-    if (request.outputPixels.width() % 2 != 0 || request.outputPixels.height() % 2 != 0)
+    if (!gif && (request.outputPixels.width() % 2 != 0 || request.outputPixels.height() % 2 != 0))
         return QStringLiteral("视频输出宽高必须为偶数。");
-    if (request.fps != 30 && request.fps != 60)
+    if (gif && request.fps != 10 && request.fps != 12 && request.fps != 15)
+        return QStringLiteral("GIF帧率只支持10 / 12 / 15。");
+    if (gif && (request.outputPixels.width() > 65535 || request.outputPixels.height() > 65535))
+        return QStringLiteral("GIF尺寸不能超过65535。");
+    if (!gif && request.fps != 30 && request.fps != 60)
         return QStringLiteral("视频帧率只支持 30 或 60。");
     if (request.maxDurationMs < 0)
         return QStringLiteral("最长录制时长不能为负数。");

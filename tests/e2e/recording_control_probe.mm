@@ -9,9 +9,11 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QProcess>
+#include <QPushButton>
 #include <QScreen>
 #include <QTemporaryDir>
 #include <QTest>
@@ -24,7 +26,7 @@ namespace
 class ControlTarget final : public QWidget
 {
   public:
-    explicit ControlTarget(bool retina)
+    explicit ControlTarget(bool retina, bool stationary, bool large, bool fourK)
     {
         setWindowTitle(QStringLiteral("录制受控测试画面"));
         resize(520, 360);
@@ -33,6 +35,12 @@ class ControlTarget final : public QWidget
             for (const auto* candidate : QGuiApplication::screens())
                 if (!screen || candidate->devicePixelRatio() > screen->devicePixelRatio())
                     screen = candidate;
+        if (large)
+        {
+            setWindowFlag(Qt::FramelessWindowHint);
+            const qreal dpr = screen ? screen->devicePixelRatio() : 1;
+            setFixedSize(fourK ? QSize(qRound(3840 / dpr), qRound(2160 / dpr)) : QSize(1280, 720));
+        }
         move((screen ? screen->geometry().topLeft() : QPoint()) + QPoint(100, 120));
         connect(&timer_, &QTimer::timeout, this,
                 [this]
@@ -40,7 +48,8 @@ class ControlTarget final : public QWidget
                     ++counter_;
                     update();
                 });
-        timer_.start(50);
+        if (!stationary)
+            timer_.start(50);
     }
     void paintEvent(QPaintEvent*) override
     {
@@ -65,20 +74,24 @@ bool waitFor(const std::function<bool()>& condition, int timeout = 15000)
     return condition();
 }
 }
-int runRecordingControlTarget(bool retina)
+int runRecordingControlTarget(bool retina, bool stationary, bool large, bool fourK)
 {
-    ControlTarget target(retina);
+    ControlTarget target(retina, stationary, large, fourK);
     target.show();
     target.winId();
     NSView* view = (__bridge NSView*)reinterpret_cast<void*>(target.winId());
     QTest::qWait(100);
     const auto frame = target.frameGeometry();
-    QTextStream(stdout) << "TARGET " << view.window.windowNumber << ' ' << frame.x() << ' '
-                        << frame.y() << ' ' << frame.width() << ' ' << frame.height() << Qt::endl;
+    QTextStream targetOutput(stdout);
+    targetOutput << "TARGET " << view.window.windowNumber << ' ' << frame.x() << ' ' << frame.y()
+                 << ' ' << frame.width() << ' ' << frame.height();
+    if (large)
+        targetOutput << ' ' << target.devicePixelRatioF();
+    targetOutput << Qt::endl;
     QTimer::singleShot(90000, qApp, &QCoreApplication::quit);
     return qApp->exec();
 }
-int runRecordingControlProbe(const QString& report, const QString& keep, bool retina)
+int runRecordingControlProbe(const QString& report, const QString& keep, bool retina, bool gif)
 {
     qApp->setQuitOnLastWindowClosed(false);
     QStringList lines;
@@ -195,6 +208,13 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
     for (const auto kind :
          {RecordingTargetKind::Region, RecordingTargetKind::Window, RecordingTargetKind::Display})
     {
+        // 保持普通layer=0，才能进入真实窗口枚举；每轮重新激活目标，防止其他应用遮挡。
+        NSRunningApplication* targetApp = [NSRunningApplication
+            runningApplicationWithProcessIdentifier:pid_t(target.processId())];
+        [NSApp yieldActivationToApplication:targetApp];
+        [targetApp activateFromApplication:NSRunningApplication.currentApplication
+                                   options:NSApplicationActivateAllWindows];
+        QTest::qWait(300);
         RecordingDependencies d;
         d.cursorDisplay = [&]
         {
@@ -244,6 +264,7 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
         RecordingController controller(std::move(d));
         RecordingPreferences preferences;
         preferences.videoDirectory = directory;
+        preferences.gifDirectory = directory;
         preferences.systemAudio = false;
         preferences.countdownSeconds = 3;
         RecordingEvent result;
@@ -258,6 +279,8 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
         if (!check(waitFor([&] { return picker || !error.isEmpty(); }) && picker,
                    QStringLiteral("模式 %1：真实冻结帧与选择器").arg(int(kind))))
             continue;
+        if (gif)
+            picker->findChild<QPushButton*>(QStringLiteral("recordingPickerOutputGif"))->click();
         picker->setMode(kind);
         if (kind == RecordingTargetKind::Window)
             QTest::qWait(100);
@@ -320,7 +343,16 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
               QStringLiteral("模式 %1：控制器停止、保存、Toast 回调").arg(int(kind)));
         if (!result.path.isEmpty())
         {
-            const auto media = createRecordingMediaProbe()->probe(result.path);
+            auto media = createRecordingMediaProbe()->probe(result.path);
+            if (gif)
+            {
+                QImageReader reader(result.path);
+                media.pixelSize = reader.size();
+                media.durationMs = 0;
+                media.valid = true;
+                while (!reader.read().isNull())
+                    media.durationMs += reader.nextImageDelay();
+            }
             check(media.valid && media.durationMs >= 1700 && media.durationMs < 3300 &&
                       media.pixelSize == result.pixelSize,
                   QStringLiteral("模式 %1：成片 %2 ms，%3×%4；无 3 秒倒计时或暂停段")

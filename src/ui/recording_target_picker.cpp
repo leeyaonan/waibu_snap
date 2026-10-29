@@ -1,5 +1,6 @@
 #include "ui/recording_target_picker.h"
 #include "core/selection_geometry.h"
+#include <QButtonGroup>
 #include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -45,9 +46,28 @@ RecordingTargetPicker::RecordingTargetPicker(CaptureFrame frame,
     video->setObjectName(QStringLiteral("recordingPickerOutputVideo"));
     video->setCheckable(true);
     video->setChecked(true);
-    video->setToolTip(QStringLiteral("MP4 · GIF 将在 R5 接入"));
+    video->setToolTip(QStringLiteral("MP4"));
     layout->addWidget(video);
-    connect(video, &QPushButton::clicked, this, [video] { video->setChecked(true); });
+    auto* gif = new QPushButton(QStringLiteral("GIF"), toolbar_);
+    gif->setObjectName(QStringLiteral("recordingPickerOutputGif"));
+    gif->setCheckable(true);
+    gif->setToolTip(QStringLiteral("GIF · 无声音"));
+    layout->addWidget(gif);
+    auto* outputs = new QButtonGroup(this);
+    outputs->addButton(video);
+    outputs->addButton(gif);
+    connect(video, &QPushButton::clicked, this,
+            [this]
+            {
+                selection_.output = RecordingOutput::Video;
+                updateHint();
+            });
+    connect(gif, &QPushButton::clicked, this,
+            [this]
+            {
+                selection_.output = RecordingOutput::Gif;
+                updateHint();
+            });
     start_ = new QPushButton(QStringLiteral("开始录制"), toolbar_);
     start_->setObjectName(QStringLiteral("recordingPickerStart"));
     layout->addWidget(start_);
@@ -94,7 +114,9 @@ void RecordingTargetPicker::dismiss()
 }
 void RecordingTargetPicker::setMode(RecordingTargetKind kind)
 {
+    const auto output = selection_.output;
     selection_ = {};
+    selection_.output = output;
     selection_.kind = kind;
     hover_.reset();
     dragging_ = false;
@@ -145,6 +167,8 @@ void RecordingTargetPicker::updateHint(bool tooSmall)
                         : selection_.kind == RecordingTargetKind::Display
                             ? QStringLiteral("整块屏幕")
                             : QStringLiteral("拖拽框选，最小 16×16 物理像素"));
+    if (selection_.output == RecordingOutput::Gif)
+        text += QStringLiteral(" · GIF · 无声音");
     hint_->setText(text);
     hint_->setToolTip(text);
     hint_->adjustSize();
@@ -255,6 +279,12 @@ void RecordingTargetPicker::keyPressEvent(QKeyEvent* event)
         break;
     case Qt::Key_3:
         setMode(RecordingTargetKind::Display);
+        break;
+    case Qt::Key_G:
+        findChild<QPushButton*>(QStringLiteral("recordingPickerOutputGif"))->click();
+        break;
+    case Qt::Key_V:
+        findChild<QPushButton*>(QStringLiteral("recordingPickerOutputVideo"))->click();
         break;
     case Qt::Key_Left:
         setMode(RecordingTargetKind((int(selection_.kind) + 2) % 3));

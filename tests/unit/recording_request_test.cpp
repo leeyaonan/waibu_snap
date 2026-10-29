@@ -61,7 +61,6 @@ class RecordingRequestTest final : public QObject
     {
         QTest::addColumn<QString>("kind");
         QTest::addColumn<QString>("expected");
-        QTest::newRow("gif") << QStringLiteral("gif") << QStringLiteral("R5");
         QTest::newRow("microphone-nul")
             << QStringLiteral("microphone-nul") << QStringLiteral("非法字符");
         QTest::newRow("microphone-control")
@@ -85,9 +84,7 @@ class RecordingRequestTest final : public QObject
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         waibusnap::RecordingRequest request = baseRequest(directory);
-        if (kind == QStringLiteral("gif"))
-            request.output = waibusnap::RecordingOutput::Gif;
-        else if (kind == QStringLiteral("microphone-nul"))
+        if (kind == QStringLiteral("microphone-nul"))
             request.microphoneDeviceId = QStringLiteral("usb") + QChar(0) + QStringLiteral("mic");
         else if (kind == QStringLiteral("microphone-control"))
             request.microphoneDeviceId = QStringLiteral("usb\nmic");
@@ -125,6 +122,38 @@ class RecordingRequestTest final : public QObject
             QCOMPARE(error, validation);
         }
         QVERIFY(!QFileInfo::exists(request.tempPath));
+    }
+    void gifRequests()
+    {
+        QTemporaryDir dir;
+        auto r = baseRequest(dir);
+        r.output = waibusnap::RecordingOutput::Gif;
+        r.fps = 12;
+        r.maxDurationMs = 2000;
+        r.outputPixels = QSize(319, 241);
+        r.tempPath = dir.filePath(QStringLiteral(".test.gif.part"));
+        r.finalPath = dir.filePath(QStringLiteral("test.gif"));
+        QVERIFY(waibusnap::validateRecordingRequest(r).isEmpty());
+        for (int scenario = 0; scenario < 7; ++scenario)
+        {
+            auto invalid = r;
+            if (scenario == 0)
+                invalid.systemAudio = true;
+            if (scenario == 1)
+                invalid.microphoneEnabled = true;
+            if (scenario == 2)
+                invalid.microphoneDeviceId = QStringLiteral("离线设备");
+            if (scenario == 3)
+                invalid.maxDurationMs = 0;
+            if (scenario == 4)
+                invalid.fps = 30;
+            if (scenario == 5)
+                invalid.finalPath += QStringLiteral(".mp4");
+            if (scenario == 6)
+                invalid.outputPixels = QSize(65536, 720);
+            QVERIFY(!waibusnap::validateRecordingRequest(invalid).isEmpty());
+        }
+        QVERIFY(!QFileInfo::exists(r.tempPath));
     }
     void acceptsMicrophoneWithoutStarting()
     {
