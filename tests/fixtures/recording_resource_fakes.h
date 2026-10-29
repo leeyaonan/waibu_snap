@@ -62,7 +62,9 @@ class FakeMediaProbe final : public RecordingMediaProbe
     QImage thumbnail(const QString&, QSize bounds) const override
     {
         ++thumbnails;
-        QImage image(QSize(640, 360).scaled(bounds, Qt::KeepAspectRatio), QImage::Format_RGB32);
+        QImage image(bounds.isValid() ? QSize(640, 360).scaled(bounds, Qt::KeepAspectRatio)
+                                      : QSize(640, 360),
+                     QImage::Format_RGB32);
         image.fill(Qt::cyan);
         return image;
     }

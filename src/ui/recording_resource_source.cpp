@@ -341,8 +341,6 @@ ResourceImageResult RecordingResourceSource::loadImage(const QString& path, QSiz
 {
     if (original || !validItem(path))
         return {{false, QStringLiteral("录制文件已丢失或路径不在当前目录内。")}, {}};
-    if (!bounds.isValid())
-        bounds = {1280, 1280};
     const QString key = fileKey(path) + QLatin1Char('/') + QString::number(bounds.width()) +
                         QLatin1Char('x') + QString::number(bounds.height());
     auto* self = const_cast<RecordingResourceSource*>(this);

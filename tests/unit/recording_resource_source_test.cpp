@@ -309,12 +309,14 @@ class RecordingResourceSourceTest final : public QObject
         QTRY_VERIFY(source->loadImage(id, {96, 72}).success);
         QCOMPARE(f.probe->thumbnails.load(), 1);
         QCOMPARE(source->loadImage(id, {96, 72}).image.size(), QSize(96, 54));
+        QTRY_VERIFY(source->loadImage(id).success);
+        QCOMPARE(source->loadImage(id).image.size(), QSize(640, 360));
         for (const auto& item : source->snapshot().items)
             source->loadImage(item.id, {96, 72});
-        QTRY_COMPARE(f.probe->thumbnails.load(), 80);
+        QTRY_COMPARE(f.probe->thumbnails.load(), 81);
         QTest::qWait(100);
         source->loadImage(id, {96, 72});
-        QTRY_COMPARE(f.probe->thumbnails.load(), 81);
+        QTRY_COMPARE(f.probe->thumbnails.load(), 82);
     }
     void failedProbeKeepsFileAndDoesNotRetryLoop()
     {
@@ -342,6 +344,7 @@ class RecordingResourceSourceTest final : public QObject
         QCOMPARE(info.durationMs, 300);
         QCOMPARE(info.loopCount, -1);
         QCOMPARE(probe->thumbnail(path, {24, 24}).size(), QSize(24, 16));
+        QCOMPARE(probe->thumbnail(path, {}).size(), QSize(48, 32));
         auto source = f.source(RecordingOutput::Gif);
         QTRY_COMPARE(source->snapshot().items.first().durationMs, 300);
         QTRY_VERIFY(source->loadImage(path, {24, 24}).success);
