@@ -57,8 +57,9 @@
 {
     (void)output;
     (void)connection;
-    AVCaptureSession* session = self.session;
-    const auto handler = self.handler;
+    __attribute__((objc_precise_lifetime)) WaibuSnapRecordingMicrophoneOutput* keepAlive = self;
+    AVCaptureSession* session = keepAlive.session;
+    const auto handler = keepAlive.handler;
     if (!session || !handler)
         return;
     @autoreleasepool
