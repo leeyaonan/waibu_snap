@@ -255,11 +255,15 @@ QString AppSettings::saveQuickGunnerPreferences(const QuickGunnerPreferences& pr
     }
     return {};
 }
-RecordingPreferences AppSettings::loadRecordingPreferences(QString* notice) const
+RecordingPreferences AppSettings::loadRecordingPreferences(QString* notice,
+                                                           bool resolveDirectories) const
 {
     RecordingPreferences result;
-    result.videoDirectory = defaultRecordingVideoDirectory();
-    result.gifDirectory = defaultRecordingGifDirectory();
+    if (resolveDirectories)
+    {
+        result.videoDirectory = defaultRecordingVideoDirectory();
+        result.gifDirectory = defaultRecordingGifDirectory();
+    }
     if (notice)
         notice->clear();
     QFile file(filePath_);
@@ -285,8 +289,17 @@ RecordingPreferences AppSettings::loadRecordingPreferences(QString* notice) cons
         if (!settings.contains(key))
             return;
         QString value;
-        if (!readRecordingString(settings, key, value) || value.contains(QChar::Null) ||
-            (!value.isEmpty() && !QDir::isAbsolutePath(value)))
+        if (!readRecordingString(settings, key, value))
+        {
+            invalid(label);
+            return;
+        }
+        if (!resolveDirectories)
+        {
+            target = value;
+            return;
+        }
+        if (value.contains(QChar::Null) || (!value.isEmpty() && !QDir::isAbsolutePath(value)))
         {
             invalid(label);
             return;

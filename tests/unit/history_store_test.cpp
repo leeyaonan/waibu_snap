@@ -57,6 +57,79 @@ class HistoryStoreTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void registeredDirectoriesDoNotInitializeOrScanImages()
+    {
+        QTemporaryDir temp;
+        const auto root = temp.filePath(QStringLiteral("历史"));
+        HistoryStore store(root);
+        QString error;
+        QVERIFY(store.registeredDirectories(&error).isEmpty());
+        QVERIFY(error.isEmpty());
+        QVERIFY(!QFileInfo::exists(root));
+        const auto initialized = store.initialize();
+        QVERIFY(initialized.error.isEmpty());
+        const auto external =
+            store.createGroup(QStringLiteral("外置"), temp.filePath(QStringLiteral("外置")));
+        QVERIFY(external.success);
+        const auto registry = QDir(root).filePath(QStringLiteral(".waibusnap/groups.json"));
+        const auto before = readBytes(registry);
+        const auto paths = store.registeredDirectories(&error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(paths.contains(external.group.absolutePath));
+        QVERIFY(paths.contains(initialized.groups.first().group.absolutePath));
+        QCOMPARE(readBytes(registry), before);
+        QVERIFY(writeBytes(registry, "invalid"));
+        store.registeredDirectories(&error);
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(readBytes(registry), QByteArray("invalid"));
+    }
+    void nestedRecordingDirectoriesNeverEnterHistoryOrCleanup()
+    {
+        QTemporaryDir temp;
+        const auto root = temp.filePath(QStringLiteral("历史"));
+        HistoryStore baseline(root);
+        const auto initial = baseline.initialize();
+        QVERIFY(initial.error.isEmpty());
+        const auto normal = initial.groups.first().group;
+        const auto external =
+            baseline.createGroup(QStringLiteral("外置"), temp.filePath(QStringLiteral("外置")));
+        QVERIFY(external.success);
+        const QStringList recordingDirectories{
+            QDir(root).filePath(QStringLiteral("GIF/深层")),
+            QDir(external.group.absolutePath).filePath(QStringLiteral("媒体/视频"))};
+        QStringList files;
+        for (const auto& directory : recordingDirectories)
+        {
+            QVERIFY(QDir().mkpath(directory));
+            for (const auto& name : {QStringLiteral("录制.gif"), QStringLiteral("录制.mp4"),
+                                     QStringLiteral("预览.png")})
+            {
+                const auto path = QDir(directory).filePath(name);
+                QVERIFY(writeBytes(path, "recording-original"));
+                files.append(path);
+            }
+        }
+        QVERIFY(baseline.writeManagedPng(normal.id, image(), HistorySource::Overlay).success);
+        QVERIFY(
+            baseline.writeManagedPng(external.group.id, image(), HistorySource::Overlay).success);
+        HistoryStore store(root, {}, {}, [&] { return recordingDirectories; });
+        for (const auto& scan : {store.initialize(), store.scan()})
+        {
+            QVERIFY(scan.error.isEmpty());
+            QCOMPARE(scan.groups.size(), 2);
+            for (const auto& group : scan.groups)
+            {
+                QCOMPARE(group.items.size(), 1);
+                QCOMPARE(group.usage.managedCount, 1);
+                const auto candidates = store.cleanupCandidates(group.group.id, 9999999999999LL);
+                QVERIFY(candidates.error.isEmpty());
+                for (const auto& candidate : candidates.candidates)
+                    QVERIFY(!files.contains(candidate.absolutePath));
+            }
+        }
+        for (const auto& path : files)
+            QCOMPARE(readBytes(path), QByteArray("recording-original"));
+    }
     void multipleExcludedDirectoriesAndLegacyProvider()
     {
         QTemporaryDir temp;

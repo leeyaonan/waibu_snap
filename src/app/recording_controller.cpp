@@ -3,6 +3,7 @@
 #include "ui/recording_border_window.h"
 #include "ui/recording_countdown_window.h"
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QPointer>
@@ -106,6 +107,7 @@ void RecordingController::startSelection(RecordingPreferences preferences)
                     guard->picker_ = guard->dependencies_.pickerFactory(std::move(result.frame));
                     if (!guard->picker_)
                         return guard->fail(QStringLiteral("无法创建录制选择器。"));
+                    guard->picker_->setDefaultOutput(guard->preferences_.defaultOutput);
                     guard->setState(State::Selecting);
                     guard->picker_->open(
                         [guard, token](RecordingSelection selection)
@@ -307,7 +309,13 @@ void RecordingController::handleEvent(quint64 token, RecordingEvent event)
     switch (event.type)
     {
     case RecordingEventType::Started:
-        if (state_ == State::Preparing)
+        if (stopWhenStarted_)
+        {
+            stopWhenStarted_ = false;
+            quitDeadline_ = dependencies_.clock() + 30000;
+            session_->stop();
+        }
+        else if (state_ == State::Preparing)
             setState(State::Recording);
         break;
     case RecordingEventType::Progress:
@@ -413,6 +421,14 @@ void RecordingController::quitRequested(QuitChoice choice)
         return;
     }
     quitAfterRecording_ = true;
+    if (state_ == State::Preparing && !quitDuringStart_)
+    {
+        quitDuringStart_ = stopWhenStarted_ = true;
+        quitDeadline_ = dependencies_.clock() + 10000;
+        setState(State::Finalizing);
+        emit noticeChanged(QStringLiteral("正在等待录制就绪，随后停止并保存后退出。"));
+        return;
+    }
     stopAndSave();
 }
 void RecordingController::reset()
@@ -431,6 +447,8 @@ void RecordingController::reset()
         session_->discard();
     session_.reset();
     quitAfterRecording_ = false;
+    quitDuringStart_ = stopWhenStarted_ = false;
+    quitDeadline_ = 0;
     countdownRemaining_ = 0;
     if (state_ != State::Idle)
         setState(State::Idle);
@@ -442,11 +460,22 @@ void RecordingController::fail(QString error, QString path)
     event.message = error.isEmpty() ? QStringLiteral("录制失败，请重试。") : error;
     event.path = std::move(path);
     const bool hadSession = bool(session_);
+    const bool quit = quitDuringStart_;
+    const auto temporary = request_.tempPath;
+    if (quit)
+    {
+        event.message += QStringLiteral("\n启动阶段保存退出未完成，已丢弃临时录制并退出。");
+        event.path.clear();
+    }
     reset();
+    if (quit && QFileInfo::exists(temporary) && !QFile::remove(temporary))
+        event.message += QStringLiteral("\n临时文件清理失败：%1").arg(temporary);
     emit noticeChanged(event.message);
     if (hadSession && dependencies_.toastPresenter)
         dependencies_.toastPresenter(event, false);
     emit failed(event.message);
+    if (quit)
+        emit quitReady();
 }
 void RecordingController::topologyChanged()
 {
@@ -464,6 +493,9 @@ void RecordingController::updateBorder()
 void RecordingController::poll()
 {
     const auto now = dependencies_.clock();
+    if (quitDuringStart_ && now >= quitDeadline_)
+        return fail(stopWhenStarted_ ? QStringLiteral("等待录制启动超时（10 秒）。")
+                                     : QStringLiteral("等待录制保存超时（30 秒）。"));
     if (state_ == State::Countdown)
     {
         const int remaining = int(qMax(qint64(0), countdownEnd_ - now + 999) / 1000);

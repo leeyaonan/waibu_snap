@@ -31,10 +31,13 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
                                QWidget* parent, SaveSettingsActions saveSettings,
                                AutostartActions autostartActions,
                                HistorySettingsActions historySettings,
-                               WatermarkSettingsActions watermarkSettings)
+                               WatermarkSettingsActions watermarkSettings,
+                               RecordingSettingsActions recordingSettings)
     : QDialog(parent), saveHotkey_(std::move(save)), originalSequence_(current),
       saveSettings_(std::move(saveSettings)), autostartActions_(std::move(autostartActions)),
-      historySettings_(std::move(historySettings)), watermarkSettings_(std::move(watermarkSettings))
+      historySettings_(std::move(historySettings)),
+      watermarkSettings_(std::move(watermarkSettings)),
+      recordingSettings_(std::move(recordingSettings))
 {
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
@@ -62,6 +65,8 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     auto* generalPage = addPage(QStringLiteral("通用"), QStringLiteral("settingsGeneralPage"));
     auto* savePage = addPage(QStringLiteral("保存"), QStringLiteral("settingsSavePage"));
     auto* capturePage = addPage(QStringLiteral("截图"), QStringLiteral("settingsCapturePage"));
+    recordingPage_ = new RecordingSettingsPage(recordingSettings_, tabs);
+    tabs->addTab(recordingPage_, QStringLiteral("录制"));
     auto* stickerPage = addPage(QStringLiteral("贴图"), QStringLiteral("settingsStickerPage"));
     buildHistoryPage(addPage(QStringLiteral("历史"), QStringLiteral("settingsHistoryPage")));
     buildGroupsPage(addPage(QStringLiteral("分组"), QStringLiteral("settingsGroupsPage")));
@@ -949,6 +954,16 @@ void SettingsDialog::save()
         error = cleanupPolicyError(historyPreferences.defaultCleanup);
     if (error.isEmpty() && watermarkPage_)
         error = watermarkPage_->validationError(historyPreferences.enabled);
+    if (error.isEmpty() && recordingPage_->supported() && recordingSettings_.savePreferences)
+    {
+        QStringList groups;
+        for (const auto& group : historyGroups_)
+            groups.append(group.absolutePath);
+        error = recordingPage_->prepareDirectories(historyPreferences.rootDirectory, groups);
+        if (!error.isEmpty())
+            findChild<QTabWidget*>(QStringLiteral("settingsTabs"))
+                ->setCurrentWidget(recordingPage_);
+    }
     if (error.isEmpty() && sequence != originalSequence_)
     {
         error = saveHotkey_(sequence);
@@ -1005,20 +1020,20 @@ void SettingsDialog::save()
             historySettings_.enabled = historyPreferences.enabled;
     }
     if (error.isEmpty() && watermarkPage_ && watermarkSettings_.savePreferences)
-    {
         error = watermarkSettings_.savePreferences(watermarkPage_->collect());
-        if (error.isEmpty())
-        {
-            const QString cleanup = watermarkPage_->commitPendingAssets();
-            if (!cleanup.isEmpty())
-                qWarning().noquote() << "水印资产清理失败：" << cleanup;
-        }
-    }
+    if (error.isEmpty() && recordingPage_->supported() && recordingSettings_.savePreferences)
+        error = recordingSettings_.savePreferences(recordingPage_->collect());
     if (!error.isEmpty())
     {
         status_->setText(error);
         status_->show();
         return;
+    }
+    if (watermarkPage_ && watermarkSettings_.savePreferences)
+    {
+        const QString cleanup = watermarkPage_->commitPendingAssets();
+        if (!cleanup.isEmpty())
+            qWarning().noquote() << "水印资产清理失败：" << cleanup;
     }
     accept();
 }

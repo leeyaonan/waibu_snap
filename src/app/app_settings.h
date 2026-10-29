@@ -42,7 +42,9 @@ class AppSettings
     explicit AppSettings(QString filePath = {});
     QuickGunnerPreferences loadQuickGunnerPreferences(QString* notice = nullptr) const;
     QString saveQuickGunnerPreferences(const QuickGunnerPreferences& preferences) const;
-    RecordingPreferences loadRecordingPreferences(QString* notice = nullptr) const;
+    // 设置草稿传 false，保留空目录（默认目录哨兵）；运行时默认解析为绝对路径。
+    RecordingPreferences loadRecordingPreferences(QString* notice = nullptr,
+                                                  bool resolveDirectories = true) const;
     QString saveRecordingPreferences(const RecordingPreferences& preferences) const;
     HistoryPreferences loadHistoryPreferences(QString* notice = nullptr) const;
     QString saveHistoryPreferences(const HistoryPreferences& preferences) const;

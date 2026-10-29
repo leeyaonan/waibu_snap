@@ -1,5 +1,6 @@
 #include "app/quick_gunner.h"
 #include "app/quick_gunner_save_queue.h"
+#include "core/storage_directory.h"
 #include "ui/quick_gunner_flash_window.h"
 #include "ui/quick_gunner_region_picker.h"
 #include <QDir>
@@ -10,41 +11,6 @@ namespace waibusnap
 {
 namespace
 {
-bool containsPath(const QString& parent, const QString& child)
-{
-    const auto relative = QDir(parent).relativeFilePath(child);
-    return relative == QStringLiteral(".") ||
-           (!QDir::isAbsolutePath(relative) && relative != QStringLiteral("..") &&
-            !relative.startsWith(QStringLiteral("../")));
-}
-QString canonicalReservedDirectory(QString path)
-{
-    if (!QDir::isAbsolutePath(path) || path.contains(QChar::Null))
-        return {};
-    path = QDir::cleanPath(path);
-    QStringList missing;
-    QFileInfo info(path);
-    // 历史关闭时目录可能尚未创建；用最近的现存父目录解析真实路径，再补回缺失层级。
-    while (!info.exists())
-    {
-        if (info.isSymLink() || info.fileName().isEmpty())
-            return {};
-        missing.prepend(info.fileName());
-        const auto parent = info.absolutePath();
-        if (parent == path)
-            return {};
-        path = parent;
-        info.setFile(path);
-    }
-    if (!info.isDir())
-        return {};
-    path = info.canonicalFilePath();
-    if (path.isEmpty())
-        return {};
-    for (const auto& name : missing)
-        path = QDir(path).filePath(name);
-    return path;
-}
 QString validateDirectory(const QString& directory, const QStringList& reservedDirectories,
                           QString& cleaned)
 {
@@ -65,10 +31,10 @@ QString validateDirectory(const QString& directory, const QStringList& reservedD
     {
         if (reserved.isEmpty())
             continue;
-        const QString other = canonicalReservedDirectory(reserved);
+        const QString other = canonicalStorageDirectory(reserved);
         if (other.isEmpty())
             return QStringLiteral("无法解析保留目录，请确认历史根目录和分组目录后重试。");
-        if (containsPath(canonical, other) || containsPath(other, canonical))
+        if (storageDirectoriesOverlap(canonical, other))
             return QStringLiteral("快枪手目录不能与历史根目录或分组目录相同，也不能互相包含。");
     }
     QTemporaryFile probe(

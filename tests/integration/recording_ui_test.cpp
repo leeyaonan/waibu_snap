@@ -38,6 +38,49 @@ class RecordingUiTest : public QObject
         return f;
     }
   private slots:
+    void pickerUsesPreferenceWithoutWritingIt()
+    {
+        RecordingPreferences p;
+        p.defaultOutput = RecordingOutput::Gif;
+        RecordingTargetPicker picker(frame(), {}, p.defaultOutput);
+        auto* gif = picker.findChild<QPushButton*>(QStringLiteral("recordingPickerOutputGif"));
+        auto* video = picker.findChild<QPushButton*>(QStringLiteral("recordingPickerOutputVideo"));
+        QVERIFY(gif->isChecked() && !video->isChecked());
+        picker.open({}, {});
+        QCOMPARE(picker.selection().output, RecordingOutput::Gif);
+        video->click();
+        QCOMPARE(picker.selection().output, RecordingOutput::Video);
+        QCOMPARE(p.defaultOutput, RecordingOutput::Gif);
+        picker.dismiss();
+    }
+    void unsupportedMenuCannotStartAndResourcesRemainBrowsable()
+    {
+        RecordingHarness h;
+        h.fake->supported = false;
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = h.directory.filePath(QStringLiteral("unsupported.ini"));
+        ApplicationController controller(*qApp, options, {}, {}, {}, {}, {}, {}, h.dependencies());
+        auto* menu = controller.menu()->findChild<QMenu*>(QStringLiteral("recordingMenu"));
+        QVERIFY(menu && !menu->isEnabled());
+        QVERIFY(menu->menuAction()->toolTip().contains(
+            QStringLiteral("录制将在 Windows 原生采集补齐后提供")));
+        for (auto* item : menu->actions())
+        {
+            QVERIFY(!item->isEnabled());
+            item->trigger();
+        }
+        QCOMPARE(h.fake->starts, 0);
+        controller.openResourceBrowser(QStringLiteral("recording-gif"));
+        HistoryWindow* browser = nullptr;
+        for (auto* window : QApplication::topLevelWidgets())
+            if (auto* candidate = qobject_cast<HistoryWindow*>(window))
+                browser = candidate;
+        QVERIFY(browser);
+        QCOMPARE(browser->selectedSourceId(), QStringLiteral("recording-gif"));
+        browser->close();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
     void pickerModesMinimumAndKeys()
     {
         RecordingTargetPicker picker(

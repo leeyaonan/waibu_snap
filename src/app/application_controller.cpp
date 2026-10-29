@@ -226,6 +226,7 @@ ApplicationController::ApplicationController(
     recordingMenu_->setObjectName(QStringLiteral("recordingMenu"));
     recordingMenu_->menuAction()->setObjectName(QStringLiteral("recordingMenuAction"));
     recordingMenu_->setToolTipsVisible(true);
+    menu_.setToolTipsVisible(true);
     recordingStatusAction_ = recordingMenu_->addAction(QString());
     recordingStatusAction_->setObjectName(QStringLiteral("recordingStatusAction"));
     recordingStatusAction_->setEnabled(false);
@@ -1000,6 +1001,27 @@ void ApplicationController::openSettings()
         }
         return result.error;
     };
+    RecordingSettingsActions recordingSettings;
+    recordingSettings.preferences = settings_.loadRecordingPreferences(nullptr, false);
+    recordingSettings.reservedDirectories =
+        [this](const QString& root, QString* quick, QString* error)
+    {
+        *quick = settings_.loadQuickGunnerPreferences().directory;
+        const auto effectiveRoot = root.isEmpty() ? HistoryStore::defaultRootDirectory() : root;
+        return HistoryStore(effectiveRoot).registeredDirectories(error);
+    };
+    recordingSettings.savePreferences = [this](const RecordingPreferences& preferences)
+    {
+        const auto error = settings_.saveRecordingPreferences(preferences);
+        if (error.isEmpty())
+        {
+            recordingVideoSource_->directoryChanged();
+            recordingGifSource_->directoryChanged();
+            if (historyEnabled_ && history_.ready())
+                history_.refresh();
+        }
+        return error;
+    };
     SettingsDialog dialog(
         hotkeySettings_.currentSequence(),
         [this](const QKeySequence& sequence) { return changeHotkey(sequence); },
@@ -1027,7 +1049,8 @@ void ApplicationController::openSettings()
          {recordingHotkeys_[0]->currentSequence(), recordingHotkeys_[1]->currentSequence()},
          [this](HotkeyAction action, const QKeySequence& sequence)
          { return changeHotkey(sequence, action); }},
-        autostartActions_, std::move(historySettings), std::move(watermarkSettings));
+        autostartActions_, std::move(historySettings), std::move(watermarkSettings),
+        std::move(recordingSettings));
     connect(&history_, &HistoryManager::groupsChanged, &dialog,
             [this, &dialog]
             {
@@ -2101,11 +2124,13 @@ void ApplicationController::refreshRecordingActions()
         QFontMetrics(menu_.font()).elidedText(text, Qt::ElideMiddle, 440));
     recordingStatusAction_->setToolTip(text);
     recordingStartAction_->setVisible(!running);
-    recordingStartAction_->setEnabled(idle && recordingCaptureSupported() && !active_ &&
-                                      !settingsOpen_ && !resolvingQuit_ && !quitting_);
-    recordingStartAction_->setToolTip(recordingCaptureSupported()
+    const bool supported = recording_->captureSupported();
+    recordingMenu_->setEnabled(supported);
+    recordingStartAction_->setEnabled(idle && supported && !active_ && !settingsOpen_ &&
+                                      !resolvingQuit_ && !quitting_);
+    recordingStartAction_->setToolTip(supported
                                           ? QStringLiteral("选择区域、窗口或全屏录制视频")
-                                          : QStringLiteral("Windows 原生录制将在后续版本接入"));
+                                          : QStringLiteral("录制将在 Windows 原生采集补齐后提供"));
     recordingPauseAction_->setVisible(running || saving);
     recordingPauseAction_->setEnabled(running);
     recordingPauseAction_->setText(state == State::Paused ? QStringLiteral("继续")
@@ -2120,6 +2145,16 @@ void ApplicationController::refreshRecordingActions()
     recordingOpenGifAction_->setEnabled(browse);
     recordingCancelAction_->setVisible(!idle && !running && !saving);
     recordingCancelAction_->setEnabled(!idle && !running && !saving);
+    if (!supported)
+    {
+        const auto notice = QStringLiteral("录制将在 Windows 原生采集补齐后提供");
+        recordingMenu_->menuAction()->setToolTip(notice);
+        for (auto* action : recordingMenu_->actions())
+        {
+            action->setEnabled(false);
+            action->setToolTip(notice);
+        }
+    }
     TrayIconState icon = TrayIconState::Idle;
     if (state == State::Paused)
         icon = TrayIconState::Paused;

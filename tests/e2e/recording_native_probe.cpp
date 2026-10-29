@@ -1,7 +1,9 @@
+#include "app/app_settings.h"
 #include "interfaces/display_topology.h"
 #include "interfaces/recording.h"
 #include "recording_control_probe.h"
 #include "recording_native_probe_media.h"
+#include "ui/settings_dialog.h"
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -15,6 +17,7 @@
 #include <QImageReader>
 #include <QMovie>
 #include <QProcess>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QThread>
@@ -606,6 +609,13 @@ int main(int argc, char* argv[])
     parser.addOption(
         {QStringLiteral("control-retina"), QStringLiteral("R4 探针明确选择最高 DPR 显示器。")});
     parser.addOption({QStringLiteral("control"), QStringLiteral("运行 R4 受控原生控制面探针。")});
+    parser.addOption({QStringLiteral("control-settings"),
+                      QStringLiteral("R7：读取设置页保存的隔离 INI，仅核对全屏真实成片。"),
+                      QStringLiteral("file")});
+    parser.addOption({QStringLiteral("control-quit-starting"),
+                      QStringLiteral("R7：Started 前请求停止并保存后退出。")});
+    parser.addOption({QStringLiteral("settings-preview"),
+                      QStringLiteral("R7：打开隔离原生设置页供人工操作，不修改用户配置。")});
     parser.addOption({QStringLiteral("control-target"), QStringLiteral("内部受控目标子进程。")});
     parser.addOption({{QStringLiteral("audio"), QStringLiteral("system-audio")},
                       QStringLiteral("开启系统声音并断言音轨存在。")});
@@ -690,9 +700,30 @@ int main(int argc, char* argv[])
                                          parser.isSet(QStringLiteral("gif-target-4k")));
     if (parser.isSet(QStringLiteral("control-target")))
         return runRecordingControlTarget(parser.isSet(QStringLiteral("control-retina")));
-    if (parser.isSet(QStringLiteral("control")))
+    if (parser.isSet(QStringLiteral("settings-preview")))
+    {
+        QTemporaryDir temporary;
+        waibusnap::AppSettings settings(temporary.filePath(QStringLiteral("settings.ini")));
+        waibusnap::RecordingSettingsActions recording;
+        recording.preferences.videoDirectory = temporary.filePath(QStringLiteral("video"));
+        recording.preferences.gifDirectory = temporary.filePath(QStringLiteral("gif"));
+        recording.savePreferences = [&](const waibusnap::RecordingPreferences& p)
+        { return settings.saveRecordingPreferences(p); };
+        waibusnap::HistorySettingsActions history;
+        history.preferences.rootDirectory = temporary.filePath(QStringLiteral("history"));
+        waibusnap::SettingsDialog dialog(
+            QKeySequence(Qt::Key_F1), [](const auto&) { return QString(); }, {}, nullptr, {},
+            {[] { return waibusnap::AutostartState{}; }, [](bool) { return QString(); }}, history,
+            {}, recording);
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(3);
+        QTextStream(stdout) << "SETTINGS_PREVIEW " << temporary.path() << Qt::endl;
+        dialog.exec();
+        return 0;
+    }
+    if (parser.isSet(QStringLiteral("control")) || parser.isSet(QStringLiteral("control-settings")))
         return runRecordingControlProbe(options.reportPath, options.keepDirectory,
-                                        parser.isSet(QStringLiteral("control-retina")),
-                                        options.gif);
+                                        parser.isSet(QStringLiteral("control-retina")), options.gif,
+                                        parser.value(QStringLiteral("control-settings")),
+                                        parser.isSet(QStringLiteral("control-quit-starting")));
     return runProbe(options);
 }

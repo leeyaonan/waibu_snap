@@ -78,9 +78,9 @@ class WatermarkSettingsTest final : public QObject
             startup(), history, watermark);
         auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
         QVERIFY(tabs);
-        QCOMPARE(tabs->count(), 7);
-        QCOMPARE(tabs->widget(6)->objectName(), QStringLiteral("settingsWatermarkPage"));
-        tabs->setCurrentIndex(6);
+        QCOMPARE(tabs->count(), 8);
+        QCOMPARE(tabs->widget(7)->objectName(), QStringLiteral("settingsWatermarkPage"));
+        tabs->setCurrentIndex(7);
         auto* assets = dialog.findChild<QListWidget*>(QStringLiteral("watermarkAssetsList"));
         auto* presets = dialog.findChild<QListWidget*>(QStringLiteral("watermarkPresetsList"));
         QVERIFY(assets);
@@ -249,6 +249,10 @@ class WatermarkSettingsTest final : public QObject
         options.testMode = true;
         options.settingsFile = settingsPath;
         options.historyRoot = directory.filePath(QStringLiteral("history"));
+        RecordingPreferences recording;
+        recording.videoDirectory = directory.filePath(QStringLiteral("video"));
+        recording.gifDirectory = directory.filePath(QStringLiteral("gif"));
+        QVERIFY(settings.saveRecordingPreferences(recording).isEmpty());
         ApplicationController controller(*qApp, options);
         auto* autoAction =
             controller.menu()->findChild<QAction*>(QStringLiteral("watermarkAutoAction"));
@@ -295,7 +299,7 @@ class WatermarkSettingsTest final : public QObject
             defaultScreenshotHotkey(), [](const auto&) { return QString(); }, {}, nullptr, {},
             startup(), {}, watermark);
         auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
-        tabs->setCurrentIndex(6);
+        tabs->setCurrentIndex(7);
         auto* retain = dialog.findChild<QCheckBox*>(QStringLiteral("watermarkRetainOriginalCheck"));
         QVERIFY(retain);
         QVERIFY(!retain->isEnabled());

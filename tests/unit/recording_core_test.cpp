@@ -22,6 +22,28 @@ class RecordingCoreTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void directoryDraftKeepsDefaultsAndExplicitInvalidValues()
+    {
+        QTemporaryDir temp;
+        const auto path = temp.filePath(QStringLiteral("settings.ini"));
+        AppSettings settings(path);
+        QVERIFY(settings.loadRecordingPreferences(nullptr, false).videoDirectory.isEmpty());
+        {
+            QSettings ini(path, QSettings::IniFormat);
+            ini.setValue(QStringLiteral("recording/videoDirectory"),
+                         QStringLiteral("relative/old"));
+            ini.setValue(QStringLiteral("recording/gifDirectory"), defaultRecordingGifDirectory());
+            ini.sync();
+        }
+        const auto before = fileBytes(path);
+        const auto draft = settings.loadRecordingPreferences(nullptr, false);
+        QCOMPARE(draft.videoDirectory, QStringLiteral("relative/old"));
+        QCOMPARE(draft.gifDirectory, defaultRecordingGifDirectory());
+        QVERIFY(!settings.saveRecordingPreferences(draft).isEmpty());
+        QCOMPARE(fileBytes(path), before);
+        QCOMPARE(settings.loadRecordingPreferences().videoDirectory,
+                 defaultRecordingVideoDirectory());
+    }
     void defaultDirectoriesUseExpectedSuffixes()
     {
         const QString video = defaultRecordingVideoDirectory();
@@ -173,7 +195,8 @@ class RecordingCoreTest final : public QObject
     {
         const QSize pixels(1280, 720);
         const qint64 base = estimatedGifBytes(pixels, 12, 30);
-        QCOMPARE(base, qint64(19907584));
+        QCOMPARE(base, qint64(39814144));
+        QVERIFY(base >= 39000000 && base <= 40000000);
         QVERIFY(base > 0);
         QVERIFY(estimatedGifBytes(pixels, 12, 60) > base);
         QVERIFY(estimatedGifBytes(pixels, 15, 30) > base);
