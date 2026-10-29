@@ -141,6 +141,29 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     quickGunnerHelp->setObjectName(QStringLiteral("quickGunnerHotkeyHelp"));
     quickGunnerHelp->setWordWrap(true);
     generalLayout->addWidget(quickGunnerHelp);
+    const std::array<QString, 2> recordingNames = {QStringLiteral("recordingStartStopHotkey"),
+                                                   QStringLiteral("recordingPauseResumeHotkey")};
+    for (size_t i = 0; i < recordingEditors_.size(); ++i)
+    {
+        auto* label = new QLabel(hotkeyActionName(hotkeyActions[i + 5]), generalPage);
+        generalLayout->addWidget(label);
+        auto* editor = new QKeySequenceEdit(saveSettings_.recordingHotkeys[i], generalPage);
+        recordingEditors_[i] = editor;
+        editor->setObjectName(recordingNames[i]);
+        editor->setMaximumSequenceLength(1);
+        editor->setClearButtonEnabled(true);
+        label->setBuddy(editor);
+        generalLayout->addWidget(editor);
+        editor->installEventFilter(this);
+        for (auto* child : editor->findChildren<QObject*>())
+            child->installEventFilter(this);
+    }
+    auto* recordingHelp = new QLabel(
+        QStringLiteral(
+            "F3 / F4 可能被 Mission Control / Launchpad 占用；注册失败请在设置 → 通用改键。"),
+        generalPage);
+    recordingHelp->setWordWrap(true);
+    generalLayout->addWidget(recordingHelp);
     auto* saveGroup = new QGroupBox(QStringLiteral("保存"), savePage);
     auto* saveLayout = new QVBoxLayout(saveGroup);
     saveLayout->addWidget(
@@ -913,9 +936,13 @@ void SettingsDialog::save()
         return;
     }
     const auto sequence = editor_->keySequence();
-    const std::array<QKeySequence, 5> sequences = {
-        sequence, historyEditors_[0]->keySequence(), historyEditors_[1]->keySequence(),
-        historyEditors_[2]->keySequence(), quickGunnerEditor_->keySequence()};
+    const std::array<QKeySequence, 7> sequences = {sequence,
+                                                   historyEditors_[0]->keySequence(),
+                                                   historyEditors_[1]->keySequence(),
+                                                   historyEditors_[2]->keySequence(),
+                                                   quickGunnerEditor_->keySequence(),
+                                                   recordingEditors_[0]->keySequence(),
+                                                   recordingEditors_[1]->keySequence()};
     QString error = hotkeyConflictError(sequences);
     const auto historyPreferences = collectHistoryPreferences();
     if (error.isEmpty())
@@ -942,6 +969,14 @@ void SettingsDialog::save()
         if (error.isEmpty())
             saveSettings_.quickGunnerHotkey = sequences[4];
     }
+    for (size_t i = 0; error.isEmpty() && i < recordingEditors_.size(); ++i)
+        if (sequences[i + 5] != saveSettings_.recordingHotkeys[i] &&
+            saveSettings_.saveRecordingHotkey)
+        {
+            error = saveSettings_.saveRecordingHotkey(hotkeyActions[i + 5], sequences[i + 5]);
+            if (error.isEmpty())
+                saveSettings_.recordingHotkeys[i] = sequences[i + 5];
+        }
     if (error.isEmpty() && saveSettings_.savePreferences)
         error = saveSettings_.savePreferences({directory_->text(), format_->currentIndex() == 1
                                                                        ? ImageFormat::Jpeg

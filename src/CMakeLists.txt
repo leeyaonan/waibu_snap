@@ -15,6 +15,11 @@ add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp 
 target_include_directories(waibusnap_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_settings PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp ui/selection_overlay.h
+    app/recording_controller.cpp app/recording_controller.h
+    ui/recording_target_picker.cpp ui/recording_target_picker.h
+    ui/recording_countdown_window.cpp ui/recording_countdown_window.h
+    ui/recording_border_window.cpp ui/recording_border_window.h
+    ui/recording_toast.cpp ui/recording_toast.h
     app/quick_gunner.cpp app/quick_gunner.h
     app/quick_gunner_save_queue.cpp app/quick_gunner_save_queue.h
     ui/quick_gunner_flash_window.cpp ui/quick_gunner_flash_window.h

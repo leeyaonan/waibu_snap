@@ -126,7 +126,7 @@ class Hotkeys final : public GlobalHotkey
 {
   public:
     bool rejectShutter = false;
-    std::array<std::function<void()>, 5> handlers;
+    std::array<std::function<void()>, hotkeyActions.size()> handlers;
     HotkeyRegistration registerHotkey(HotkeyAction action, const QKeySequence&,
                                       std::function<void()> handler) override
     {

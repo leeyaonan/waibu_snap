@@ -44,4 +44,19 @@ std::unique_ptr<RecordingMediaProbe> createRecordingMediaProbe()
 {
     return std::make_unique<WindowsRecordingMediaProbe>();
 }
+QVector<RecordingWindowInfo> recordingWindows() { return {}; }
+std::optional<RecordingWindowInfo> recordingWindowInfo(quint64) { return std::nullopt; }
+namespace
+{
+class WindowsRecordingEnvironmentObserver final : public RecordingEnvironmentObserver
+{
+  public:
+    void start(std::function<void()>) override {}
+    void stop() override {}
+};
+}
+std::unique_ptr<RecordingEnvironmentObserver> createRecordingEnvironmentObserver()
+{
+    return std::make_unique<WindowsRecordingEnvironmentObserver>();
+}
 } // namespace waibusnap

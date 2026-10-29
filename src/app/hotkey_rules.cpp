@@ -44,37 +44,12 @@ QString hotkeyActionName(HotkeyAction action)
     }
     return {};
 }
-namespace
-{
-template <size_t N> QString conflictError(const std::array<QKeySequence, N>& sequences)
-{
-    for (size_t i = 0; i < sequences.size(); ++i)
-    {
-        const auto error = hotkeyValidationError(sequences[i]);
-        if (!error.isEmpty())
-            return hotkeyActionName(hotkeyActions[i]) + QStringLiteral("：") + error;
-        for (size_t j = 0; j < i; ++j)
-            if (sequences[i] == sequences[j])
-                return QStringLiteral("%1与%2快捷键重复，请分别设置。")
-                    .arg(hotkeyActionName(hotkeyActions[i]), hotkeyActionName(hotkeyActions[j]));
-    }
-    return {};
-}
-}
-QString hotkeyConflictError(const std::array<QKeySequence, 4>& sequences)
-{
-    return conflictError(sequences);
-}
-QString hotkeyConflictError(const std::array<QKeySequence, 5>& sequences)
-{
-    return conflictError(sequences);
-}
 QString hotkeyValidationError(const QKeySequence& sequence)
 {
     if (sequence.isEmpty())
-        return QStringLiteral("截图键不能为空，请输入 F1–F12 或带修饰键的字母 / 数字。");
+        return QStringLiteral("快捷键不能为空，请输入 F1–F12 或带修饰键的字母 / 数字。");
     if (sequence.count() != 1)
-        return QStringLiteral("截图键只能包含一个组合，不能使用多段按键序列。");
+        return QStringLiteral("快捷键只能包含一个组合，不能使用多段按键序列。");
     const auto combination = sequence[0];
     const auto modifiers = combination.keyboardModifiers();
     const auto supported =
@@ -93,6 +68,6 @@ QString hotkeyValidationError(const QKeySequence& sequence)
             "字母和数字必须带 Ctrl / Command、Control 或 Alt / Option；仅 Shift 不够。");
     }
     return QStringLiteral("此键位不支持。请使用 F1–F12，或带 Ctrl / Command、Control、Alt / Option "
-                          "的字母 / 数字；空格、Tab、Esc 不能作为截图键。");
+                          "的字母 / 数字；空格、Tab、Esc 不能作为快捷键。");
 }
 }

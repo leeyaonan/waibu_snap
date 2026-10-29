@@ -8,6 +8,7 @@
 #include <QVector>
 #include <functional>
 #include <memory>
+#include <optional>
 namespace waibusnap
 {
 enum class RecordingEventType
@@ -99,6 +100,23 @@ struct MicrophoneDevice
 };
 QVector<MicrophoneDevice> microphoneDevices();
 QString defaultMicrophoneDeviceId();
+struct RecordingWindowInfo
+{
+    quint64 id = 0;
+    QRect logicalFrame;
+    QString label;
+    bool onScreen = false;
+};
+QVector<RecordingWindowInfo> recordingWindows();
+std::optional<RecordingWindowInfo> recordingWindowInfo(quint64 id);
+class RecordingEnvironmentObserver
+{
+  public:
+    virtual ~RecordingEnvironmentObserver() = default;
+    virtual void start(std::function<void()> suspend) = 0;
+    virtual void stop() = 0;
+};
+std::unique_ptr<RecordingEnvironmentObserver> createRecordingEnvironmentObserver();
 struct RecordingMediaInfo
 {
     bool valid = false;

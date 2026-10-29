@@ -138,9 +138,9 @@ if(APPLE)
 
     # 真实屏幕录制需要权限、可见桌面与真人核对，不注册 CTest。
     qt_add_executable(recording_native_probe e2e/recording_native_probe.cpp
-        e2e/recording_native_probe_media.mm)
-    target_link_libraries(recording_native_probe PRIVATE waibusnap_platform Qt6::Gui
-        waibusnap_options "${AVFoundation_FRAMEWORK}")
+        e2e/recording_native_probe_media.mm e2e/recording_control_probe.mm)
+    target_link_libraries(recording_native_probe PRIVATE waibusnap_ui Qt6::Test
+        waibusnap_options "${AVFoundation_FRAMEWORK}" "${AppKit_FRAMEWORK}" "${ScreenCaptureKit_FRAMEWORK}")
     target_compile_options(recording_native_probe PRIVATE -fobjc-arc)
     set_target_properties(recording_native_probe PROPERTIES
         MACOSX_BUNDLE TRUE
@@ -532,3 +532,24 @@ add_test(NAME quick_gunner_capture_high_dpi COMMAND quick_gunner_capture_test -o
     "${CMAKE_CURRENT_BINARY_DIR}/quick-gunner-capture-high-dpi-output.txt,txt")
 set_tests_properties(quick_gunner_capture_high_dpi PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 90)
+
+qt_add_executable(recording_controller_test unit/recording_controller_test.cpp)
+target_link_libraries(recording_controller_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(recording_controller_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME recording_controller COMMAND recording_controller_test)
+set_tests_properties(recording_controller PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
+qt_add_executable(recording_ui_test integration/recording_ui_test.cpp)
+target_link_libraries(recording_ui_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(recording_ui_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME recording_ui COMMAND recording_ui_test)
+add_test(NAME recording_ui_high_dpi COMMAND recording_ui_test)
+set_tests_properties(recording_ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+set_tests_properties(recording_ui_high_dpi PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 30)
+if(APPLE)
+    qt_add_executable(recording_windows_test unit/recording_windows_test.mm)
+    target_link_libraries(recording_windows_test PRIVATE waibusnap_platform Qt6::Widgets Qt6::Test waibusnap_options "${AppKit_FRAMEWORK}")
+    target_compile_options(recording_windows_test PRIVATE -fobjc-arc)
+    add_test(NAME recording_windows COMMAND recording_windows_test)
+    set_tests_properties(recording_windows PROPERTIES TIMEOUT 30)
+endif()

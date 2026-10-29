@@ -49,27 +49,23 @@ class HotkeySettingsTest final : public QObject
         QCOMPARE(int(HotkeyAction::HistoryPrevious), 1);
         QCOMPARE(int(HotkeyAction::HistoryNext), 2);
         QCOMPARE(int(HotkeyAction::HistoryOpen), 3);
-        QCOMPARE(hotkeyActions.size(), size_t(5));
+        QCOMPARE(hotkeyActions.size(), size_t(7));
         const auto shutter = HotkeyAction::QuickGunnerShutter;
         QCOMPARE(int(shutter), 4);
-        QCOMPARE(hotkeyActions.back(), shutter);
+        QCOMPARE(hotkeyActions[4], shutter);
         QCOMPARE(defaultHotkey(shutter), QKeySequence(Qt::Key_F2));
         QCOMPARE(hotkeyActionName(shutter), QStringLiteral("快枪手快门"));
     }
-    void recordingHotkeyActionsAreModelOnlyInR1()
+    void recordingHotkeyActionsJoinControlPlaneInR4()
     {
         using namespace waibusnap;
         const auto start = HotkeyAction::RecordingStartStop;
         const auto pause = HotkeyAction::RecordingPauseResume;
         QCOMPARE(int(start), 5);
         QCOMPARE(int(pause), 6);
-        // R1 只扩展模型层，平台注册与设置界面仍维持 5 项，R4 再扩到 7 项。
-        QCOMPARE(hotkeyActions.size(), size_t(5));
-        for (const auto action : hotkeyActions)
-        {
-            QVERIFY(action != start);
-            QVERIFY(action != pause);
-        }
+        QCOMPARE(hotkeyActions.size(), size_t(7));
+        QCOMPARE(hotkeyActions[5], start);
+        QCOMPARE(hotkeyActions[6], pause);
         QCOMPARE(defaultHotkey(start), QKeySequence(Qt::Key_F3));
         QCOMPARE(defaultHotkey(pause), QKeySequence(Qt::Key_F4));
         QCOMPARE(hotkeyActionName(start), QStringLiteral("录制开始 / 停止"));

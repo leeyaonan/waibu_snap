@@ -25,13 +25,11 @@
 #include <algorithm>
 namespace waibusnap
 {
-ApplicationController::ApplicationController(QApplication& application, RunOptions options,
-                                             StickerActions stickerActions,
-                                             ClipboardActions clipboardActions,
-                                             AutostartActions autostartActions,
-                                             HistoryWindowActions historyActions,
-                                             std::shared_ptr<FileManager> fileManager,
-                                             std::unique_ptr<GlobalHotkey> hotkey)
+ApplicationController::ApplicationController(
+    QApplication& application, RunOptions options, StickerActions stickerActions,
+    ClipboardActions clipboardActions, AutostartActions autostartActions,
+    HistoryWindowActions historyActions, std::shared_ptr<FileManager> fileManager,
+    std::unique_ptr<GlobalHotkey> hotkey, RecordingDependencies recordingDependencies)
     : application_(application), options_(std::move(options)),
       hotkey_(hotkey ? std::move(hotkey) : createGlobalHotkey()), settings_(options_.settingsFile),
       history_(settings_, options_.historyRoot), watermarks_(settings_),
@@ -133,6 +131,36 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
         return new SelectionOverlay(std::move(frame), std::move(actions), std::move(windows),
                                     std::move(error));
     };
+    for (size_t i = 0; i < recordingHotkeys_.size(); ++i)
+        recordingHotkeys_[i] = std::make_unique<HotkeySettings>(
+            settings_, *hotkey_,
+            i == 0 ? std::function<void()>([this] { toggleRecordingStartStop(); })
+                   : std::function<void()>([this] { toggleRecordingPause(); }),
+            hotkeyActions[i + 5]);
+    if (!recordingDependencies.cursorDisplay)
+        recordingDependencies.cursorDisplay = [this] { return displays_->cursorDisplay(); };
+    if (!recordingDependencies.stillMatches)
+        recordingDependencies.stillMatches = [this](const DisplayTarget& target)
+        { return displays_->stillMatches(target); };
+    if (!recordingDependencies.freezeFrame)
+        recordingDependencies.freezeFrame =
+            [this](const DisplayTarget& target, std::function<void(CaptureResult)> done)
+        { capture_->capture(target, std::move(done)); };
+    if (!recordingDependencies.toastPresenter)
+        recordingDependencies.toastPresenter = [this](const RecordingEvent& event, bool success)
+        {
+            recordingToast_ =
+                std::make_unique<RecordingToast>(event, success,
+                                                 [this](const QString& path)
+                                                 {
+                                                     const auto result =
+                                                         fileManager_->revealInFolder(path);
+                                                     if (!result.success)
+                                                         showRecordingNotice(result.error);
+                                                 });
+            recordingToast_->present();
+        };
+    recording_ = std::make_unique<RecordingController>(std::move(recordingDependencies));
     application_.setQuitOnLastWindowClosed(false);
     connect(&application_, &QCoreApplication::aboutToQuit, this, &ApplicationController::cleanup);
     captureTimeout_.setSingleShot(true);
@@ -184,6 +212,42 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
     connect(quickGunnerMenu_, &QMenu::aboutToShow, this,
             &ApplicationController::refreshQuickGunnerActions);
     refreshQuickGunnerActions();
+    recordingMenu_ = menu_.addMenu(QStringLiteral("录制"));
+    recordingMenu_->setObjectName(QStringLiteral("recordingMenu"));
+    recordingMenu_->menuAction()->setObjectName(QStringLiteral("recordingMenuAction"));
+    recordingMenu_->setToolTipsVisible(true);
+    recordingStatusAction_ = recordingMenu_->addAction(QString());
+    recordingStatusAction_->setObjectName(QStringLiteral("recordingStatusAction"));
+    recordingStatusAction_->setEnabled(false);
+    recordingStartAction_ = recordingMenu_->addAction(
+        QStringLiteral("开始录制…"), this, &ApplicationController::startRecordingSelection);
+    recordingStartAction_->setObjectName(QStringLiteral("recordingStartAction"));
+    recordingPauseAction_ = recordingMenu_->addAction(QStringLiteral("暂停"), this,
+                                                      &ApplicationController::toggleRecordingPause);
+    recordingPauseAction_->setObjectName(QStringLiteral("recordingPauseAction"));
+    recordingStopAction_ = recordingMenu_->addAction(QStringLiteral("停止并保存"), recording_.get(),
+                                                     &RecordingController::stopAndSave);
+    recordingStopAction_->setObjectName(QStringLiteral("recordingStopAction"));
+    recordingDiscardAction_ = recordingMenu_->addAction(QStringLiteral("丢弃…"), this,
+                                                        &ApplicationController::discardRecording);
+    recordingDiscardAction_->setObjectName(QStringLiteral("recordingDiscardAction"));
+    recordingCancelAction_ = recordingMenu_->addAction(QStringLiteral("取消录制"), recording_.get(),
+                                                       &RecordingController::cancel);
+    recordingCancelAction_->setObjectName(QStringLiteral("recordingCancelAction"));
+    connect(recording_.get(), &RecordingController::stateChanged, this,
+            [this]
+            {
+                refreshRecordingActions();
+                refreshStickerActions();
+            });
+    connect(recording_.get(), &RecordingController::progressChanged, this,
+            &ApplicationController::refreshRecordingActions);
+    connect(recording_.get(), &RecordingController::noticeChanged, this,
+            &ApplicationController::showRecordingNotice);
+    connect(recording_.get(), &RecordingController::quitReady, this,
+            [this] { QTimer::singleShot(0, this, &ApplicationController::quit); });
+    connect(recordingMenu_, &QMenu::aboutToShow, this,
+            &ApplicationController::refreshRecordingActions);
     clipboardStickerAction_ = menu_.addAction(QStringLiteral("剪贴板贴图"), this,
                                               &ApplicationController::pinClipboardImage);
     clipboardStickerAction_->setObjectName(QStringLiteral("clipboardStickerAction"));
@@ -278,7 +342,7 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
                 refreshStickerActions();
             });
     refreshStickerActions();
-    tray_.setIcon(createTrayIcon());
+    refreshRecordingActions();
     tray_.setContextMenu(&menu_);
     // 热插拔或屏幕参数变更只响应通知，立即取消当前会话。
     connect(&application_, &QGuiApplication::screenRemoved, this,
@@ -300,8 +364,9 @@ ApplicationController::ApplicationController(QApplication& application, RunOptio
 ApplicationController::~ApplicationController() { cleanup(); }
 bool ApplicationController::quickGunnerActionsEnabled() const
 {
-    return regionCaptureSupported() && !active_ && !settingsOpen_ && !quitting_ &&
-           !resolvingQuit_ && quickGunner_->state() != QuickGunnerController::State::Framing;
+    return regionCaptureSupported() && !recordingActive() && !active_ && !settingsOpen_ &&
+           !quitting_ && !resolvingQuit_ &&
+           quickGunner_->state() != QuickGunnerController::State::Framing;
 }
 void ApplicationController::connectQuickGunner()
 {
@@ -425,6 +490,11 @@ void ApplicationController::setQuickGunnerMode(bool enabled)
 }
 void ApplicationController::quickGunnerShutter()
 {
+    if (recordingActive())
+    {
+        showRecordingNotice(QStringLiteral("录制中，已暂停截图 / 快枪手入口"));
+        return;
+    }
     if (!quickGunner_->active() || active_ || settingsOpen_ || quitting_ || resolvingQuit_)
         return;
     showQuickGunnerNotice(quickGunner_->shutter());
@@ -443,8 +513,9 @@ void ApplicationController::refreshQuickGunnerActions()
     }
     const bool browserEnabled = !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_;
     quickGunnerOpenAction_->setEnabled(browserEnabled);
-    quickGunnerDirectoryAction_->setEnabled(
-        browserEnabled && quickGunner_->state() != QuickGunnerController::State::Framing);
+    quickGunnerDirectoryAction_->setEnabled(!recordingActive() && browserEnabled &&
+                                            quickGunner_->state() !=
+                                                QuickGunnerController::State::Framing);
     const auto& preferences = quickGunner_->preferences();
     QString status =
         quickGunner_->active() ? QStringLiteral("快枪手：开") : QStringLiteral("快枪手：关");
@@ -522,6 +593,8 @@ void ApplicationController::setHistoryMenusInstalled(bool installed)
 void ApplicationController::refreshStickerActions()
 {
     refreshQuickGunnerActions();
+    if (recording_)
+        refreshRecordingActions();
     setHistoryMenusInstalled(historyEnabled_);
 
     const bool interactive = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
@@ -550,7 +623,8 @@ void ApplicationController::refreshStickerActions()
     }
     if (historyWindow_)
         historyWindow_->setGroupActionsEnabled(interactive);
-    clipboardStickerAction_->setEnabled(!active_ && !resolvingQuit_ && !quitting_);
+    clipboardStickerAction_->setEnabled(!recordingActive() && !active_ && !resolvingQuit_ &&
+                                        !quitting_);
     bool visible = false, hidden = false;
     for (const auto& window : stickers_.windows())
         if (window)
@@ -660,7 +734,7 @@ void ApplicationController::updateCurrentGroupMenu()
 }
 void ApplicationController::pinClipboardImage()
 {
-    if (active_ || resolvingQuit_ || quitting_)
+    if (recordingActive() || active_ || resolvingQuit_ || quitting_)
         return;
     QImage image = clipboardActions_.loadImage();
     const QPoint cursor = QCursor::pos();
@@ -710,6 +784,15 @@ void ApplicationController::start()
         qInfo().noquote() << historyHotkey->initialize().report;
     tray_.setToolTip(hotkeySettings_.tooltip());
     tray_.show();
+    if (recordingCaptureSupported())
+        for (auto& key : recordingHotkeys_)
+        {
+            const auto initialized = key->initialize();
+            qInfo().noquote() << initialized.report;
+            if (!initialized.warning.isEmpty())
+                showRecordingNotice(initialized.warning +
+                                    QStringLiteral("\n请在设置 → 通用改键。"));
+        }
     const auto cleanup = history_.lastCleanup();
     if (!options_.testMode && (cleanup.deletedCount || cleanup.protectedOverLimit))
         tray_.showMessage(QStringLiteral("截图历史自动清理"), cleanup.message(),
@@ -739,8 +822,7 @@ HotkeySettings& ApplicationController::hotkeySettings(HotkeyAction action)
         break;
     case HotkeyAction::RecordingStartStop:
     case HotkeyAction::RecordingPauseResume:
-        // R1 只落模型层；R4 接入托盘与 UI 后再切换为常驻热键设置。
-        break;
+        return *recordingHotkeys_[size_t(action) - 5];
     }
     qFatal("此动作不使用常驻热键设置。");
 }
@@ -766,7 +848,7 @@ QString ApplicationController::changeHotkey(const QKeySequence& sequence, Hotkey
 }
 void ApplicationController::openSettings()
 {
-    if (active_ || quitting_ || resolvingQuit_ || settingsOpen_)
+    if (recordingActive() || active_ || quitting_ || resolvingQuit_ || settingsOpen_)
         return;
     settingsOpen_ = true;
     refreshStickerActions();
@@ -914,7 +996,10 @@ void ApplicationController::openSettings()
          [this](bool enabled) { return settings_.saveStickerDoubleClickClose(enabled); },
          quickGunnerHotkey_->currentSequence(),
          [this](const QKeySequence& sequence)
-         { return changeHotkey(sequence, HotkeyAction::QuickGunnerShutter); }},
+         { return changeHotkey(sequence, HotkeyAction::QuickGunnerShutter); },
+         {recordingHotkeys_[0]->currentSequence(), recordingHotkeys_[1]->currentSequence()},
+         [this](HotkeyAction action, const QKeySequence& sequence)
+         { return changeHotkey(sequence, action); }},
         autostartActions_, std::move(historySettings), std::move(watermarkSettings));
     connect(&history_, &HistoryManager::groupsChanged, &dialog,
             [this, &dialog]
@@ -995,6 +1080,11 @@ void ApplicationController::openResourceBrowser(const QString& sourceId)
 }
 void ApplicationController::trigger(const QString& source)
 {
+    if (recordingActive())
+    {
+        showRecordingNotice(QStringLiteral("录制中，已暂停截图 / 快枪手入口"));
+        return;
+    }
     if (quickGunner_ && (quickGunner_->capturing() || quickGunner_->pendingCaptureCount() > 0))
     {
         showQuickGunnerNotice(QStringLiteral("快枪手正在拍摄，请稍后再按普通截图键。"));
@@ -1423,6 +1513,8 @@ void ApplicationController::clearScrollCapture(int outcome)
 }
 void ApplicationController::layoutChanged()
 {
+    if (recording_)
+        recording_->topologyChanged();
     if (!active_)
         return;
     if (scrollSession_)
@@ -1636,6 +1728,9 @@ void ApplicationController::cleanup()
     quitting_ = true;
     refreshStickerActions();
     clipboardToast_.reset();
+    recordingToast_.reset();
+    if (recording_)
+        recording_->discard();
     if (historyWindow_)
     {
         auto* closing = historyWindow_.data();
@@ -1670,6 +1765,61 @@ void ApplicationController::quit()
 {
     if (quitting_ || resolvingQuit_)
         return;
+    if (recordingActive())
+    {
+        RecordingController::QuitChoice choice = RecordingController::QuitChoice::Cancel;
+        QVector<QPointer<QWidget>> hidden;
+        bool saveFailed = false;
+        {
+            QScopedValueRollback<bool> resolving(resolvingQuit_, true);
+            for (auto* window : QApplication::topLevelWidgets())
+                if (window->isVisible() &&
+                    (window->objectName() == QStringLiteral("recordingPicker") ||
+                     window->objectName() == QStringLiteral("recordingCountdown")))
+                {
+                    hidden.append(window);
+                    window->hide();
+                }
+            QMessageBox box(QMessageBox::Question, QStringLiteral("退出录制"),
+                            QStringLiteral("录制尚未结束，请选择退出方式。"),
+                            QMessageBox::NoButton);
+            box.setObjectName(QStringLiteral("recordingQuitDialog"));
+            connect(recording_.get(), &RecordingController::failed, &box,
+                    [&saveFailed] { saveFailed = true; });
+            auto* save = box.addButton(QStringLiteral("停止并保存后退出"), QMessageBox::AcceptRole);
+            save->setObjectName(QStringLiteral("recordingQuitSave"));
+            auto* discard =
+                box.addButton(QStringLiteral("丢弃后退出"), QMessageBox::DestructiveRole);
+            discard->setObjectName(QStringLiteral("recordingQuitDiscard"));
+            auto* cancel = box.addButton(QStringLiteral("取消退出"), QMessageBox::RejectRole);
+            cancel->setObjectName(QStringLiteral("recordingQuitCancel"));
+            box.setDefaultButton(cancel);
+            box.setEscapeButton(cancel);
+            box.exec();
+            if (box.clickedButton() == save)
+                choice = RecordingController::QuitChoice::Save;
+            else if (box.clickedButton() == discard)
+                choice = RecordingController::QuitChoice::Discard;
+        }
+        if (choice == RecordingController::QuitChoice::Cancel)
+        {
+            for (auto window : hidden)
+                if (window && recordingActive())
+                {
+                    window->show();
+                    reassertOverlayWindow(window->windowHandle(), true);
+                    window->setFocus();
+                }
+            return;
+        }
+        if (saveFailed && choice == RecordingController::QuitChoice::Save)
+        {
+            showRecordingNotice(QStringLiteral("录制保存失败，已取消退出。"));
+            return;
+        }
+        recording_->quitRequested(choice);
+        return;
+    }
     const QPointer<SelectionOverlay> pausedOverlay = overlay_;
     const quint64 pausedToken = token_;
     const bool restoreOverlay = pausedOverlay && pausedOverlay->isVisible();
@@ -1791,7 +1941,8 @@ void ApplicationController::startSmokeTest()
                                                        window != historyMenu_ &&
                                                        window != watermarkMenu_ &&
                                                        window != watermarkPresetMenu_ &&
-                                                       window != quickGunnerMenu_;
+                                                       window != quickGunnerMenu_ &&
+                                                       window != recordingMenu_;
                                             }))
                             {
                                 application_.exit(22);
@@ -1842,5 +1993,116 @@ void ApplicationController::startSmokeTest()
                         });
                 });
         });
+}
+}
+
+namespace waibusnap
+{
+bool ApplicationController::recordingActive() const { return recording_ && recording_->active(); }
+void ApplicationController::showRecordingNotice(const QString& notice)
+{
+    if (!notice.isEmpty() && !options_.testMode && !options_.smokeTest)
+        tray_.showMessage(QStringLiteral("录制"), notice, QSystemTrayIcon::Warning);
+}
+void ApplicationController::startRecordingSelection()
+{
+    if (recordingActive() || quitting_ || resolvingQuit_)
+        return;
+    if (active_ || settingsOpen_ || scrollFlowActive_ ||
+        quickGunner_->state() == QuickGunnerController::State::Framing ||
+        quickGunner_->capturing() || quickGunner_->pendingCaptureCount())
+    {
+        showRecordingNotice(QStringLiteral("请先结束当前截图、长图或快枪手会话。"));
+        return;
+    }
+    if (recordingToast_)
+        recordingToast_->hide();
+    if (quickGunner_->flashWindow())
+        quickGunner_->flashWindow()->hide();
+    recording_->startSelection(settings_.loadRecordingPreferences());
+}
+void ApplicationController::toggleRecordingStartStop()
+{
+    if (settingsOpen_ || resolvingQuit_ || quitting_)
+        return;
+    if (!recordingActive())
+        startRecordingSelection();
+    else if (recording_->state() == RecordingController::State::Recording ||
+             recording_->state() == RecordingController::State::Paused)
+        recording_->stopAndSave();
+}
+void ApplicationController::toggleRecordingPause()
+{
+    if (resolvingQuit_ || quitting_)
+        return;
+    if (recording_->state() == RecordingController::State::Recording)
+        recording_->pause();
+    else if (recording_->state() == RecordingController::State::Paused)
+        recording_->resume();
+}
+void ApplicationController::discardRecording()
+{
+    if (recording_->state() != RecordingController::State::Recording &&
+        recording_->state() != RecordingController::State::Paused)
+        return;
+    QScopedValueRollback<bool> resolving(resolvingQuit_, true);
+    QMessageBox box(QMessageBox::Warning, QStringLiteral("丢弃录制"),
+                    QStringLiteral("丢弃这段录制？临时文件会被删除，无法恢复。"),
+                    QMessageBox::NoButton);
+    auto* cancel = box.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+    auto* discard = box.addButton(QStringLiteral("丢弃"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(cancel);
+    box.setEscapeButton(cancel);
+    box.exec();
+    if (box.clickedButton() == discard)
+        recording_->discard();
+}
+void ApplicationController::refreshRecordingActions()
+{
+    if (!recordingMenu_)
+        return;
+    using State = RecordingController::State;
+    const auto state = recording_->state();
+    const bool idle = state == State::Idle;
+    const bool running = state == State::Recording || state == State::Paused;
+    const bool saving = state == State::Finalizing;
+    const auto text = recording_->statusText();
+    recordingStatusAction_->setText(
+        QFontMetrics(menu_.font()).elidedText(text, Qt::ElideMiddle, 440));
+    recordingStatusAction_->setToolTip(text);
+    recordingStartAction_->setVisible(!running);
+    recordingStartAction_->setEnabled(idle && recordingCaptureSupported() && !active_ &&
+                                      !settingsOpen_ && !resolvingQuit_ && !quitting_);
+    recordingStartAction_->setToolTip(recordingCaptureSupported()
+                                          ? QStringLiteral("选择区域、窗口或全屏录制视频")
+                                          : QStringLiteral("Windows 原生录制将在后续版本接入"));
+    recordingPauseAction_->setVisible(running || saving);
+    recordingPauseAction_->setEnabled(running);
+    recordingPauseAction_->setText(state == State::Paused ? QStringLiteral("继续")
+                                                          : QStringLiteral("暂停"));
+    for (auto* action : {recordingStopAction_, recordingDiscardAction_})
+    {
+        action->setVisible(running || saving);
+        action->setEnabled(running);
+    }
+    recordingCancelAction_->setVisible(!idle && !running && !saving);
+    recordingCancelAction_->setEnabled(!idle && !running && !saving);
+    TrayIconState icon = TrayIconState::Idle;
+    if (state == State::Paused)
+        icon = TrayIconState::Paused;
+    else if (state == State::Recording || saving)
+        icon = TrayIconState::Recording;
+    // 仅状态变化才替换原生图标，计时刷新不重复创建位图。
+    if (tray_.property("recordingIconState").toInt() != int(icon) || tray_.icon().isNull())
+    {
+        tray_.setIcon(createTrayIcon(icon));
+        tray_.setProperty("recordingIconState", int(icon));
+    }
+    const bool inputs = idle && !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
+    if (auto* screenshot = menu_.findChild<QAction*>(QStringLiteral("screenshotAction")))
+        screenshot->setEnabled(inputs);
+    scrollAction_->setEnabled(inputs && regionCaptureSupported());
+    if (settingsAction_)
+        settingsAction_->setEnabled(inputs);
 }
 }

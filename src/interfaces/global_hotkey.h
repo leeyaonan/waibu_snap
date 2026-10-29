@@ -16,9 +16,11 @@ enum class HotkeyAction
     RecordingStartStop,
     RecordingPauseResume
 };
-constexpr std::array<HotkeyAction, 5> hotkeyActions = {
-    HotkeyAction::Screenshot, HotkeyAction::HistoryPrevious, HotkeyAction::HistoryNext,
-    HotkeyAction::HistoryOpen, HotkeyAction::QuickGunnerShutter};
+constexpr std::array<HotkeyAction, 7> hotkeyActions = {
+    HotkeyAction::Screenshot,          HotkeyAction::HistoryPrevious,
+    HotkeyAction::HistoryNext,         HotkeyAction::HistoryOpen,
+    HotkeyAction::QuickGunnerShutter,  HotkeyAction::RecordingStartStop,
+    HotkeyAction::RecordingPauseResume};
 struct HotkeyRegistration
 {
     bool enabled = false;

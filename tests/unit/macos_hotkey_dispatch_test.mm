@@ -1,3 +1,4 @@
+#include "interfaces/global_hotkey.h"
 #include "platform/macos/hotkey_dispatch.h"
 #include <QTest>
 using namespace waibusnap;
@@ -7,8 +8,8 @@ class MacHotkeyDispatchTest final : public QObject
   private slots:
     void fiveActionsAndStaleEvents()
     {
-        std::array<MacHotkeyCallback, 5> bindings;
-        std::array<int, 5> calls{};
+        std::array<MacHotkeyCallback, hotkeyActions.size()> bindings;
+        std::array<int, hotkeyActions.size()> calls{};
         for (size_t i = 0; i < bindings.size(); ++i)
             bindings[i] = {UInt32(i + 1), [&, i] { ++calls[i]; }};
         const auto dispatch = [&](UInt32 signature, UInt32 id)
@@ -45,7 +46,7 @@ class MacHotkeyDispatchTest final : public QObject
         QCOMPARE(CreateEvent(nullptr, kEventClassKeyboard, kEventHotKeyPressed, 0,
                              kEventAttributeNone, &event),
                  noErr);
-        std::array<MacHotkeyCallback, 5> bindings;
+        std::array<MacHotkeyCallback, hotkeyActions.size()> bindings;
         QCOMPARE(dispatchMacHotkeyEvent(event, bindings), eventNotHandledErr);
         EventHotKeyID key = {0x5742534e, 5};
         QCOMPARE(

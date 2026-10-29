@@ -246,9 +246,9 @@ class QuickGunnerHotkeyTest final : public QObject
         QVERIFY(file.open(QIODevice::ReadOnly));
         QCOMPARE(file.readAll(), contents);
     }
-    void fiveActionConflictsAndFourActionCompatibility()
+    void sevenActionConflictsAndFourActionCompatibility()
     {
-        std::array<QKeySequence, 5> sequences;
+        std::array<QKeySequence, hotkeyActions.size()> sequences;
         for (size_t i = 0; i < sequences.size(); ++i)
             sequences[i] = defaultHotkey(hotkeyActions[i]);
         QVERIFY(hotkeyConflictError(sequences).isEmpty());
@@ -261,7 +261,7 @@ class QuickGunnerHotkeyTest final : public QObject
                 QVERIFY(error.contains(hotkeyActionName(hotkeyActions[i])));
                 QVERIFY(error.contains(hotkeyActionName(hotkeyActions[j])));
             }
-        sequences.back() = QKeySequence(Qt::Key_A);
+        sequences[4] = QKeySequence(Qt::Key_A);
         QVERIFY(hotkeyConflictError(sequences).contains(QStringLiteral("快枪手快门")));
         sequences[0] = QKeySequence(Qt::Key_F2);
         const std::array<QKeySequence, 4> existing = {sequences[0], sequences[1], sequences[2],
