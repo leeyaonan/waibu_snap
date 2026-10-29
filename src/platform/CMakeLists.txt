@@ -1,4 +1,4 @@
-add_library(waibusnap_platform STATIC)
+add_library(waibusnap_platform STATIC ../interfaces/recording.cpp)
 target_include_directories(waibusnap_platform PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(waibusnap_platform PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 set(waibusnap_tray_assets "${PROJECT_SOURCE_DIR}/assets/icons/tray")
@@ -13,7 +13,7 @@ qt_add_resources(waibusnap_platform waibusnap_tray_icons
 )
 if(APPLE)
     target_sources(waibusnap_platform PRIVATE macos/file_manager.mm macos/scroll_injector.mm macos/platform_info.mm macos/capture_services.mm
-        macos/recording_services.mm
+        macos/recording_services.mm macos/recording_audio_pipeline.mm
         macos/presentation_observer.mm macos/platform_workarounds.mm macos/sticker_window_behavior.mm
         macos/window_visibility.mm macos/overlay_window_behavior.mm macos/tray_icon.mm macos/autostart.mm macos/text_recognizer.mm)
     target_compile_options(waibusnap_platform PRIVATE -fobjc-arc)

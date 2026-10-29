@@ -1248,3 +1248,101 @@ open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --discard \
 [双端 CI 40705643914](https://github.com/leeyaonan/waibu_snap/actions/runs/40705643914) 全绿（macOS / Windows，含 macOS Intel 交叉构建）；PR [#83](https://github.com/leeyaonan/waibu_snap/pull/83) 待合入。
 
 未覆盖：窗口目标真实取证、系统声音初始化失败降级、append / 磁盘写满 / rename 失败注入、4K60 / 长时段 / 多显示器 / 负坐标 / 混合 DPI、锁屏 / 睡眠、Windows 实机（仅桩）。这些留给 R3 起的批次与人工验收，本文不把编译或 CI 当作实机通过。
+
+## v009 R3 麦克风与单轨混音（2026-10-29）
+
+R3 增加 `RecordingRequest::microphoneEnabled`（默认 false）、默认 / 指定输入设备、异步权限请求与双源混音。两来源均经会话内复用的 `AVAudioConverter` 变为 48 kHz / 双声道 / 交错 float32，按请求帧数分段供给转换器，避免超过单次请求的尾部样本丢失。私有 `recording_audio_pipeline.*` 只在 macOS 平台内使用。共享 `mixRecordingAudio` 逐采样加增益并限幅；AAC 输入始终只有一个。
+
+系统声音为主时钟；麦克风在首个系统缓冲之前的样本直接丢弃，之后按 host PTS 和采样帧对齐；另一来源到达抖动最多缓冲约 60 ms，缺失补静音。两路各最多约 1 秒 PCM，溢出丢旧样本并重新对齐；系统声失效时改用麦克风时钟，麦克风失效时继续系统声 / 静音。暂停命令与样本在同一队列串行，清空两路 PCM、待写缓冲与转换器，不停止麦克风会话；恢复丢弃 PTS 早于恢复边界的迟到样本，沿用 R2 `pausedTotal` 偏移。
+
+`AVCaptureSession` 配置 / startRunning / stopRunning 均在专用串行队列，样本送到录制工作队列；设备断开和 runtime error 只发一次中文降级 Warning，本会话不热切换。未决定权限时异步请求、30 秒超时 false，视频不等待；预留音频输入但无样本不建空轨。拒绝、失效设备、转换失败不令视频 Failed；音频 append 失败仍按 R2 停止。两份 bundle plist 都声明相同的中文麦克风用途。不修改系统 TCC。
+
+自动化覆盖：
+
+| 测试 | 平台 / 数量（含初始化与清理） | 覆盖 |
+| --- | --- | --- |
+| `recording_audio` | 双端，41 项 | 48k 双声道的 4 种来源组合 × 两路 0/1/2 增益、削波、原地输出、空输入、0/1/负帧数、非法声道 / 乘法溢出、确定性 |
+| `recording_request` | 双端，20 项 | 原 R2 非法 GIF / 尺寸 / 帧率 / 路径 / 目录 / 窗口校验；麦克风默认关闭，默认与指定设备只校验不启动；NUL / 控制字符与 NaN / 越界增益拒绝；Windows 空桩异步 false |
+| `recording_microphone` | macOS，4 项；CI 未决定权限时其中 1 项 SKIP | 只读设备发现、ID 唯一、名称排序、至多一个默认设备、默认 ID 一致；合法权限枚举、查询前后状态一致；已决定权限的 GUI 异步回调。没有设备可为空，不主动请求权限 |
+| `recording_audio_pipeline` | macOS，13 项 | 44.1k 单声道 int16、48k 平面双声道、96k 交错浮点转换与复用 / 格式变化；PCM 封装；双源 PTS 对齐、跨缓冲取样、短缺补静音、60 ms 有界等待、1 秒溢出、暂停清空与单源失效 |
+| `recording_media_probe` | macOS，既有 6 项 | 现场生成 H.264、时长 / 尺寸 / 缩略图、不存在 / 非视频 / GIF 延后 |
+
+本机正常系统上下文首轮全量 CTest **61/61** 通过；`recording_audio_pipeline` **13/13**、`recording_microphone` **4/4** 无跳过。沙箱内 AVAssetWriter 无法调用系统媒体服务而失败，移到正常本机上下文后通过；不把沙箱失败误报为编码逻辑通过。ObjC 块捕获门禁增加检查 `recording_audio_pipeline.mm`：采集 4 块 / 6 捕获、录制 34 块 / 52 捕获、音频转换 1 块 / 3 捕获均按值捕获（以最终运行输出为准）。
+
+### R3 手动原生取证与授权
+
+探针不是 CTest；CI 不启动真实麦克风。先构建并用原有证书签名，再通过 LaunchServices 启动：
+
+```bash
+bash scripts/build-project.sh
+codesign --force --sign "WaibuSnap Dev" --identifier local.waibusnap.recording-probe \
+    --timestamp=none build/macos/bin/WaibuSnapRecordingProbe.app
+
+# 系统声音 only（--audio 保留为别名）。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio \
+    --report /private/tmp/r3-system-final.txt --keep /private/tmp/waibusnap-r3-evidence
+
+# 麦克风 only；无权限打印 SKIP 与操作步骤，不伪造通过。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --microphone --list-microphones \
+    --report /private/tmp/r3-microphone.txt --keep /private/tmp/waibusnap-r3-evidence
+
+# 双源；以及双源 + 暂停 1 秒。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio --microphone \
+    --report /private/tmp/r3-dual-skip.txt --keep /private/tmp/waibusnap-r3-evidence
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio --microphone --pause \
+    --report /private/tmp/r3-dual-pause-skip.txt --keep /private/tmp/waibusnap-r3-evidence
+
+# 系统声音 + 暂停：1 秒 + 暂停 1 秒 + 1 秒。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio --pause \
+    --report /private/tmp/r3-system-pause.txt --keep /private/tmp/waibusnap-r3-evidence
+
+# 不存在设备 → 系统声音 / 静音两种降级；均要求 Warning 和视频 Finished。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio --microphone \
+    --mic-device waibusnap-r3-nonexistent --expect-microphone-fallback \
+    --report /private/tmp/r3-fallback-system.txt --keep /private/tmp/waibusnap-r3-evidence
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --microphone \
+    --mic-device waibusnap-r3-nonexistent --expect-microphone-fallback \
+    --report /private/tmp/r3-fallback-silent.txt --keep /private/tmp/waibusnap-r3-evidence
+
+# 两路增益取值边界；本机真实麦克风未授权，实际验证系统声，混音数学另有单测。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio \
+    --system-gain 0 --microphone-gain 0 --report /private/tmp/r3-gain-zero.txt \
+    --keep /private/tmp/waibusnap-r3-evidence
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio \
+    --system-gain 2 --microphone-gain 2 --report /private/tmp/r3-gain-two.txt \
+    --keep /private/tmp/waibusnap-r3-evidence
+
+# 默认静音，以及有声录制后丢弃。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args \
+    --report /private/tmp/r3-silent.txt --keep /private/tmp/waibusnap-r3-evidence
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --system-audio --discard \
+    --report /private/tmp/r3-discard.txt
+```
+
+首次麦克风授权由人决定：用 `--microphone --request-microphone-permission` 运行探针，在系统弹窗中选择允许；或到系统设置 → 隐私与安全性 → 麦克风，允许 `WaibuSnapRecordingProbe` 后重跑。已拒绝时不会反复弹窗。可用 `--mic-device <id>` 指定设备（列表中的 ID 只供本机选择，不复制到提交或 Warning）。可用 `--seconds 300` 做 5 分钟同步取证；`--pause` 固定为 1 + 暂停 1 + 1 秒。
+
+本机真实结果（macOS 27.0.1 / arm64、Qt 6.11.2、主屏 DPR 2、输出 1280×720；原始报告和成品副本保存在上述 `/private/tmp` 路径，未提交屏幕内容）：
+
+| 模式 | 视频 / 音轨时长 | 结果 |
+| --- | --- | --- |
+| 系统声音 only | 2.150 s / 2.102437 s | PASS；1 条 AAC、48000 Hz / 2 声道，丢帧 0，无 `.part` |
+| 麦克风 only | 未采集 | SKIP：探针未获麦克风权限；只读发现包含内建与外部设备 |
+| 双源 / 双源 + 暂停 | 未采集 | SKIP：同上；不能把合成 PCM 单测当作真实麦克风 / 双源通过 |
+| 系统声音 + 暂停 | 2.050 s / 1.934458 s | PASS；暂停未入片、1 条 AAC；ffprobe 相邻音频包最大空隙约 0.001 ms，无一秒断档 |
+| 无效麦克风 + 系统声音 | 2.150 s / 2.071521 s | PASS；中文 Warning、继续视频与单条 AAC |
+| 无效麦克风 + 系统声音关闭 | 1.866667 s / 无 | PASS；中文 Warning、视频继续，无空音轨 |
+| 增益 0 | 1.966667 s / 1.885854 s | PASS；AAC 解码 float32 后峰值 **0.0** |
+| 增益 2 | 1.933333 s / 1.878396 s | PASS；未崩溃，单条 AAC |
+| 默认静音 | 2.050 s / 无 | PASS；无空音轨 |
+| 丢弃 | 无成品 | PASS；无 Finished、无成品、无 `.part` |
+
+独立回读命令（`<成品>` 取报告中的「证据副本」路径）：
+
+```bash
+ffprobe -v error -show_streams -show_format -of json '<成品>'
+ffprobe -v error -select_streams a -show_packets \
+    -show_entries packet=pts_time,duration_time -of json '<暂停成品>'
+ffmpeg -v error -i '<增益0成品>' -map 0:a:0 -f f32le - > /private/tmp/r3-gain-zero.f32
+```
+
+短探针的音画总时长差分别约 48–116 ms（初轮还出现 61 / 78 ms），探针以 ≤200 ms 仅检查「时长接近」。**这不是 NF-3 ≤50 ms 同步目标的验收**；暂停包连续也不代表真实声画事件同步。真实麦克风 / 双源、人工允许 / 拒绝 / 30 秒超时、设备拔出 / runtime error、系统声音初始化失败注入、蓝牙 / 采样时钟漂移、≥5 分钟同步、4K60 / 长会话和 Windows 实机均**未验证**。R3 没有 UI、控制器、GIF、资源来源或 F3 / F4 注册。

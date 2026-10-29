@@ -11,4 +11,6 @@
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key>
+<string>仅在您开启麦克风录制时采集麦克风声音；音频只写入本机录制文件，不会上传。</string>
 </dict></plist>

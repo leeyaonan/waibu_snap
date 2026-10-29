@@ -2,7 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #include <memory>
 
-bool recordingProbeHasAudioTrack(const QString& path)
+RecordingProbeAudioInfo recordingProbeAudioInfo(const QString& path)
 {
     @autoreleasepool
     {
@@ -22,7 +22,28 @@ bool recordingProbeHasAudioTrack(const QString& path)
                      }];
         if (dispatch_semaphore_wait(semaphore,
                                     dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0)
-            return false;
-        return result->tracks.count > 0;
+            return {};
+        RecordingProbeAudioInfo info;
+        info.valid = result->tracks != nil;
+        info.tracks = int(result->tracks.count);
+        if (info.tracks > 0)
+        {
+            AVAssetTrack* track = result->tracks.firstObject;
+            info.durationMs = qRound64(CMTimeGetSeconds(track.timeRange.duration) * 1000);
+            for (id value in track.formatDescriptions)
+            {
+                CMAudioFormatDescriptionRef description =
+                    (__bridge CMAudioFormatDescriptionRef)value;
+                const auto* asbd = CMAudioFormatDescriptionGetStreamBasicDescription(description);
+                if (asbd)
+                {
+                    info.aac = asbd->mFormatID == kAudioFormatMPEG4AAC;
+                    info.sampleRate = asbd->mSampleRate;
+                    info.channels = int(asbd->mChannelsPerFrame);
+                    break;
+                }
+            }
+        }
+        return info;
     }
 }

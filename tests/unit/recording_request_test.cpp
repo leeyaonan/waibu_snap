@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <limits>
 
 namespace
 {
@@ -32,18 +33,39 @@ class RecordingRequestTest final : public QObject
   private slots:
     void capabilities()
     {
-        QCOMPARE(waibusnap::recordingCaptureSupported(), true);
+        const bool supported = waibusnap::recordingCaptureSupported();
         const bool permitted = waibusnap::hasScreenRecordingPermission();
         Q_UNUSED(permitted);
-        QVERIFY(waibusnap::createRecordingSession());
+        QCOMPARE(bool(waibusnap::createRecordingSession()), supported);
         QVERIFY(waibusnap::createRecordingMediaProbe());
+        if (!supported)
+        {
+            QCOMPARE(waibusnap::microphonePermission(),
+                     waibusnap::MicrophonePermission::NotDetermined);
+            QVERIFY(waibusnap::microphoneDevices().isEmpty());
+            QVERIFY(waibusnap::defaultMicrophoneDeviceId().isEmpty());
+            bool called = false;
+            bool granted = true;
+            waibusnap::requestMicrophonePermission(
+                [&](bool value)
+                {
+                    called = true;
+                    granted = value;
+                });
+            QVERIFY(!called);
+            QTRY_VERIFY(called);
+            QVERIFY(!granted);
+        }
     }
     void rejectsInvalidRequests_data()
     {
         QTest::addColumn<QString>("kind");
         QTest::addColumn<QString>("expected");
         QTest::newRow("gif") << QStringLiteral("gif") << QStringLiteral("R5");
-        QTest::newRow("microphone") << QStringLiteral("microphone") << QStringLiteral("R3");
+        QTest::newRow("microphone-nul")
+            << QStringLiteral("microphone-nul") << QStringLiteral("非法字符");
+        QTest::newRow("microphone-control")
+            << QStringLiteral("microphone-control") << QStringLiteral("非法字符");
         QTest::newRow("zero-size") << QStringLiteral("zero-size") << QStringLiteral("正数");
         QTest::newRow("odd-size") << QStringLiteral("odd-size") << QStringLiteral("偶数");
         QTest::newRow("fps") << QStringLiteral("fps") << QStringLiteral("30 或 60");
@@ -65,8 +87,10 @@ class RecordingRequestTest final : public QObject
         waibusnap::RecordingRequest request = baseRequest(directory);
         if (kind == QStringLiteral("gif"))
             request.output = waibusnap::RecordingOutput::Gif;
-        else if (kind == QStringLiteral("microphone"))
-            request.microphoneDeviceId = QStringLiteral("usb-mic");
+        else if (kind == QStringLiteral("microphone-nul"))
+            request.microphoneDeviceId = QStringLiteral("usb") + QChar(0) + QStringLiteral("mic");
+        else if (kind == QStringLiteral("microphone-control"))
+            request.microphoneDeviceId = QStringLiteral("usb\nmic");
         else if (kind == QStringLiteral("zero-size"))
             request.outputPixels = QSize(0, 720);
         else if (kind == QStringLiteral("odd-size"))
@@ -92,12 +116,48 @@ class RecordingRequestTest final : public QObject
             request.tempPath = directory.filePath(QStringLiteral("missing/.waibusnap.mp4.part"));
 
         const auto session = waibusnap::createRecordingSession();
-        QVERIFY(session);
-        QString error;
-        const bool started = session->start(request, {}, &error);
-        QVERIFY(!started);
-        QVERIFY2(error.contains(expected), qPrintable(error));
+        const QString validation = waibusnap::validateRecordingRequest(request);
+        QVERIFY2(validation.contains(expected), qPrintable(validation));
+        if (session)
+        {
+            QString error;
+            QVERIFY(!session->start(request, {}, &error));
+            QCOMPARE(error, validation);
+        }
         QVERIFY(!QFileInfo::exists(request.tempPath));
+    }
+    void acceptsMicrophoneWithoutStarting()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        auto request = baseRequest(directory);
+        QVERIFY(!request.microphoneEnabled);
+        request.microphoneEnabled = true;
+        QVERIFY(request.microphoneDeviceId.isEmpty());
+        QVERIFY(waibusnap::validateRecordingRequest(request).isEmpty());
+        request.microphoneDeviceId = QStringLiteral("指定的离线设备");
+        QVERIFY(waibusnap::validateRecordingRequest(request).isEmpty());
+        for (double gain : {0.0, 1.0, 2.0})
+        {
+            request.systemGain = gain;
+            request.microphoneGain = gain;
+            QVERIFY(waibusnap::validateRecordingRequest(request).isEmpty());
+        }
+        QVERIFY(!QFileInfo::exists(request.tempPath));
+    }
+    void rejectsInvalidGains()
+    {
+        QTemporaryDir directory;
+        for (double gain : {-0.01, 2.01, std::numeric_limits<double>::quiet_NaN(),
+                            std::numeric_limits<double>::infinity()})
+        {
+            auto request = baseRequest(directory);
+            request.systemGain = gain;
+            QVERIFY(waibusnap::validateRecordingRequest(request).contains(QStringLiteral("增益")));
+            request.systemGain = 1;
+            request.microphoneGain = gain;
+            QVERIFY(waibusnap::validateRecordingRequest(request).contains(QStringLiteral("增益")));
+        }
     }
     void rejectsExistingPaths()
     {
@@ -111,7 +171,9 @@ class RecordingRequestTest final : public QObject
             finalFile.close();
             const auto session = waibusnap::createRecordingSession();
             QString error;
-            QVERIFY(!session->start(request, {}, &error));
+            error = waibusnap::validateRecordingRequest(request);
+            if (session)
+                QVERIFY(!session->start(request, {}, &error));
             QVERIFY2(error.contains(QStringLiteral("已存在")), qPrintable(error));
             QVERIFY(!QFileInfo::exists(request.tempPath));
         }
@@ -124,7 +186,9 @@ class RecordingRequestTest final : public QObject
             temporary.close();
             const auto session = waibusnap::createRecordingSession();
             QString error;
-            QVERIFY(!session->start(request, {}, &error));
+            error = waibusnap::validateRecordingRequest(request);
+            if (session)
+                QVERIFY(!session->start(request, {}, &error));
             QVERIFY2(error.contains(QStringLiteral("临时文件已存在")), qPrintable(error));
             QVERIFY(QFileInfo::exists(request.tempPath));
         }
@@ -132,7 +196,8 @@ class RecordingRequestTest final : public QObject
     void ignoresStopBeforeStart()
     {
         const auto session = waibusnap::createRecordingSession();
-        QVERIFY(session);
+        if (!session)
+            return;
         session->pause();
         session->resume();
         session->stop();

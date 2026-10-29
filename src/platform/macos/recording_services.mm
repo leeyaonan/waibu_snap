@@ -1,4 +1,5 @@
 #include "interfaces/recording.h"
+#include "platform/macos/recording_audio_pipeline.h"
 #include "session/monotonic_clock.h"
 #import <AVFoundation/AVFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -10,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QTimer>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #include <algorithm>
 #include <atomic>
@@ -42,6 +44,35 @@
 }
 @end
 
+// delegate 与停止队列并发时，用局部强引用保证会话 / handler 活到本次回调结束。
+@interface WaibuSnapRecordingMicrophoneOutput
+    : NSObject <AVCaptureAudioDataOutputSampleBufferDelegate>
+@property(nonatomic, weak) AVCaptureSession* session;
+@property(nonatomic, copy) void (^handler)(CMSampleBufferRef sample, CMTime hostPts);
+@end
+@implementation WaibuSnapRecordingMicrophoneOutput
+- (void)captureOutput:(AVCaptureOutput*)output
+    didOutputSampleBuffer:(CMSampleBufferRef)sample
+           fromConnection:(AVCaptureConnection*)connection
+{
+    (void)output;
+    (void)connection;
+    __attribute__((objc_precise_lifetime)) WaibuSnapRecordingMicrophoneOutput* keepAlive = self;
+    AVCaptureSession* session = keepAlive.session;
+    const auto handler = keepAlive.handler;
+    if (!session || !handler)
+        return;
+    @autoreleasepool
+    {
+        CMTime pts = CMSampleBufferGetPresentationTimeStamp(sample);
+        CMClockRef clock = session.synchronizationClock;
+        if (clock)
+            pts = CMSyncConvertTime(pts, clock, CMClockGetHostTimeClock());
+        handler(sample, pts);
+    }
+}
+@end
+
 namespace waibusnap
 {
 namespace
@@ -60,6 +91,19 @@ QString permissionExplanation()
                           "（从终端直接执行不会继承授权）。");
 }
 
+struct MicrophoneCapture
+{
+    std::atomic<bool> cancelled{false};
+    dispatch_queue_t __strong queue =
+        dispatch_queue_create("local.waibusnap.recording.microphone", DISPATCH_QUEUE_SERIAL);
+    // 以下对象只在 queue 上访问；delegate 的样本交付到 RecordingState::workQueue。
+    AVCaptureSession* __strong session = nil;
+    AVCaptureAudioDataOutput* __strong output = nil;
+    WaibuSnapRecordingMicrophoneOutput* __strong delegate = nil;
+    id __strong runtimeObserver = nil;
+    id __strong disconnectObserver = nil;
+};
+
 struct RecordingState
 {
     RecordingRequest request;
@@ -77,6 +121,18 @@ struct RecordingState
     dispatch_queue_t __strong workQueue = nil;
     dispatch_source_t __strong frameTimer = nil;
     SCStream* __strong stream = nil;
+    SCContentFilter* __strong filter = nil;
+    std::shared_ptr<MicrophoneCapture> microphone;
+    RecordingAudioConverter systemConverter;
+    RecordingAudioConverter microphoneConverter;
+    RecordingAudioMixer mixer;
+    bool systemAvailable = false;
+    bool microphoneAvailable = false;
+    bool microphoneWarningSent = false;
+    bool systemWarningSent = false;
+    bool audioOverflowWarningSent = false;
+    CMTime lastMixedEnd = kCMTimeInvalid;
+    CMTime minimumSamplePts = kCMTimeInvalid;
     AVAssetWriter* __strong writer = nil;
     AVAssetWriterInput* __strong videoInput = nil;
     AVAssetWriterInput* __strong audioInput = nil;
@@ -143,8 +199,42 @@ bool flushFile(const QString& path)
     return true;
 }
 
+void stopMicrophone(const std::shared_ptr<RecordingState>& state)
+{
+    state->microphoneAvailable = false;
+    state->microphoneConverter.reset();
+    state->mixer.setSources(state->systemAvailable, false);
+    const auto capture = std::move(state->microphone);
+    if (!capture)
+        return;
+    capture->cancelled.store(true, std::memory_order_release);
+    dispatch_async(capture->queue, ^{
+      @autoreleasepool
+      {
+          NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+          if (capture->runtimeObserver)
+              [center removeObserver:capture->runtimeObserver];
+          if (capture->disconnectObserver)
+              [center removeObserver:capture->disconnectObserver];
+          capture->runtimeObserver = nil;
+          capture->disconnectObserver = nil;
+          [capture->output setSampleBufferDelegate:nil queue:nullptr];
+          [capture->session stopRunning];
+          capture->delegate = nil;
+          capture->output = nil;
+          capture->session = nil;
+      }
+    });
+}
+
 void releaseCaptureObjects(const std::shared_ptr<RecordingState>& state)
 {
+    stopMicrophone(state);
+    state->mixer.reset();
+    state->systemConverter.reset();
+    for (CMSampleBufferRef buffer : state->pendingAudio)
+        CFRelease(buffer);
+    state->pendingAudio.clear();
     if (state->frameTimer)
     {
         dispatch_source_cancel(state->frameTimer);
@@ -160,6 +250,7 @@ void releaseCaptureObjects(const std::shared_ptr<RecordingState>& state)
         [state->stream stopCaptureWithCompletionHandler:nil];
         state->stream = nil;
     }
+    state->filter = nil;
     state->screenOutput = nil;
     state->audioOutput = nil;
     state->videoInput = nil;
@@ -327,6 +418,7 @@ bool appendVideoBuffer(const std::shared_ptr<RecordingState>& state, CMSampleBuf
     return true;
 }
 
+void drainMixedAudio(const std::shared_ptr<RecordingState>& state, bool force = false);
 void drainPendingAudio(const std::shared_ptr<RecordingState>& state);
 bool acceptingSamplesAfter(const std::shared_ptr<RecordingState>& state);
 
@@ -399,10 +491,8 @@ void appendAudioBuffer(const std::shared_ptr<RecordingState>& state, CMSampleBuf
     adjusted = CMTimeSubtract(adjusted, CMTimeMake(pausedNs, 1000000000));
     if (!CMTIME_IS_NUMERIC(adjusted) || CMTimeCompare(adjusted, kCMTimeZero) < 0)
         return;
-    CMTime duration = CMSampleBufferGetDuration(sampleBuffer);
-    if (!CMTIME_IS_NUMERIC(duration) || CMTimeCompare(duration, kCMTimeZero) <= 0)
-        duration = CMTimeMake(CMSampleBufferGetNumSamples(sampleBuffer), kAudioSampleRate);
-    CMSampleTimingInfo timing = {duration, adjusted, kCMTimeInvalid};
+    // PCM 的 timing.duration 是单个采样帧时长，不能填整个缓冲时长。
+    CMSampleTimingInfo timing = {CMTimeMake(1, kAudioSampleRate), adjusted, kCMTimeInvalid};
     CMSampleBufferRef copy = nullptr;
     if (CMSampleBufferCreateCopyWithNewTiming(kCFAllocatorDefault, sampleBuffer, 1, &timing,
                                               &copy) != noErr ||
@@ -439,16 +529,262 @@ void handleScreenSample(const std::shared_ptr<RecordingState>& state,
         return;
     if (!CMSampleBufferGetImageBuffer(sampleBuffer))
         return;
+    if (CMTIME_IS_NUMERIC(state->minimumSamplePts) &&
+        CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+                      state->minimumSamplePts) < 0)
+        return;
     if (!appendVideoBuffer(state, sampleBuffer))
         return;
     drainPendingAudio(state);
 }
 
+void disableMicrophone(const std::shared_ptr<RecordingState>& state, const QString& reason)
+{
+    stopMicrophone(state);
+    if (!state->microphoneWarningSent)
+    {
+        state->microphoneWarningSent = true;
+        emitWarning(state, reason + QStringLiteral("，本次录制将继续使用系统声音或静音。"));
+    }
+}
+
+void disableSystemAudio(const std::shared_ptr<RecordingState>& state)
+{
+    state->systemAvailable = false;
+    state->systemConverter.reset();
+    state->mixer.setSources(false, state->microphoneAvailable);
+    if (!state->systemWarningSent)
+    {
+        state->systemWarningSent = true;
+        emitWarning(state,
+                    QStringLiteral("系统声音采集或格式转换失败，本次录制将继续使用麦克风或静音。"));
+    }
+}
+
+void drainMixedAudio(const std::shared_ptr<RecordingState>& state, bool force)
+{
+    while (!state->terminal.load(std::memory_order_acquire))
+    {
+        auto chunk = state->mixer.take(force);
+        if (!chunk)
+            break;
+        // 主时钟切换时裁掉已经写过的部分，防止重复或倒退。
+        if (CMTIME_IS_NUMERIC(state->lastMixedEnd) &&
+            CMTimeCompare(chunk->pts, state->lastMixedEnd) < 0)
+        {
+            const qsizetype skip = std::min(
+                chunk->frames(),
+                qRound64(CMTimeGetSeconds(CMTimeSubtract(state->lastMixedEnd, chunk->pts)) *
+                         kAudioSampleRate));
+            chunk->samples.erase(chunk->samples.begin(),
+                                 chunk->samples.begin() + skip * kAudioChannels);
+            chunk->pts = CMTimeAdd(chunk->pts, CMTimeMake(skip, kAudioSampleRate));
+        }
+        if (chunk->frames() == 0)
+            continue;
+        CMSampleBufferRef sample = createRecordingPcmSample(*chunk);
+        if (!sample)
+        {
+            stopMicrophone(state);
+            state->systemAvailable = false;
+            state->systemConverter.reset();
+            state->mixer.setSources(false, false);
+            emitWarning(state, QStringLiteral("音频混音缓冲创建失败，已降级为静音画面录制。"));
+            break;
+        }
+        state->lastMixedEnd = CMTimeAdd(chunk->pts, CMTimeMake(chunk->frames(), kAudioSampleRate));
+        appendAudioBuffer(state, sample);
+        CFRelease(sample);
+    }
+    if (state->mixer.takeOverflowed() && !state->audioOverflowWarningSent)
+    {
+        state->audioOverflowWarningSent = true;
+        emitWarning(state, QStringLiteral("音频缓冲积压，已丢弃最旧样本并重新对齐；录制继续。"));
+    }
+}
+
 void handleAudioSample(const std::shared_ptr<RecordingState>& state, CMSampleBufferRef sampleBuffer)
 {
-    if (!acceptingSamplesAfter(state))
+    if (!acceptingSamplesAfter(state) || !state->systemAvailable || !state->audioInput)
         return;
-    appendAudioBuffer(state, sampleBuffer);
+    if (CMTIME_IS_NUMERIC(state->minimumSamplePts) &&
+        CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+                      state->minimumSamplePts) < 0)
+        return;
+    RecordingPcmChunk chunk;
+    if (!state->systemConverter.convert(
+            sampleBuffer, CMSampleBufferGetPresentationTimeStamp(sampleBuffer), &chunk))
+        disableSystemAudio(state);
+    else
+        state->mixer.pushSystem(std::move(chunk));
+    drainMixedAudio(state);
+}
+
+void handleMicrophoneSample(const std::shared_ptr<RecordingState>& state,
+                            CMSampleBufferRef sampleBuffer, CMTime pts)
+{
+    if (!acceptingSamplesAfter(state) || !state->microphoneAvailable || !state->audioInput)
+        return;
+    if (CMTIME_IS_NUMERIC(state->minimumSamplePts) &&
+        CMTimeCompare(pts, state->minimumSamplePts) < 0)
+        return;
+    RecordingPcmChunk chunk;
+    if (!state->microphoneConverter.convert(sampleBuffer, pts, &chunk))
+        disableMicrophone(state, QStringLiteral("麦克风格式转换失败"));
+    else
+        state->mixer.pushMicrophone(std::move(chunk));
+    drainMixedAudio(state);
+}
+
+AVCaptureDeviceDiscoverySession* audioDiscovery()
+{
+    return [AVCaptureDeviceDiscoverySession
+        discoverySessionWithDeviceTypes:@[
+            AVCaptureDeviceTypeMicrophone, AVCaptureDeviceTypeExternal
+        ]
+                              mediaType:AVMediaTypeAudio
+                               position:AVCaptureDevicePositionUnspecified];
+}
+
+AVCaptureDevice* selectedMicrophone(const QString& id)
+{
+    if (id.isEmpty())
+        return [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+    for (AVCaptureDevice* device in audioDiscovery().devices)
+        if (QString::fromNSString(device.uniqueID) == id)
+            return device;
+    return nil;
+}
+
+bool sessionEnding(const std::shared_ptr<RecordingState>& state)
+{
+    return state->terminal.load(std::memory_order_acquire) ||
+           state->stopRequested.load(std::memory_order_acquire) ||
+           state->discardRequested.load(std::memory_order_acquire);
+}
+
+void startMicrophone(const std::shared_ptr<RecordingState>& state, AVCaptureDevice* device)
+{
+    if (sessionEnding(state))
+        return;
+    const auto capture = std::make_shared<MicrophoneCapture>();
+    state->microphone = capture;
+    const std::weak_ptr<RecordingState> weak = state;
+    const auto workQueue = state->workQueue;
+    dispatch_async(capture->queue, ^{
+      @autoreleasepool
+      {
+          if (capture->cancelled.load(std::memory_order_acquire))
+              return;
+          AVCaptureSession* session = [[AVCaptureSession alloc] init];
+          NSError* error = nil;
+          AVCaptureDeviceInput* input = [AVCaptureDeviceInput deviceInputWithDevice:device
+                                                                              error:&error];
+          AVCaptureAudioDataOutput* output = [[AVCaptureAudioDataOutput alloc] init];
+          WaibuSnapRecordingMicrophoneOutput* delegate =
+              [[WaibuSnapRecordingMicrophoneOutput alloc] init];
+          delegate.session = session;
+          delegate.handler = ^(CMSampleBufferRef sample, CMTime pts) {
+            const auto locked = weak.lock();
+            if (locked)
+                handleMicrophoneSample(locked, sample, pts);
+          };
+          [session beginConfiguration];
+          const bool configured =
+              input && !error && [session canAddInput:input] && [session canAddOutput:output];
+          if (configured)
+          {
+              [session addInput:input];
+              [session addOutput:output];
+              [output setSampleBufferDelegate:delegate queue:workQueue];
+          }
+          [session commitConfiguration];
+          capture->session = session;
+          capture->output = output;
+          capture->delegate = delegate;
+          NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+          const auto notifyFailure = ^(NSNotification* notification) {
+            (void)notification;
+            const auto locked = weak.lock();
+            if (!locked)
+                return;
+            dispatch_async(workQueue, ^{
+              if (!sessionEnding(locked) && locked->microphoneAvailable)
+                  disableMicrophone(locked, QStringLiteral("麦克风已断开或采集异常，麦克风已停用"));
+            });
+          };
+          capture->runtimeObserver =
+              [center addObserverForName:AVCaptureSessionRuntimeErrorNotification
+                                  object:session
+                                   queue:nil
+                              usingBlock:notifyFailure];
+          capture->disconnectObserver =
+              [center addObserverForName:AVCaptureDeviceWasDisconnectedNotification
+                                  object:device
+                                   queue:nil
+                              usingBlock:notifyFailure];
+          if (configured && !capture->cancelled.load(std::memory_order_acquire))
+              [session startRunning];
+          const bool running = configured && session.isRunning;
+          dispatch_async(workQueue, ^{
+            const auto locked = weak.lock();
+            if (locked && !sessionEnding(locked) && !running)
+                disableMicrophone(locked, QStringLiteral("麦克风初始化失败"));
+          });
+      }
+    });
+}
+
+bool prepareMicrophone(const std::shared_ptr<RecordingState>& state)
+{
+    if (!state->request.microphoneEnabled)
+        return false;
+    AVCaptureDevice* device = selectedMicrophone(state->request.microphoneDeviceId);
+    if (!device)
+    {
+        disableMicrophone(state, QStringLiteral("所选麦克风不可用或已断开"));
+        return false;
+    }
+    const auto permission = microphonePermission();
+    if (permission == MicrophonePermission::Denied)
+    {
+        disableMicrophone(state, QStringLiteral("麦克风未授权"));
+        return false;
+    }
+    state->microphoneAvailable = true;
+    if (permission == MicrophonePermission::Authorized)
+        startMicrophone(state, device);
+    else
+    {
+        // 只预留一个 AAC 输入，视频立即开始；拒绝 / 超时没有音频样本时不会建空轨。
+        const std::weak_ptr<RecordingState> weak = state;
+        requestMicrophonePermission(
+            [weak, device](bool granted)
+            {
+                const auto locked = weak.lock();
+                if (!locked)
+                    return;
+                dispatch_async(locked->workQueue, ^{
+                  if (sessionEnding(locked))
+                      return;
+                  if (!granted)
+                      disableMicrophone(locked, QStringLiteral("麦克风未授权或等待授权超时"));
+                  else if (locked->microphoneAvailable)
+                      startMicrophone(locked, device);
+                });
+            });
+    }
+    return true;
+}
+
+void resetAudioForPause(const std::shared_ptr<RecordingState>& state)
+{
+    state->mixer.reset();
+    state->systemConverter.reset();
+    state->microphoneConverter.reset();
+    for (CMSampleBufferRef buffer : state->pendingAudio)
+        CFRelease(buffer);
+    state->pendingAudio.clear();
 }
 
 void drainPendingAudioBeforeFinish(const std::shared_ptr<RecordingState>& state)
@@ -528,6 +864,8 @@ void finishWriter(const std::shared_ptr<RecordingState>& state)
         failSession(state, QStringLiteral("没有采集到任何画面，未生成文件。"));
         return;
     }
+    drainMixedAudio(state, true);
+    stopMicrophone(state);
     drainPendingAudioBeforeFinish(state);
     if (state->terminal.load(std::memory_order_acquire))
         return;
@@ -677,7 +1015,7 @@ bool createWriter(const std::shared_ptr<RecordingState>& state, bool audioAvaila
     }
     [writer addInput:videoInput];
     AVAssetWriterInput* audioInput = nil;
-    if (audioAvailable && request.systemAudio)
+    if (audioAvailable)
     {
         NSDictionary* audioSettings = @{
             AVFormatIDKey : @(kAudioFormatMPEG4AAC),
@@ -693,12 +1031,37 @@ bool createWriter(const std::shared_ptr<RecordingState>& state, bool audioAvaila
         else
         {
             audioInput = nil;
-            emitWarning(state, QStringLiteral("系统声音编码参数不受支持，已降级为仅画面录制。"));
+            emitWarning(state, QStringLiteral("音频编码参数不受支持，已降级为仅画面录制。"));
         }
     }
     state->writer = writer;
     state->videoInput = videoInput;
     state->audioInput = audioInput;
+    return true;
+}
+
+void startCapture(const std::shared_ptr<RecordingState>& state, SCStream* stream);
+
+bool retryWithoutSystemAudio(const std::shared_ptr<RecordingState>& state)
+{
+    if (!state->systemAvailable)
+        return false;
+    disableSystemAudio(state);
+    [state->stream stopCaptureWithCompletionHandler:nil];
+    SCStreamConfiguration* configuration = [[SCStreamConfiguration alloc] init];
+    configureStream(configuration, state->request);
+    configuration.capturesAudio = NO;
+    SCStream* replacement = [[SCStream alloc] initWithFilter:state->filter
+                                               configuration:configuration
+                                                    delegate:nil];
+    NSError* error = nil;
+    if (![replacement addStreamOutput:state->screenOutput
+                                 type:SCStreamOutputTypeScreen
+                   sampleHandlerQueue:state->workQueue
+                                error:&error])
+        return false;
+    state->audioOutput = nil;
+    startCapture(state, replacement);
     return true;
 }
 
@@ -718,6 +1081,8 @@ void startCapture(const std::shared_ptr<RecordingState>& state, SCStream* stream
                 return;
             if (error)
             {
+                if (retryWithoutSystemAudio(inner))
+                    return;
                 failSession(inner,
                             QStringLiteral("屏幕采集启动失败（错误 %1），请检查屏幕录制权限。")
                                 .arg(error.code));
@@ -775,8 +1140,8 @@ void configureAndStart(const std::shared_ptr<RecordingState>& state, SCShareable
         return;
     }
     state->screenOutput = screenOutput;
-    bool audioAvailable = state->request.systemAudio;
-    if (audioAvailable)
+    state->systemAvailable = state->request.systemAudio;
+    if (state->systemAvailable)
     {
         WaibuSnapRecordingStreamOutput* audioOutput = [[WaibuSnapRecordingStreamOutput alloc] init];
         const auto audioState = state;
@@ -789,17 +1154,34 @@ void configureAndStart(const std::shared_ptr<RecordingState>& state, SCShareable
                   sampleHandlerQueue:state->workQueue
                                error:&audioError])
         {
-            audioAvailable = false;
-            emitWarning(state, QStringLiteral("系统声音初始化失败（错误 %1），已降级为仅画面录制。")
-                                   .arg(audioError ? audioError.code : -1));
+            disableSystemAudio(state);
+            // SCStream 复制配置；重建为纯视频，避免失败的系统音频配置阻塞画面启动。
+            configuration.capturesAudio = NO;
+            stream = [[SCStream alloc] initWithFilter:filter
+                                        configuration:configuration
+                                             delegate:nil];
+            if (![stream addStreamOutput:screenOutput
+                                    type:SCStreamOutputTypeScreen
+                      sampleHandlerQueue:state->workQueue
+                                   error:&addError])
+            {
+                failSession(state, QStringLiteral("无法添加画面输出，录制未开始。"));
+                return;
+            }
         }
         else
         {
             state->audioOutput = audioOutput;
         }
     }
-    if (!createWriter(state, audioAvailable))
+    const bool microphoneAvailable = prepareMicrophone(state);
+    state->mixer.setSources(state->systemAvailable, microphoneAvailable);
+    state->mixer.setGains(float(state->request.systemGain), float(state->request.microphoneGain));
+    state->filter = filter;
+    if (!createWriter(state, state->systemAvailable || microphoneAvailable))
         return;
+    if (!state->audioInput)
+        stopMicrophone(state);
     startCapture(state, stream);
 }
 
@@ -818,66 +1200,6 @@ void beginSetup(const std::shared_ptr<RecordingState>& state)
                                      }
                                    });
                                  }];
-}
-
-QString validateTarget(const RecordingRequest& request)
-{
-    if (request.targetKind == RecordingTargetKind::Window)
-    {
-        if (request.windowId == 0)
-            return QStringLiteral("窗口录制缺少有效的窗口 ID。");
-        return {};
-    }
-    if (request.display.id == 0)
-        return QStringLiteral("录制目标显示器无效，请重新选择。");
-    const double scale =
-        request.display.devicePixelRatio > 0 ? request.display.devicePixelRatio : 1.0;
-    const QSize displayPixels(qRound(request.display.logicalGeometry.width() * scale),
-                              qRound(request.display.logicalGeometry.height() * scale));
-    if (request.targetKind == RecordingTargetKind::Display)
-        return {};
-    const QRect& rectangle = request.sourcePixelRect;
-    if (rectangle.width() <= 0 || rectangle.height() <= 0)
-        return QStringLiteral("区域录制缺少有效的选区尺寸。");
-    if (!QRect(QPoint(0, 0), displayPixels).contains(rectangle))
-        return QStringLiteral("录制区域超出目标显示器范围，请重新框选。");
-    return {};
-}
-
-QString validateRequest(const RecordingRequest& request)
-{
-    if (request.output != RecordingOutput::Video)
-        return QStringLiteral("GIF 录制将在 R5 接入；当前仅支持 MP4 视频。");
-    if (!request.microphoneDeviceId.isEmpty())
-        return QStringLiteral("麦克风将在 R3 接入；当前请关闭麦克风后重试。");
-    if (request.outputPixels.width() <= 0 || request.outputPixels.height() <= 0)
-        return QStringLiteral("输出尺寸必须为正数。");
-    if (request.outputPixels.width() % 2 != 0 || request.outputPixels.height() % 2 != 0)
-        return QStringLiteral("视频输出宽高必须为偶数。");
-    if (request.fps != 30 && request.fps != 60)
-        return QStringLiteral("视频帧率只支持 30 或 60。");
-    if (request.maxDurationMs < 0)
-        return QStringLiteral("最长录制时长不能为负数。");
-    if (request.tempPath.isEmpty() || request.finalPath.isEmpty())
-        return QStringLiteral("录制临时路径与成品路径不能为空。");
-    if (!QDir::isAbsolutePath(request.tempPath) || !QDir::isAbsolutePath(request.finalPath))
-        return QStringLiteral("录制路径必须是绝对路径。");
-    if (QDir::cleanPath(request.tempPath) == QDir::cleanPath(request.finalPath))
-        return QStringLiteral("录制临时路径不能与成品路径相同。");
-    if (!request.tempPath.endsWith(QStringLiteral(".part"), Qt::CaseInsensitive))
-        return QStringLiteral("录制临时文件必须以 .part 结尾。");
-    if (QFileInfo::exists(request.tempPath))
-        return QStringLiteral("录制临时文件已存在，请重新选择路径。");
-    if (QFileInfo::exists(request.finalPath))
-        return QStringLiteral("成品路径已存在，请重新选择文件名。");
-    const QFileInfo temporary(request.tempPath);
-    const QFileInfo finalInfo(request.finalPath);
-    if (!temporary.absoluteDir().exists() || !finalInfo.absoluteDir().exists())
-        return QStringLiteral("录制目录不存在，请先在设置中重新选择目录。");
-    if (!QFileInfo(temporary.absolutePath()).isWritable() ||
-        !QFileInfo(finalInfo.absolutePath()).isWritable())
-        return QStringLiteral("录制目录不可写，请检查目录权限。");
-    return validateTarget(request);
 }
 
 class MacRecordingSession final : public RecordingSession
@@ -916,7 +1238,7 @@ class MacRecordingSession final : public RecordingSession
             setError(QStringLiteral("录制会话已经启动过，请创建新的会话。"));
             return false;
         }
-        const QString validation = validateRequest(request);
+        const QString validation = validateRecordingRequest(request);
         if (!validation.isEmpty())
         {
             setError(validation);
@@ -958,28 +1280,34 @@ class MacRecordingSession final : public RecordingSession
     void pause() override
     {
         const auto state = state_;
-        if (!state || state->terminal.load(std::memory_order_acquire) ||
-            state->stopRequested.load(std::memory_order_acquire) ||
-            state->discardRequested.load(std::memory_order_acquire))
+        if (!state || sessionEnding(state))
             return;
-        if (!state->paused.exchange(true, std::memory_order_acq_rel))
-            state->pauseStartNs.store(monotonicNs(), std::memory_order_release);
+        const qint64 commandNs = monotonicNs();
+        dispatch_async(state->workQueue, ^{
+          if (sessionEnding(state) || state->paused.exchange(true, std::memory_order_acq_rel))
+              return;
+          state->pauseStartNs.store(commandNs, std::memory_order_release);
+          resetAudioForPause(state);
+        });
     }
 
     void resume() override
     {
         const auto state = state_;
-        if (!state || state->terminal.load(std::memory_order_acquire) ||
-            state->stopRequested.load(std::memory_order_acquire) ||
-            state->discardRequested.load(std::memory_order_acquire))
+        if (!state || sessionEnding(state))
             return;
-        if (state->paused.exchange(false, std::memory_order_acq_rel))
-        {
-            const qint64 start = state->pauseStartNs.exchange(0, std::memory_order_acq_rel);
-            const qint64 now = monotonicNs();
-            if (start > 0 && now > start)
-                state->pausedTotalNs.fetch_add(now - start, std::memory_order_acq_rel);
-        }
+        const qint64 commandNs = monotonicNs();
+        const CMTime resumePts = CMClockGetTime(CMClockGetHostTimeClock());
+        dispatch_async(state->workQueue, ^{
+          if (sessionEnding(state) || !state->paused.load(std::memory_order_acquire))
+              return;
+          resetAudioForPause(state);
+          state->minimumSamplePts = resumePts;
+          const qint64 start = state->pauseStartNs.exchange(0, std::memory_order_acq_rel);
+          if (start > 0 && commandNs > start)
+              state->pausedTotalNs.fetch_add(commandNs - start, std::memory_order_acq_rel);
+          state->paused.store(false, std::memory_order_release);
+        });
     }
 
     void stop() override
@@ -1171,6 +1499,112 @@ bool recordingCaptureSupported() { return true; }
 bool hasScreenRecordingPermission() { return CGPreflightScreenCaptureAccess(); }
 
 bool requestScreenRecordingPermission() { return CGRequestScreenCaptureAccess(); }
+
+MicrophonePermission microphonePermission()
+{
+    switch ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio])
+    {
+    case AVAuthorizationStatusAuthorized:
+        return MicrophonePermission::Authorized;
+    case AVAuthorizationStatusNotDetermined:
+        return MicrophonePermission::NotDetermined;
+    case AVAuthorizationStatusDenied:
+    case AVAuthorizationStatusRestricted:
+    default:
+        return MicrophonePermission::Denied;
+    }
+}
+
+void requestMicrophonePermission(std::function<void(bool)> callback)
+{
+    if (!QCoreApplication::instance())
+        return;
+    // 所有完成路径都排队到 GUI；done 保证系统回调与超时竞争时只交付一次。
+    struct PermissionRequest
+    {
+        std::atomic<bool> done{false};
+        std::function<void(bool)> callback;
+    };
+    const auto pending = std::make_shared<PermissionRequest>();
+    pending->callback = std::move(callback);
+    const auto deliver = [pending](bool authorized)
+    {
+        if (!QCoreApplication::instance())
+            return;
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [pending, authorized]
+            {
+                if (!pending->done.exchange(true, std::memory_order_acq_rel) && pending->callback)
+                {
+                    auto callback = std::move(pending->callback);
+                    callback(authorized);
+                }
+            },
+            Qt::QueuedConnection);
+    };
+    QMetaObject::invokeMethod(
+        QCoreApplication::instance(),
+        [pending, deliver]
+        {
+            const auto permission = microphonePermission();
+            if (permission != MicrophonePermission::NotDetermined)
+            {
+                deliver(permission == MicrophonePermission::Authorized);
+                return;
+            }
+            QTimer::singleShot(30000, QCoreApplication::instance(), [deliver] { deliver(false); });
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio
+                                     completionHandler:^(BOOL granted) {
+                                       deliver(granted);
+                                     }];
+        },
+        Qt::QueuedConnection);
+}
+
+QString microphonePermissionExplanation()
+{
+    return QStringLiteral(
+        "麦克风权限仅用于您开启的麦克风录制；请在系统设置 → 隐私与安全性 → "
+        "麦克风中允许 WaibuSnap，然后重新开始录制。声音只写入本机文件，不会上传。");
+}
+
+QString defaultMicrophoneDeviceId()
+{
+    @autoreleasepool
+    {
+        AVCaptureDevice* device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+        return device ? QString::fromNSString(device.uniqueID) : QString();
+    }
+}
+
+QVector<MicrophoneDevice> microphoneDevices()
+{
+    @autoreleasepool
+    {
+        QVector<MicrophoneDevice> result;
+        const QString defaultId = defaultMicrophoneDeviceId();
+        for (AVCaptureDevice* device in audioDiscovery().devices)
+        {
+            MicrophoneDevice item;
+            item.id = QString::fromNSString(device.uniqueID);
+            item.name = QString::fromNSString(device.localizedName);
+            item.isDefault = item.id == defaultId;
+            if (!item.id.isEmpty() && std::none_of(result.cbegin(), result.cend(),
+                                                   [&item](const MicrophoneDevice& existing)
+                                                   { return existing.id == item.id; }))
+                result.push_back(item);
+        }
+        std::stable_sort(result.begin(), result.end(),
+                         [](const MicrophoneDevice& left, const MicrophoneDevice& right)
+                         {
+                             const int order =
+                                 QString::compare(left.name, right.name, Qt::CaseSensitive);
+                             return order == 0 ? left.id < right.id : order < 0;
+                         });
+        return result;
+    }
+}
 
 std::unique_ptr<RecordingMediaProbe> createRecordingMediaProbe()
 {
