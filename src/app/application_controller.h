@@ -3,6 +3,7 @@
 #include "app/history_manager.h"
 #include "app/quick_gunner.h"
 #include "app/quick_gunner_hotkey.h"
+#include "app/recording_controller.h"
 #include "app/scroll_capture.h"
 #include "app/sticker_manager.h"
 #include "app/watermark_service.h"
@@ -18,6 +19,7 @@
 #include "ui/clipboard_sticker_toast.h"
 #include "ui/history_window.h"
 #include "ui/quick_gunner_resource_source.h"
+#include "ui/recording_toast.h"
 #include "ui/scroll_capture_windows.h"
 #include "ui/scroll_result_window.h"
 #include "ui/selection_overlay.h"
@@ -58,7 +60,8 @@ class ApplicationController final : public QObject
                                    AutostartActions autostartActions = {},
                                    HistoryWindowActions historyActions = {},
                                    std::shared_ptr<FileManager> fileManager = {},
-                                   std::unique_ptr<GlobalHotkey> hotkey = {});
+                                   std::unique_ptr<GlobalHotkey> hotkey = {},
+                                   RecordingDependencies recordingDependencies = {});
     ~ApplicationController() override;
     void start();
     void trigger(const QString& source);
@@ -95,6 +98,13 @@ class ApplicationController final : public QObject
     void refreshQuickGunnerActions();
     bool quickGunnerActionsEnabled() const;
     void connectQuickGunner();
+    void startRecordingSelection();
+    void toggleRecordingStartStop();
+    void toggleRecordingPause();
+    void discardRecording();
+    void refreshRecordingActions();
+    bool recordingActive() const;
+    void showRecordingNotice(const QString& notice);
     void setQuickGunnerMode(bool enabled);
     void quickGunnerShutter();
     bool chooseQuickGunnerDirectory();
@@ -114,6 +124,16 @@ class ApplicationController final : public QObject
     QApplication& application_;
     RunOptions options_;
     QAction* scrollAction_ = nullptr;
+    QMenu* recordingMenu_ = nullptr;
+    QAction* recordingStatusAction_ = nullptr;
+    QAction* recordingStartAction_ = nullptr;
+    QAction* recordingPauseAction_ = nullptr;
+    QAction* recordingStopAction_ = nullptr;
+    QAction* recordingDiscardAction_ = nullptr;
+    QAction* recordingCancelAction_ = nullptr;
+    std::array<std::unique_ptr<HotkeySettings>, 2> recordingHotkeys_;
+    std::unique_ptr<RecordingController> recording_;
+    std::unique_ptr<RecordingToast> recordingToast_;
     QMenu* quickGunnerMenu_ = nullptr;
     QAction* quickGunnerOpenAction_ = nullptr;
     QAction* quickGunnerModeAction_ = nullptr;

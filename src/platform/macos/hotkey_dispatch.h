@@ -10,8 +10,9 @@ struct MacHotkeyCallback
     UInt32 id = 0;
     std::function<void()> handler;
 };
+template <size_t N>
 inline OSStatus dispatchMacHotkeyEvent(EventRef event,
-                                       const std::array<MacHotkeyCallback, 5>& callbacks)
+                                       const std::array<MacHotkeyCallback, N>& callbacks)
 {
     EventHotKeyID id = {};
     const auto status = GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID,

@@ -1145,8 +1145,9 @@ QKeySequence HotkeySettings::currentSequence() const
 }
 QString HotkeySettings::tooltip() const
 {
-    return enabled() ? QStringLiteral("WaibuSnap · 截图键 %1")
-                           .arg(enabledSequence_.toString(QKeySequence::NativeText))
+    return enabled() ? QStringLiteral("WaibuSnap · %1键 %2")
+                           .arg(hotkeyActionName(action_),
+                                enabledSequence_.toString(QKeySequence::NativeText))
                      : QStringLiteral("WaibuSnap · %1").arg(explanation_);
 }
 QString HotkeySettings::changeHotkey(const QKeySequence& sequence)

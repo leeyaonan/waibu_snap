@@ -40,6 +40,9 @@ struct SaveSettingsActions
     std::function<QString(bool)> saveStickerDoubleClickClose;
     QKeySequence quickGunnerHotkey = QKeySequence(Qt::Key_F2);
     std::function<QString(const QKeySequence&)> saveQuickGunnerHotkey;
+    std::array<QKeySequence, 2> recordingHotkeys = {QKeySequence(Qt::Key_F3),
+                                                    QKeySequence(Qt::Key_F4)};
+    std::function<QString(HotkeyAction, const QKeySequence&)> saveRecordingHotkey;
 };
 struct HistorySettingsActions
 {
@@ -110,6 +113,7 @@ class SettingsDialog final : public QDialog
     QDoubleSpinBox* ratioHeightInput_ = nullptr;
     QKeySequenceEdit* editor_ = nullptr;
     QKeySequenceEdit* quickGunnerEditor_ = nullptr;
+    std::array<QKeySequenceEdit*, 2> recordingEditors_{};
     QLabel* historyUsage_ = nullptr;
     QLabel* status_ = nullptr;
     SaveHotkey saveHotkey_;

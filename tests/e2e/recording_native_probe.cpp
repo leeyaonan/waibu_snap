@@ -1,6 +1,8 @@
 #include "interfaces/display_topology.h"
 #include "interfaces/recording.h"
+#include "recording_control_probe.h"
 #include "recording_native_probe_media.h"
+#include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDateTime>
@@ -9,7 +11,6 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
-#include <QGuiApplication>
 #include <QImage>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -477,11 +478,15 @@ int runProbe(const ProbeOptions& options)
 
 int main(int argc, char* argv[])
 {
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("WaibuSnapRecordingProbe"));
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("WaibuSnap v009 R3 录制原生探针"));
     parser.addHelpOption();
+    parser.addOption(
+        {QStringLiteral("control-retina"), QStringLiteral("R4 探针明确选择最高 DPR 显示器。")});
+    parser.addOption({QStringLiteral("control"), QStringLiteral("运行 R4 受控原生控制面探针。")});
+    parser.addOption({QStringLiteral("control-target"), QStringLiteral("内部受控目标子进程。")});
     parser.addOption({{QStringLiteral("audio"), QStringLiteral("system-audio")},
                       QStringLiteral("开启系统声音并断言音轨存在。")});
     parser.addOption(
@@ -544,5 +549,10 @@ int main(int argc, char* argv[])
         options.reportPath = QFileInfo(options.reportPath).absoluteFilePath();
     if (!options.keepDirectory.isEmpty())
         options.keepDirectory = QFileInfo(options.keepDirectory).absoluteFilePath();
+    if (parser.isSet(QStringLiteral("control-target")))
+        return runRecordingControlTarget(parser.isSet(QStringLiteral("control-retina")));
+    if (parser.isSet(QStringLiteral("control")))
+        return runRecordingControlProbe(options.reportPath, options.keepDirectory,
+                                        parser.isSet(QStringLiteral("control-retina")));
     return runProbe(options);
 }

@@ -117,10 +117,10 @@ class WindowsHotkeyTest final : public QObject
     void actionIdsIndependentReleaseAndDestruction()
     {
         FakeApi fake;
-        std::array<int, 5> calls{};
+        std::array<int, hotkeyActions.size()> calls{};
         {
             WindowsHotkey hotkey(fake.api());
-            std::array<int, 5> ids{};
+            std::array<int, hotkeyActions.size()> ids{};
             for (size_t i = 0; i < hotkeyActions.size(); ++i)
             {
                 QVERIFY(hotkey
@@ -209,8 +209,8 @@ class WindowsHotkeyTest final : public QObject
     {
         FakeApi fake;
         WindowsHotkey hotkey(fake.api());
-        std::array<int, 5> calls{};
-        std::array<MSG, 5> messages{};
+        std::array<int, hotkeyActions.size()> calls{};
+        std::array<MSG, hotkeyActions.size()> messages{};
         for (size_t i = 0; i < hotkeyActions.size(); ++i)
         {
             QVERIFY(hotkey
@@ -221,7 +221,7 @@ class WindowsHotkeyTest final : public QObject
         }
         fake.error = ERROR_HOTKEY_ALREADY_REGISTERED;
         QVERIFY(!hotkey
-                     .registerHotkey(HotkeyAction::HistoryPrevious, QKeySequence(Qt::Key_F4),
+                     .registerHotkey(HotkeyAction::HistoryPrevious, QKeySequence(Qt::Key_F10),
                                      [] { QFAIL("失败的新处理器不应生效。"); })
                      .enabled);
         QCOMPARE(fake.active.size(), qsizetype(hotkeyActions.size()));
@@ -232,7 +232,7 @@ class WindowsHotkeyTest final : public QObject
             QCOMPARE(count, 1);
         fake.error = ERROR_SUCCESS;
         QVERIFY(hotkey
-                    .registerHotkey(HotkeyAction::HistoryNext, QKeySequence(Qt::Key_F3),
+                    .registerHotkey(HotkeyAction::HistoryNext, QKeySequence(Qt::Key_F11),
                                     [&] { ++calls[2]; })
                     .enabled);
         QVERIFY(dispatch(hotkey, messages[1]));

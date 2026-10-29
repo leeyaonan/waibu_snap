@@ -2,6 +2,7 @@
 #include "platform/macos/recording_audio_pipeline.h"
 #include "session/monotonic_clock.h"
 #import <AVFoundation/AVFoundation.h>
+#import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
@@ -11,6 +12,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QPointer>
 #include <QTimer>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #include <algorithm>
@@ -18,6 +20,7 @@
 #include <cmath>
 #include <deque>
 #include <dispatch/dispatch.h>
+#include <limits>
 #include <memory>
 #include <unistd.h>
 
@@ -1612,3 +1615,114 @@ std::unique_ptr<RecordingMediaProbe> createRecordingMediaProbe()
 }
 
 } // namespace waibusnap
+
+namespace waibusnap
+{
+namespace
+{
+std::optional<RecordingWindowInfo> readRecordingWindow(NSDictionary* dictionary, bool selectable)
+{
+    const auto id = [dictionary[(__bridge NSString*)kCGWindowNumber] unsignedLongLongValue];
+    CGRect frame = CGRectZero;
+    if (!id ||
+        !CGRectMakeWithDictionaryRepresentation(
+            (__bridge CFDictionaryRef)dictionary[(__bridge NSString*)kCGWindowBounds], &frame))
+        return std::nullopt;
+    const auto pid = [dictionary[(__bridge NSString*)kCGWindowOwnerPID] intValue];
+    const auto layer = [dictionary[(__bridge NSString*)kCGWindowLayer] intValue];
+    const auto alpha = [dictionary[(__bridge NSString*)kCGWindowAlpha] doubleValue];
+    NSString* app = dictionary[(__bridge NSString*)kCGWindowOwnerName];
+    if (selectable && (pid == getpid() || layer != 0 || alpha <= 0 || frame.size.width < 32 ||
+                       frame.size.height < 32 || [app isEqualToString:@"Dock"] ||
+                       [app isEqualToString:@"Window Server"]))
+        return std::nullopt;
+    NSString* title = dictionary[(__bridge NSString*)kCGWindowName];
+    QString label = app.length ? QString::fromNSString(app) : QStringLiteral("应用窗口");
+    if (title.length)
+        label += QStringLiteral(" — ") + QString::fromNSString(title);
+    // 标题只用于选择器，不写日志；限制标签内存与展示长度。
+    label = label.left(160);
+    return RecordingWindowInfo{id,
+                               QRect(qRound(frame.origin.x), qRound(frame.origin.y),
+                                     qRound(frame.size.width), qRound(frame.size.height)),
+                               label,
+                               [dictionary[(__bridge NSString*)kCGWindowIsOnscreen] boolValue]};
+}
+class MacRecordingEnvironmentObserver final : public RecordingEnvironmentObserver
+{
+  public:
+    ~MacRecordingEnvironmentObserver() override { stop(); }
+    void start(std::function<void()> suspend) override
+    {
+        stop();
+        context_ = std::make_unique<QObject>();
+        const QPointer<QObject> context(context_.get());
+        NSNotificationCenter* center = NSWorkspace.sharedWorkspace.notificationCenter;
+        for (NSNotificationName name in @[
+                 NSWorkspaceWillSleepNotification, NSWorkspaceScreensDidSleepNotification,
+                 NSWorkspaceSessionDidResignActiveNotification
+             ])
+        {
+            id observer = [center
+                addObserverForName:name
+                            object:nil
+                             queue:NSOperationQueue.mainQueue
+                        usingBlock:^(NSNotification*) {
+                          if (context)
+                              QMetaObject::invokeMethod(context, suspend, Qt::QueuedConnection);
+                        }];
+            [workspaceObservers_ addObject:observer];
+        }
+        id lockObserver = [NSDistributedNotificationCenter.defaultCenter
+            addObserverForName:@"com.apple.screenIsLocked"
+                        object:nil
+                         queue:NSOperationQueue.mainQueue
+                    usingBlock:^(NSNotification*) {
+                      if (context)
+                          QMetaObject::invokeMethod(context, suspend, Qt::QueuedConnection);
+                    }];
+        lockObserver_ = lockObserver;
+    }
+    void stop() override
+    {
+        context_.reset();
+        for (id observer in workspaceObservers_)
+            [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:observer];
+        [workspaceObservers_ removeAllObjects];
+        if (lockObserver_)
+            [NSDistributedNotificationCenter.defaultCenter removeObserver:lockObserver_];
+        lockObserver_ = nil;
+    }
+
+  private:
+    std::unique_ptr<QObject> context_;
+    NSMutableArray* workspaceObservers_ = [NSMutableArray array];
+    id lockObserver_ = nil;
+};
+}
+QVector<RecordingWindowInfo> recordingWindows()
+{
+    QVector<RecordingWindowInfo> result;
+    NSArray* windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    for (NSDictionary* dictionary in windows)
+        if (const auto window = readRecordingWindow(dictionary, true); window && window->onScreen)
+            result.append(*window);
+    return result;
+}
+std::optional<RecordingWindowInfo> recordingWindowInfo(quint64 id)
+{
+    if (!id || id > std::numeric_limits<CGWindowID>::max())
+        return std::nullopt;
+    NSArray* windows = CFBridgingRelease(
+        CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, CGWindowID(id)));
+    for (NSDictionary* dictionary in windows)
+        if (const auto window = readRecordingWindow(dictionary, false); window && window->id == id)
+            return window;
+    return std::nullopt;
+}
+std::unique_ptr<RecordingEnvironmentObserver> createRecordingEnvironmentObserver()
+{
+    return std::make_unique<MacRecordingEnvironmentObserver>();
+}
+}
