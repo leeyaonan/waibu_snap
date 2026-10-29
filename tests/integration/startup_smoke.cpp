@@ -662,6 +662,38 @@ class StartupSmokeTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void recordingResourceMenu()
+    {
+        using namespace waibusnap;
+        auto options = isolatedHistory();
+        options.testMode = true;
+        options.historyEnabledOverride = false;
+        ApplicationController controller(*qApp, options);
+        auto* menu = controller.menu()->findChild<QMenu*>(QStringLiteral("recordingMenu"));
+        QVERIFY(menu);
+        const auto actions = menu->actions();
+        QCOMPARE(actions.size(), 9);
+        QVERIFY(actions[6]->isSeparator());
+        QCOMPARE(actions[7]->objectName(), QStringLiteral("recordingOpenVideoAction"));
+        QCOMPARE(actions[8]->objectName(), QStringLiteral("recordingOpenGifAction"));
+        for (int i : {7, 8})
+        {
+            QVERIFY(actions[i]->isEnabled());
+            actions[i]->trigger();
+            HistoryWindow* browser = nullptr;
+            for (auto* widget : QApplication::topLevelWidgets())
+                if (auto* found = qobject_cast<HistoryWindow*>(widget))
+                    browser = found;
+            QVERIFY(browser);
+            QCOMPARE(browser->selectedSourceId(),
+                     i == 7 ? QStringLiteral("recording-video") : QStringLiteral("recording-gif"));
+            QCOMPARE(browser->findChild<QComboBox*>(QStringLiteral("resourceSourceCombo"))
+                         ->findData(QStringLiteral("history")),
+                     -1);
+            browser->close();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+    }
     void recordingGifPicker()
     {
         waibusnap::CaptureFrame f;

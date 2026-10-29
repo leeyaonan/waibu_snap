@@ -666,6 +666,26 @@ QString AppSettings::quickGunnerStarsPath() const
     return QDir(QFileInfo(filePath_).absolutePath())
         .filePath(QStringLiteral("quick-gunner-stars.json"));
 }
+QString AppSettings::recordingVideoStarsPath() const
+{
+    return QDir(QFileInfo(filePath_).absolutePath())
+        .filePath(QStringLiteral("recording-video-stars.json"));
+}
+QString AppSettings::recordingGifStarsPath() const
+{
+    return QDir(QFileInfo(filePath_).absolutePath())
+        .filePath(QStringLiteral("recording-gif-stars.json"));
+}
+QString AppSettings::recordingVideoMetaPath() const
+{
+    return QDir(QFileInfo(filePath_).absolutePath())
+        .filePath(QStringLiteral("recording-video-meta.json"));
+}
+QString AppSettings::recordingGifMetaPath() const
+{
+    return QDir(QFileInfo(filePath_).absolutePath())
+        .filePath(QStringLiteral("recording-gif-meta.json"));
+}
 HistoryWindowState AppSettings::loadHistoryWindowState() const
 {
     QFile file(filePath_);

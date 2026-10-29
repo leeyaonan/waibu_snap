@@ -616,7 +616,7 @@ class QuickGunnerResourceTest final : public QObject
         c.openHistory();
         window = ApplicationControllerTestAccess::window(c);
         QVERIFY(window);
-        QCOMPARE(child<QComboBox>(window, "resourceSourceCombo")->count(), 1);
+        QCOMPARE(child<QComboBox>(window, "resourceSourceCombo")->count(), 3);
         QCOMPARE(window->selectedSourceId(), QStringLiteral("quick-gunner"));
     }
 };

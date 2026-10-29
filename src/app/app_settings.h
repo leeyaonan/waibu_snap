@@ -48,6 +48,10 @@ class AppSettings
     QString saveHistoryPreferences(const HistoryPreferences& preferences) const;
     QString saveHistoryCurrentGroupId(const QString& groupId) const;
     QString quickGunnerStarsPath() const;
+    QString recordingVideoStarsPath() const;
+    QString recordingGifStarsPath() const;
+    QString recordingVideoMetaPath() const;
+    QString recordingGifMetaPath() const;
     HistoryWindowState loadHistoryWindowState() const;
     QString saveHistoryWindowState(const HistoryWindowState& state) const;
     LoadedHotkey loadHotkey(HotkeyAction action = HotkeyAction::Screenshot) const;

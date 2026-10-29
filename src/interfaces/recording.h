@@ -122,6 +122,8 @@ struct RecordingMediaInfo
     qint64 durationMs = 0;
     QSize pixelSize;
     QString error;
+    int frameCount = 0;
+    int loopCount = 0;
 };
 class RecordingMediaProbe
 {
@@ -132,4 +134,7 @@ class RecordingMediaProbe
     virtual QImage thumbnail(const QString& path, QSize bounds) const = 0;
 };
 std::unique_ptr<RecordingMediaProbe> createRecordingMediaProbe();
+// 共享 Qt GIF 读取，无音轨；由后台任务调用，不在 GUI 线程遍历动画。
+RecordingMediaInfo probeRecordingGif(const QString& path);
+QImage recordingGifThumbnail(const QString& path, QSize bounds);
 } // namespace waibusnap

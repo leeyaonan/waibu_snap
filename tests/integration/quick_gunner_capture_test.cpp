@@ -694,7 +694,7 @@ class QuickGunnerCaptureTest : public QObject
         auto* combo = browser->findChild<QComboBox*>(QStringLiteral("resourceSourceCombo"));
         auto* preview = browser->findChild<HistoryImageView*>(QStringLiteral("historyImageView"));
         QVERIFY(list && combo && preview);
-        QCOMPARE(combo->count(), historyEnabled ? 2 : 1);
+        QCOMPARE(combo->count(), historyEnabled ? 4 : 3);
         QSignalSpy saved(h.saves, &QuickGunnerSaveQueue::saved);
         QSignalSpy dropped(&gunner, &QuickGunnerController::shotsDropped);
         // Windows 共享流程使用 fake 激活，托盘仍按既有用例保持禁用。

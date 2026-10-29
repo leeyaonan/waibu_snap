@@ -1,5 +1,6 @@
 #include "interfaces/recording.h"
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QMetaObject>
 namespace waibusnap
 {
@@ -8,13 +9,20 @@ namespace
 class WindowsRecordingMediaProbe final : public RecordingMediaProbe
 {
   public:
-    RecordingMediaInfo probe(const QString&) const override
+    RecordingMediaInfo probe(const QString& path) const override
     {
+        if (QFileInfo(path).suffix().compare(QStringLiteral("gif"), Qt::CaseInsensitive) == 0)
+            return probeRecordingGif(path);
         RecordingMediaInfo info;
         info.error = QStringLiteral("Windows 录制将在后续版本接入。");
         return info;
     }
-    QImage thumbnail(const QString&, QSize) const override { return {}; }
+    QImage thumbnail(const QString& path, QSize bounds) const override
+    {
+        return QFileInfo(path).suffix().compare(QStringLiteral("gif"), Qt::CaseInsensitive) == 0
+                   ? recordingGifThumbnail(path, bounds)
+                   : QImage();
+    }
 };
 } // namespace
 std::unique_ptr<RecordingSession> createRecordingSession() { return {}; }

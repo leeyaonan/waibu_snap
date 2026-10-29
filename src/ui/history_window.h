@@ -9,6 +9,7 @@ class QLabel;
 class QListWidget;
 class QSplitter;
 class QToolButton;
+class QMovie;
 namespace waibusnap
 {
 class HistoryImageItem;
@@ -39,6 +40,8 @@ class HistoryWindow final : public QWidget
     explicit HistoryWindow(HistoryManager& manager, AppSettings settings,
                            HistoryWindowActions actions = {},
                            ResourceSource* additionalSource = nullptr, bool historyEnabled = true);
+    HistoryWindow(HistoryManager& manager, AppSettings settings, HistoryWindowActions actions,
+                  const QVector<ResourceSource*>& additionalSources, bool historyEnabled);
     ~HistoryWindow() override;
     void refresh();
     void selectSource(const QString& sourceId);
@@ -70,6 +73,8 @@ class HistoryWindow final : public QWidget
     void selectView(const QString& view, bool useDefaultSort);
     void rebuildItems(const QString& selected, int fallbackRow = 0);
     void showSelection();
+    void stopMovie();
+    void openSelectedVideo();
     QString selectedId() const;
     std::optional<ResourceItem> findItem(const QString& id) const;
     void updateActions();
@@ -99,6 +104,9 @@ class HistoryWindow final : public QWidget
     QVector<ResourceItem> items_;
     QString displayedId_;
     bool displayedOriginal_ = false;
+    QPointer<QMovie> movie_;
+    QString movieKey_;
+    QString failedMovieKey_;
     QString view_ = QStringLiteral("all");
     ResourceSort order_ = ResourceSort::NewestFirst;
     QListWidget* groups_;

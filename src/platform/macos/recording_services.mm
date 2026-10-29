@@ -1581,10 +1581,7 @@ class MacRecordingMediaProbe final : public RecordingMediaProbe
             return info;
         }
         if (isGifPath(path))
-        {
-            info.error = QStringLiteral("GIF 媒体探测在 R6 接入。");
-            return info;
-        }
+            return probeRecordingGif(path);
         @autoreleasepool
         {
             AVURLAsset* asset =
@@ -1626,7 +1623,9 @@ class MacRecordingMediaProbe final : public RecordingMediaProbe
     QImage thumbnail(const QString& path, QSize bounds) const override
     {
         const QFileInfo file(path);
-        if (!file.exists() || !file.isFile() || isGifPath(path))
+        if (isGifPath(path))
+            return recordingGifThumbnail(path, bounds);
+        if (!file.exists() || !file.isFile())
             return {};
         @autoreleasepool
         {

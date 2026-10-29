@@ -248,10 +248,11 @@ class RecordingUiTest : public QObject
         ApplicationController controller(*qApp, options, {}, {}, {}, {}, {}, {}, h.dependencies());
         auto* menu = controller.menu()->findChild<QMenu*>(QStringLiteral("recordingMenu"));
         QVERIFY(menu);
-        QCOMPARE(menu->actions().size(), 6);
+        QCOMPARE(menu->actions().size(), 9);
         for (const auto* name :
              {"recordingStatusAction", "recordingStartAction", "recordingPauseAction",
-              "recordingStopAction", "recordingDiscardAction", "recordingCancelAction"})
+              "recordingStopAction", "recordingDiscardAction", "recordingCancelAction",
+              "recordingOpenVideoAction", "recordingOpenGifAction"})
             QVERIFY(action(controller, name));
         QVERIFY(!action(controller, "recordingPauseAction")->isVisible());
         auto& recording = ApplicationControllerTestAccess::recording(controller);
@@ -264,6 +265,8 @@ class RecordingUiTest : public QObject
                                  "settingsAction", "clipboardStickerAction"})
             QVERIFY2(!action(controller, name)->isEnabled(), name);
         QVERIFY(action(controller, "quickGunnerOpenAction")->isEnabled());
+        QVERIFY(action(controller, "recordingOpenVideoAction")->isEnabled());
+        QVERIFY(action(controller, "recordingOpenGifAction")->isEnabled());
         controller.trigger(QStringLiteral("test"));
         ApplicationControllerTestAccess::shutter(controller);
         QVERIFY(!controller.active());

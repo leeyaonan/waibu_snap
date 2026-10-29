@@ -70,6 +70,9 @@ ResourceSnapshot HistoryResourceSource::snapshot() const
                                 item.managed && bool(actions_.trash),
                                 item.createdAtMs,
                                 item.pixelSize,
+                                0,
+                                ResourcePreview::Image,
+                                {},
                                 {}};
             if (item.source == HistorySource::Scroll)
                 mapped.badges.append(QStringLiteral("长图"));

@@ -162,6 +162,44 @@ class HistorySettingsTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void recordingDirectoriesExcludedOnInitializeAndRootChange()
+    {
+        QTemporaryDir temp;
+        AppSettings settings(temp.filePath(QStringLiteral("settings.ini")));
+        HistoryManager manager(settings);
+        for (int round = 0; round < 2; ++round)
+        {
+            const auto root = temp.filePath(QStringLiteral("root-%1").arg(round));
+            HistoryStore store(root);
+            QVERIFY(store.initialize().error.isEmpty());
+            const auto video = store.createGroup(QStringLiteral("视频"));
+            const auto gif = store.createGroup(QStringLiteral("GIF"));
+            QVERIFY(video.success && gif.success);
+            QVERIFY(image().save(
+                QDir(video.group.absolutePath).filePath(QStringLiteral("external.png"))));
+            QVERIFY(image().save(
+                QDir(gif.group.absolutePath).filePath(QStringLiteral("external.png"))));
+            RecordingPreferences recording;
+            recording.videoDirectory = video.group.absolutePath;
+            recording.gifDirectory = gif.group.absolutePath;
+            QVERIFY(settings.saveRecordingPreferences(recording).isEmpty());
+            HistoryPreferences preferences;
+            preferences.rootDirectory = root;
+            if (round == 0)
+            {
+                QVERIFY(settings.saveHistoryPreferences(preferences).isEmpty());
+                QVERIFY(manager.initialize().success);
+            }
+            else
+                QVERIFY(manager.savePreferences(preferences).success);
+            QCOMPARE(manager.groups().size(), 3);
+            for (const auto& group : manager.snapshot().groups)
+                QVERIFY(group.items.isEmpty());
+            QVERIFY(manager.currentGroup()->isDefault);
+            QVERIFY(QFileInfo::exists(
+                QDir(gif.group.absolutePath).filePath(QStringLiteral("external.png"))));
+        }
+    }
     void quickGunnerEditorExists()
     {
         SettingsDialog dialog(
@@ -365,8 +403,8 @@ class HistorySettingsTest final : public QObject
         controller.openHistory();
         auto* browser = ApplicationControllerTestAccess::window(controller);
         QVERIFY(browser);
-        QCOMPARE(child<QComboBox>(browser, "resourceSourceCombo")->count(), 1);
-        QCOMPARE(browser->selectedSourceId(), QStringLiteral("quick-gunner"));
+        QCOMPARE(child<QComboBox>(browser, "resourceSourceCombo")->count(), 2);
+        QCOMPARE(browser->selectedSourceId(), QStringLiteral("recording-video"));
         QVERIFY(!manager.ready());
         QVERIFY(!QFileInfo::exists(root));
         QTimer::singleShot(

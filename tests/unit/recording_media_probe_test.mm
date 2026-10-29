@@ -139,7 +139,7 @@ class RecordingMediaProbeTest final : public QObject
         QVERIFY(!invalid.error.isEmpty());
         QVERIFY(invalid.error.contains(QStringLiteral("无法读取")));
     }
-    void defersGifProbe()
+    void rejectsTruncatedGif()
     {
         const auto probe = waibusnap::createRecordingMediaProbe();
         QVERIFY(probe);
@@ -150,7 +150,7 @@ class RecordingMediaProbeTest final : public QObject
         gif.close();
         const auto info = probe->probe(gifPath);
         QVERIFY(!info.valid);
-        QVERIFY2(info.error.contains(QStringLiteral("R6")), qPrintable(info.error));
+        QVERIFY2(info.error.contains(QStringLiteral("GIF")), qPrintable(info.error));
     }
 
   private:

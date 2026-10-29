@@ -331,7 +331,15 @@ const HistoryGroupSnapshot* findGroup(const HistoryScanResult& scan, const QStri
 }
 HistoryStore::HistoryStore(QString rootDirectory, CleanupPolicy defaultCleanup, HistoryTrash trash,
                            std::function<QString()> excludedDirectory)
-    : excludedDirectory_(std::move(excludedDirectory)),
+    : HistoryStore(std::move(rootDirectory), defaultCleanup, std::move(trash),
+                   std::function<QStringList()>(
+                       [provider = std::move(excludedDirectory)]
+                       { return provider ? QStringList{provider()} : QStringList{}; }))
+{
+}
+HistoryStore::HistoryStore(QString rootDirectory, CleanupPolicy defaultCleanup, HistoryTrash trash,
+                           std::function<QStringList()> excludedDirectories)
+    : excludedDirectories_(std::move(excludedDirectories)),
       rootDirectory_(rootDirectory.isEmpty() ? defaultRootDirectory() : std::move(rootDirectory)),
       defaultCleanup_(defaultCleanup), trash_(std::move(trash))
 {
@@ -347,23 +355,29 @@ HistoryScanResult HistoryStore::scanUnlocked() const
     result.error = rootError(rootDirectory_);
     if (!result.error.isEmpty())
         return result;
-    const QString excluded = excludedDirectory_ ? excludedDirectory_() : QString();
-    const auto excludedPath = QFileInfo(excluded).canonicalFilePath();
-    const QString excludedRoot =
-        excluded.isEmpty()
-            ? QString()
-            : (excludedPath.isEmpty() ? QDir::cleanPath(QFileInfo(excluded).absoluteFilePath())
-                                      : excludedPath);
+    QStringList excludedRoots;
+    for (const auto& path : excludedDirectories_ ? excludedDirectories_() : QStringList{})
+    {
+        if (path.isEmpty())
+            continue;
+        const QFileInfo file(path);
+        excludedRoots.append(file.canonicalFilePath().isEmpty()
+                                 ? QDir::cleanPath(file.absoluteFilePath())
+                                 : file.canonicalFilePath());
+    }
     const auto excludedFile = [&](const QFileInfo& file)
     {
-        if (excludedRoot.isEmpty())
-            return false;
         const auto real = file.canonicalFilePath();
-        const auto relative =
-            QDir(excludedRoot).relativeFilePath(real.isEmpty() ? file.absoluteFilePath() : real);
-        return relative == QStringLiteral(".") ||
-               (!QDir::isAbsolutePath(relative) && relative != QStringLiteral("..") &&
-                !relative.startsWith(QStringLiteral("../")));
+        for (const auto& root : excludedRoots)
+        {
+            const auto relative =
+                QDir(root).relativeFilePath(real.isEmpty() ? file.absoluteFilePath() : real);
+            if (relative == QStringLiteral(".") ||
+                (!QDir::isAbsolutePath(relative) && relative != QStringLiteral("..") &&
+                 !relative.startsWith(QStringLiteral("../"))))
+                return true;
+        }
+        return false;
     };
     QStringList paths;
     const QString registryError = readRegistry(rootDirectory_, paths);

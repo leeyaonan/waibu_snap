@@ -1,9 +1,47 @@
 #include "interfaces/recording.h"
 #include <QDir>
 #include <QFileInfo>
+#include <QImageReader>
 #include <cmath>
 namespace waibusnap
 {
+RecordingMediaInfo probeRecordingGif(const QString& path)
+{
+    RecordingMediaInfo info;
+    QImageReader reader(path, "gif");
+    if (!QFileInfo(path).isFile() || !reader.canRead() || !reader.size().isValid())
+    {
+        info.error = QStringLiteral("无法读取 GIF 媒体信息：%1").arg(reader.errorString());
+        return info;
+    }
+    info.pixelSize = reader.size();
+    info.loopCount = reader.loopCount();
+    const int expected = reader.imageCount();
+    while (reader.canRead())
+    {
+        // 每次只保留一帧，避免按帧数累积内存。
+        if (reader.read().isNull())
+        {
+            info.error = QStringLiteral("无法读取 GIF 帧：%1").arg(reader.errorString());
+            return info;
+        }
+        info.durationMs += qMax(0, reader.nextImageDelay());
+        ++info.frameCount;
+    }
+    info.valid = info.frameCount > 0 && (expected <= 0 || expected == info.frameCount);
+    if (!info.valid)
+        info.error = QStringLiteral("无法读取 GIF 媒体信息：帧数据不完整。");
+    return info;
+}
+QImage recordingGifThumbnail(const QString& path, QSize bounds)
+{
+    QImageReader reader(path, "gif");
+    if (bounds.isValid() && reader.size().isValid())
+        reader.setScaledSize(reader.size().scaled(bounds, Qt::KeepAspectRatio));
+    auto image = reader.read();
+    image.setDevicePixelRatio(1);
+    return image;
+}
 namespace
 {
 QString validateTarget(const RecordingRequest& request)
