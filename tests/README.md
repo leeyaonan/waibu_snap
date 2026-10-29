@@ -1489,3 +1489,63 @@ build/macos/tests/recording_resources_probe \
 
 
 Windows 首轮 CI 补强：除文件系统隐藏属性外，显式过滤点号开头的文件；构造读取星标后先关闭 QFile，再剪枝并用 QSaveFile 提交，避免 Windows 打开的读取句柄阻止原子替换。快捷方式夹具按既有约定使用 `.lnk` 后缀，并断言 Qt 识别为快捷方式 / 符号链接。保留原扫描、剪枝与路径边界断言，后续双端最终结果见 PR 检查。
+
+## v009 R7：录制设置、默认输出与收口（2026-10-29）
+
+新增「通用 / 保存 / 截图 / 录制 / 贴图 / 历史 / 分组 / 水印」中的录制页，页面一次创建、切页保留草稿、保存统一收集。`recording_settings` / `recording_settings_high_dpi` 覆盖默认值、四组参数保存往返、取消 / Esc、保存失败重试与保旧、目录选择 / 恢复默认、双音量同步、音频灰态、设备后台刷新 / 缺失ID / 关闭后迟到结果、Windows只读页。默认目录以空值持久化；已有显式目录保留原值，违规只拒绝保存，不移动或删除文件。
+
+目录规则（2026-10-29用户确认，FR-7.1与默认表不变）：
+
+- 允许录制目录位于历史根或分组之下，默认 `~/Pictures/WaibuSnap/GIF` 保留。
+- 拒绝录制目录等于或包含历史根 / 任一分组；与快枪手、另一录制输出双向禁止重叠。
+- 拒绝相对路径、NUL、不可写、创建失败；保存时允许创建，运行时自定义目录失效不重建。
+- 解析真实路径及最近现存父目录，避免字符串前缀误判；显式保存才只读分组登记 / 顶层marker，历史关闭也不初始化或扫描图片。
+
+`history_store` 新增嵌套录制目录的扫描 / 分组 / 统计 / 清理候选隔离及登记只读、缺失根不初始化、损坏登记不改写。R6排除 / 清理算法未改。`recording_core` 保留单调性 / 非法值断言，增加 `1280×720 × 12fps × 30秒 × 0.12 + 1024 = 39,814,144B` 与目录默认哨兵 / 显式违规原值回归。设置页未知对象时按主屏物理像素 / 比例参考，标注估算与实际编码结果，不承诺可直接发送。
+
+`recording_ui` 覆盖偏好到选择器、会话切换不回写、Windows子菜单全部禁用但浏览器仍可选择已有录制来源。`recording_controller` 先补6个失败用例，再修启动期保存退出：等待Started10秒，随后一次stop，保存最多等待30秒；失败 / 超时丢弃临时文件并说明原因后退出，迟到回调无效。正常录制保存失败保持原有取消退出语义；偏好按会话快照消费，不影响进行中的录制。
+
+本机受控原生复现（macOS，已有Qt6.11.2 / WaibuSnap Dev；不发起新权限申请）：
+
+```bash
+mkdir -p /private/tmp/waibusnap-r7-native-settings
+QT_QPA_PLATFORM=cocoa \
+WAIBUSNAP_RECORDING_SETTINGS_EVIDENCE=/private/tmp/waibusnap-r7-native-settings \
+build/macos/tests/recording_settings_test parameterGroupsRoundTrip \
+  -o /private/tmp/waibusnap-r7-native-settings/ui.txt,txt
+
+codesign --force --sign 'WaibuSnap Dev' \
+  --identifier local.waibusnap.recording-probe --timestamp=none \
+  build/macos/bin/WaibuSnapRecordingProbe.app
+
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args \
+  --control-settings /private/tmp/waibusnap-r7-native-settings/video-1080p30.ini \
+  --control-retina --report /private/tmp/waibusnap-r7-native-settings/video-1080p30-native.txt
+
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args \
+  --control-settings /private/tmp/waibusnap-r7-native-settings/gif-960-10-15.ini \
+  --control-retina --report /private/tmp/waibusnap-r7-native-settings/gif-960-10-15-limit-native.txt
+
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args \
+  --control-settings /private/tmp/waibusnap-r7-native-settings/video-1080p30.ini \
+  --control-retina --control-quit-starting \
+  --report /private/tmp/waibusnap-r7-native-settings/quit-starting-native.txt
+
+open -n build/macos/bin/WaibuSnapRecordingProbe.app --args --settings-preview
+```
+
+证据目录应选本次新建临时目录，INI不覆盖已有同名文件；仅显式设置证据环境变量时，测试保留隔离配置和成品目录。另两组配置为 `video-720p60.ini`、`gif-1280-15-30.ini`。自定义GIF设置探针等待所选最长时长自动停止；传统R4探针仍验证暂停 / 恢复。`--settings-preview` 打开独立临时配置的真实设置页，可操作原生目录面板、麦克风 / 音量，不改用户配置或开始采集。
+
+已执行：原生Cocoa四组参数保存 / 回读与窗口出图通过；读取同一INI的控制器成片为1920×1080（请求30fps）、1280×720（请求60fps）、960×540 / 10fps、1280×720 / 15fps。视频ffprobe平均帧率约28.2 / 52.7，属可变帧率采集，不宣称恒定30 / 60fps或性能门槛达标；视频暂停 / 恢复、Toast回调与.part收口通过。启动期立即退出真实遇到「没有采集到任何画面」，明确丢弃后退出就绪，无成品 / 临时文件；延迟Started后成功保存、失败与10 / 30秒超时由fake验证。
+
+原生CUA实际操作 / AX核对：GIF音频灰态、切回恢复；恢复默认显示 `~/Pictures/WaibuSnap/GIF`；系统目录面板选择本轮临时目录并返回完整路径；麦克风开启后设备 / 音量启用；系统音量200 / 麦克风0的滑杆与数值同步；保存后窗口关闭。真实设备完整选取、硬件采集和双源增益效果仍待验收，不把UI状态当硬件通过。GIF限时原生追加通过：设置15秒→成品15000ms / 960×540 / 10fps，设置30秒→30000ms / 1280×720 / 15fps，均自动停止并收口临时文件；60秒档仍待人工长样本。本机最终全量CTest72/72（179.68秒）、录制设置标准 / 高DPI各34、控制器34、录制UI各12、核心42、HistoryStore23通过；clang-format18.1.8 / lint / ObjC块捕获门禁通过。PR / CI在交付记录补齐。
+
+人工清单：
+
+1. macOS / Windows高DPI核对八页、滚动、估算与红字；Windows页可见且字段禁用、托盘禁用说明可见，浏览器可切已有视频 / GIF。
+2. 视频30 / 60、1080p / 720p、三质量；GIF960 / 1280 / 原尺寸、10 / 12 / 15fps、15 / 30 / 60秒，检查实际尺寸 / 帧时序 / 限时 / 画质。
+3. 原生目录选择 / 取消 / 恢复默认、重启默认哨兵、自定义失效不重建；根 / 分组父子方向、快枪手 / 双输出双向冲突只提示不迁移。
+4. 麦克风启停 / 刷新 / 缺失设备 / 权限允许拒绝、系统声 / 双源、音量0 / 100 / 200；GIF切回保留草稿。
+5. 默认GIF重新开选择器，本次切换不回写；取消 / Esc不写、失败重试、进行中会话参数不变。
+6. 通用页F3 / F4改键、重复 / 非法键拒绝、真实注册 / 系统功能键占用 / 重启保留；启动期保存退出不得停留或残留半成品。
+7. 多Space / 全屏、Windows / Intel实机、长会话与同步沿用R2–R6待验清单。

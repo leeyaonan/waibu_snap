@@ -19,6 +19,7 @@ struct RecordingFakeState
     qint64 clock = 0;
     qint64 disk = 4LL * 1024 * 1024 * 1024;
     RecordingRequest request;
+    RecordingOutput defaultOutput = RecordingOutput::Video;
     RecordingEvent lastToast;
     std::optional<RecordingWindowInfo> window =
         RecordingWindowInfo{123, QRect(-180, 40, 200, 100), QStringLiteral("测试窗口"), true};
@@ -71,6 +72,7 @@ class FakeRecordingPicker final : public RecordingPicker
         state_->cancelled = std::move(cancelled);
     }
     void dismiss() override {}
+    void setDefaultOutput(RecordingOutput output) override { state_->defaultOutput = output; }
 
   private:
     std::shared_ptr<RecordingFakeState> state_;
@@ -156,6 +158,7 @@ struct RecordingHarness
     void select(RecordingTargetKind kind = RecordingTargetKind::Region)
     {
         RecordingSelection selection;
+        selection.output = fake->defaultOutput;
         selection.kind = kind;
         selection.pixelRect = QRect(60, 80, 321, 241);
         selection.windowId = kind == RecordingTargetKind::Window ? 123 : 0;

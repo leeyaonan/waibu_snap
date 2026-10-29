@@ -1,4 +1,5 @@
 #include "recording_control_probe.h"
+#include "app/app_settings.h"
 #include "app/recording_controller.h"
 #include "ui/recording_border_window.h"
 #include "ui/recording_toast.h"
@@ -91,7 +92,8 @@ int runRecordingControlTarget(bool retina, bool stationary, bool large, bool fou
     QTimer::singleShot(90000, qApp, &QCoreApplication::quit);
     return qApp->exec();
 }
-int runRecordingControlProbe(const QString& report, const QString& keep, bool retina, bool gif)
+int runRecordingControlProbe(const QString& report, const QString& keep, bool retina, bool gif,
+                             const QString& settingsFile, bool quitDuringStart)
 {
     qApp->setQuitOnLastWindowClosed(false);
     QStringList lines;
@@ -262,11 +264,21 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
         bool toasted = false;
         d.toastPresenter = [&](const RecordingEvent&, bool success) { toasted = success; };
         RecordingController controller(std::move(d));
+        if (!settingsFile.isEmpty() && kind != RecordingTargetKind::Display)
+            continue;
         RecordingPreferences preferences;
-        preferences.videoDirectory = directory;
-        preferences.gifDirectory = directory;
-        preferences.systemAudio = false;
-        preferences.countdownSeconds = 3;
+        if (settingsFile.isEmpty())
+        {
+            preferences.videoDirectory = directory;
+            preferences.gifDirectory = directory;
+            preferences.systemAudio = false;
+            preferences.countdownSeconds = 3;
+        }
+        else
+        {
+            preferences = AppSettings(settingsFile).loadRecordingPreferences();
+            gif = preferences.defaultOutput == RecordingOutput::Gif;
+        }
         RecordingEvent result;
         QObject::connect(&controller, &RecordingController::finished, &controller,
                          [&](RecordingEvent event) { result = event; });
@@ -275,11 +287,32 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
                          [&](const QString& message) { error = message; });
         QElapsedTimer elapsed;
         elapsed.start();
+        bool earlyQuit = false, quitReady = false;
+        QObject::connect(&controller, &RecordingController::quitReady, &controller,
+                         [&] { quitReady = true; });
+        if (quitDuringStart)
+            QObject::connect(
+                &controller, &RecordingController::stateChanged, &controller,
+                [&](RecordingController::State state)
+                {
+                    if (state == RecordingController::State::Preparing &&
+                        !controller.request().tempPath.isEmpty())
+                        QTimer::singleShot(
+                            0, &controller,
+                            [&]
+                            {
+                                if (controller.state() == RecordingController::State::Preparing)
+                                {
+                                    earlyQuit = true;
+                                    controller.quitRequested(RecordingController::QuitChoice::Save);
+                                }
+                            });
+                });
         controller.startSelection(preferences);
         if (!check(waitFor([&] { return picker || !error.isEmpty(); }) && picker,
                    QStringLiteral("模式 %1：真实冻结帧与选择器").arg(int(kind))))
             continue;
-        if (gif)
+        if (gif && settingsFile.isEmpty())
             picker->findChild<QPushButton*>(QStringLiteral("recordingPickerOutputGif"))->click();
         picker->setMode(kind);
         if (kind == RecordingTargetKind::Window)
@@ -314,6 +347,14 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
             check(picker->selection().windowId == number, QStringLiteral("窗口选择器命中受控目标"));
         }
         QTest::keyClick(picker, Qt::Key_Return);
+        if (quitDuringStart)
+        {
+            check(waitFor([&] { return quitReady; }, 45000) && earlyQuit && !controller.active(),
+                  QStringLiteral("Started 前请求保存退出，完成或明确丢弃退出：%1").arg(error));
+            check(!QFileInfo::exists(controller.request().tempPath),
+                  QStringLiteral("退出边界无临时文件"));
+            continue;
+        }
         const bool started = waitFor(
             [&] {
                 return controller.state() == RecordingController::State::Recording ||
@@ -325,19 +366,52 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
         bool countdownExists = false;
         for (auto* widget : QApplication::topLevelWidgets())
             countdownExists |= widget->objectName() == QStringLiteral("recordingCountdown");
-        check(elapsed.elapsed() >= 3000 && !countdownExists, QStringLiteral("倒计时结束后才采集"));
-        QTest::qWait(1100);
-        controller.pause();
-        bool borderVisible = false;
-        for (auto* widget : QApplication::topLevelWidgets())
-            if (widget->objectName() == QStringLiteral("recordingBorder"))
-                borderVisible = widget->isVisible() &&
-                                widget->windowFlags().testFlag(Qt::WindowTransparentForInput);
-        check(borderVisible, QStringLiteral("模式 %1：暂停边框可见且穿透").arg(int(kind)));
-        QTest::qWait(500);
-        controller.resume();
-        QTest::qWait(1100);
-        controller.stopAndSave();
+        check(elapsed.elapsed() >= preferences.countdownSeconds * 1000 && !countdownExists,
+              QStringLiteral("倒计时结束后才采集"));
+        if (!settingsFile.isEmpty())
+        {
+            const auto& request = controller.request();
+            const QSize source(
+                qRound(selectedDisplay.logicalGeometry.width() * selectedDisplay.devicePixelRatio),
+                qRound(selectedDisplay.logicalGeometry.height() *
+                       selectedDisplay.devicePixelRatio));
+            check(request.outputPixels == recordingOutputSize(source, preferences.defaultOutput,
+                                                              preferences.resolution,
+                                                              preferences.gifMaxEdge) &&
+                      request.fps == (gif ? preferences.gifFps : preferences.videoFps) &&
+                      request.maxDurationMs == (gif ? preferences.gifMaxSeconds * 1000 : 0),
+                  QStringLiteral("设置消费：%1×%2 / %3fps / 限时%4ms / 光标%5 / 增益%6,%7")
+                      .arg(request.outputPixels.width())
+                      .arg(request.outputPixels.height())
+                      .arg(request.fps)
+                      .arg(request.maxDurationMs)
+                      .arg(request.showCursor)
+                      .arg(request.systemGain)
+                      .arg(request.microphoneGain));
+        }
+        const bool verifyLimit = gif && !settingsFile.isEmpty();
+        if (verifyLimit)
+        {
+            check(waitFor([&] { return !controller.active(); },
+                          preferences.gifMaxSeconds * 1000 + 15000) &&
+                      result.autoStopped,
+                  QStringLiteral("GIF 设置时长 %1 秒自动停止").arg(preferences.gifMaxSeconds));
+        }
+        else
+        {
+            QTest::qWait(1100);
+            controller.pause();
+            bool borderVisible = false;
+            for (auto* widget : QApplication::topLevelWidgets())
+                if (widget->objectName() == QStringLiteral("recordingBorder"))
+                    borderVisible = widget->isVisible() &&
+                                    widget->windowFlags().testFlag(Qt::WindowTransparentForInput);
+            check(borderVisible, QStringLiteral("模式 %1：暂停边框可见且穿透").arg(int(kind)));
+            QTest::qWait(500);
+            controller.resume();
+            QTest::qWait(1100);
+            controller.stopAndSave();
+        }
         check(waitFor([&] { return !controller.active(); }) && !result.path.isEmpty() &&
                   error.isEmpty() && toasted,
               QStringLiteral("模式 %1：控制器停止、保存、Toast 回调").arg(int(kind)));
@@ -353,9 +427,11 @@ int runRecordingControlProbe(const QString& report, const QString& keep, bool re
                 while (!reader.read().isNull())
                     media.durationMs += reader.nextImageDelay();
             }
-            check(media.valid && media.durationMs >= 1700 && media.durationMs < 3300 &&
-                      media.pixelSize == result.pixelSize,
-                  QStringLiteral("模式 %1：成片 %2 ms，%3×%4；无 3 秒倒计时或暂停段")
+            const bool durationMatches =
+                verifyLimit ? qAbs(media.durationMs - preferences.gifMaxSeconds * 1000) <= 10
+                            : (media.durationMs >= 1700 && media.durationMs < 3300);
+            check(media.valid && durationMatches && media.pixelSize == result.pixelSize,
+                  QStringLiteral("模式 %1：成片 %2 ms，%3×%4；时长与设置 / 暂停规则一致")
                       .arg(int(kind))
                       .arg(media.durationMs)
                       .arg(media.pixelSize.width())

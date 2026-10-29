@@ -139,7 +139,7 @@ qint64 estimatedGifBytes(QSize pixels, int fps, int seconds)
     if (pixels.width() <= 0 || pixels.height() <= 0 || fps <= 0 || seconds <= 0)
         return headerBytes;
     const double estimate =
-        double(pixels.width()) * double(pixels.height()) * double(fps) * double(seconds) * 0.06 +
+        double(pixels.width()) * double(pixels.height()) * double(fps) * double(seconds) * 0.12 +
         double(headerBytes);
     if (estimate >= double(std::numeric_limits<qint64>::max()))
         return std::numeric_limits<qint64>::max();

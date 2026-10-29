@@ -4,6 +4,7 @@ add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp c
     core/history_types.cpp core/history_cleanup.cpp core/watermark.cpp core/quick_gunner.cpp
     core/gif_encoder.cpp
     core/recording.cpp
+    core/storage_directory.cpp
     core/recording_audio.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -40,6 +41,7 @@ add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp u
     ui/clipboard_sticker_toast.cpp ui/clipboard_sticker_toast.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h
+    ui/recording_settings_page.cpp ui/recording_settings_page.h
     ui/watermark_settings_page.cpp ui/watermark_settings_page.h
     app/scroll_capture.cpp app/scroll_capture.h
     app/application_controller.cpp app/application_controller.h

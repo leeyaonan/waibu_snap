@@ -53,6 +53,7 @@ class RecordingController final : public QObject
     ~RecordingController() override;
     State state() const { return state_; }
     bool active() const { return state_ != State::Idle; }
+    bool captureSupported() const { return dependencies_.supported(); }
     qint64 recordedMs() const { return recordedMs_; }
     int countdownRemaining() const { return countdownRemaining_; }
     bool autoPaused() const { return autoPaused_; }
@@ -112,6 +113,9 @@ class RecordingController final : public QObject
     bool userPaused_ = false;
     bool autoPaused_ = false;
     bool quitAfterRecording_ = false;
+    bool quitDuringStart_ = false;
+    bool stopWhenStarted_ = false;
+    qint64 quitDeadline_ = 0;
     QString autoStopReason_;
 };
 }

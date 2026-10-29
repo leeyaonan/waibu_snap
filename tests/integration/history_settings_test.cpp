@@ -146,7 +146,7 @@ void save(SettingsDialog& dialog) { child<QPushButton>(&dialog, "saveSettingsBut
 void historyPage(SettingsDialog& dialog)
 {
     dialog.show();
-    child<QTabWidget>(&dialog, "settingsTabs")->setCurrentIndex(4);
+    child<QTabWidget>(&dialog, "settingsTabs")->setCurrentIndex(5);
     QApplication::processEvents();
 }
 RunOptions options(Fixture& f)
@@ -155,6 +155,10 @@ RunOptions options(Fixture& f)
     value.testMode = true;
     value.settingsFile = f.temp.filePath(QStringLiteral("控制器.ini"));
     value.historyRoot = f.temp.filePath(QStringLiteral("控制器历史"));
+    RecordingPreferences recording;
+    recording.videoDirectory = f.temp.filePath(QStringLiteral("控制器视频"));
+    recording.gifDirectory = f.temp.filePath(QStringLiteral("控制器GIF"));
+    AppSettings(value.settingsFile).saveRecordingPreferences(recording);
     return value;
 }
 }
@@ -355,10 +359,10 @@ class HistorySettingsTest final : public QObject
             startup(), f.actions());
         historyPage(dialog);
         auto* tabs = child<QTabWidget>(&dialog, "settingsTabs");
-        QCOMPARE(tabs->count(), 7);
-        QCOMPARE(tabs->widget(4)->objectName(), QStringLiteral("settingsHistoryPage"));
-        QCOMPARE(tabs->widget(5)->objectName(), QStringLiteral("settingsGroupsPage"));
-        QCOMPARE(tabs->widget(6)->objectName(), QStringLiteral("settingsWatermarkPage"));
+        QCOMPARE(tabs->count(), 8);
+        QCOMPARE(tabs->widget(5)->objectName(), QStringLiteral("settingsHistoryPage"));
+        QCOMPARE(tabs->widget(6)->objectName(), QStringLiteral("settingsGroupsPage"));
+        QCOMPARE(tabs->widget(7)->objectName(), QStringLiteral("settingsWatermarkPage"));
         QVERIFY(child<QLineEdit>(&dialog, "historyRootDirectory")->isReadOnly());
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxAgeDays")->value(), 30);
         QCOMPARE(child<QSpinBox>(&dialog, "historyMaxCount")->value(), 100);
@@ -393,6 +397,10 @@ class HistorySettingsTest final : public QObject
         RunOptions options;
         options.testMode = true;
         options.settingsFile = settingsPath;
+        RecordingPreferences recording;
+        recording.videoDirectory = temp.filePath(QStringLiteral("视频"));
+        recording.gifDirectory = temp.filePath(QStringLiteral("GIF"));
+        QVERIFY(settings.saveRecordingPreferences(recording).isEmpty());
         ApplicationController controller(*qApp, options, {}, {}, startup(), {}, {},
                                          std::make_unique<FakeHotkey>());
         auto& manager = ApplicationControllerTestAccess::history(controller);
@@ -578,7 +586,7 @@ class HistorySettingsTest final : public QObject
             defaultScreenshotHotkey(), [](const auto&) { return QString(); }, {}, nullptr, {},
             startup(), actions);
         dialog.show();
-        child<QTabWidget>(&dialog, "settingsTabs")->setCurrentIndex(5);
+        child<QTabWidget>(&dialog, "settingsTabs")->setCurrentIndex(6);
         QApplication::processEvents();
         auto* list = child<QTreeWidget>(&dialog, "settingsGroupList");
         QCOMPARE(list->topLevelItemCount(), 2);

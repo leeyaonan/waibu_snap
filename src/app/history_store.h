@@ -46,6 +46,8 @@ class HistoryStore
                  std::function<QStringList()> excludedDirectories);
     static QString defaultRootDirectory();
     QString rootDirectory() const { return rootDirectory_; }
+    // 仅供显式保存设置时做目录冲突校验；只读登记与顶层 marker，不扫描图片、不初始化历史。
+    QStringList registeredDirectories(QString* error = nullptr) const;
     // 构造不碰磁盘。首次显式初始化才创建根目录和默认分组。
     HistoryScanResult initialize();
     HistoryScanResult scan() const;

@@ -243,6 +243,86 @@ class RecordingControllerTest : public QObject
         QCOMPARE(ready.size(), 2);
         QCOMPARE(c.state(), State::Idle);
     }
+    void quitBeforeStarted_data()
+    {
+        QTest::addColumn<int>("ending");
+        QTest::newRow("started-finished") << 0;
+        QTest::newRow("start-timeout") << 1;
+        QTest::newRow("start-failed") << 2;
+        QTest::newRow("permission-denied") << 3;
+        QTest::newRow("started-save-failed") << 4;
+        QTest::newRow("finalize-timeout") << 5;
+    }
+    void quitBeforeStarted()
+    {
+        QFETCH(int, ending);
+        RecordingHarness h;
+        RecordingController c(h.dependencies());
+        QSignalSpy ready(&c, &RecordingController::quitReady);
+        QSignalSpy failed(&c, &RecordingController::failed);
+        c.startSelection(h.preferences(3));
+        h.drain();
+        h.select();
+        h.advance(c, 3000);
+        QCOMPARE(c.state(), State::Preparing);
+        QCOMPARE(h.fake->starts, 1);
+        if (ending != 0)
+        {
+            QFile temporary(c.request().tempPath);
+            QVERIFY(temporary.open(QIODevice::WriteOnly));
+            temporary.write("partial");
+        }
+        c.quitRequested(RecordingController::QuitChoice::Save);
+        c.quitRequested(RecordingController::QuitChoice::Save);
+        // 原生写入器尚未就绪，不能先调用 stop 导致失败后取消退出。
+        QCOMPARE(h.fake->stops, 0);
+        QCOMPARE(ready.size(), 0);
+        if (ending == 0 || ending >= 4)
+        {
+            h.event(RecordingEventType::Started);
+            QCOMPARE(h.fake->stops, 1);
+            QCOMPARE(c.state(), State::Finalizing);
+            if (ending == 5)
+                h.advance(c, 30000);
+            else
+                h.event(ending == 0 ? RecordingEventType::Finished : RecordingEventType::Failed);
+        }
+        else if (ending == 1)
+            h.advance(c, 10000);
+        else
+            h.event(ending == 2 ? RecordingEventType::Failed
+                                : RecordingEventType::PermissionDenied);
+        QCOMPARE(c.state(), State::Idle);
+        QCOMPARE(ready.size(), 1);
+        QCOMPARE(h.fake->discards, 1);
+        QCOMPARE(failed.size(), ending == 0 ? 0 : 1);
+        QVERIFY(!QFileInfo::exists(h.fake->request.tempPath));
+        if (ending == 1 || ending == 5)
+            QVERIFY(failed.first().first().toString().contains(QStringLiteral("超时")));
+        h.event(RecordingEventType::Started);
+        h.event(RecordingEventType::Finished);
+        QCOMPARE(ready.size(), 1);
+    }
+    void defaultOutputAndPreferenceSnapshot()
+    {
+        RecordingHarness h;
+        auto p = h.preferences();
+        p.defaultOutput = RecordingOutput::Gif;
+        p.gifDirectory = h.directory.path();
+        p.gifFps = 15;
+        p.gifMaxSeconds = 60;
+        RecordingController c(h.dependencies());
+        c.startSelection(p);
+        p.defaultOutput = RecordingOutput::Video;
+        p.gifFps = 10;
+        h.drain();
+        QCOMPARE(h.fake->defaultOutput, RecordingOutput::Gif);
+        h.select();
+        QCOMPARE(c.request().output, RecordingOutput::Gif);
+        QCOMPARE(c.request().fps, 15);
+        QCOMPARE(c.request().maxDurationMs, 60000);
+        QVERIFY(!c.request().systemAudio && !c.request().microphoneEnabled);
+    }
     void pathsAndSizes_data()
     {
         QTest::addColumn<int>("kind");

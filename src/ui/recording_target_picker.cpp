@@ -12,7 +12,8 @@
 namespace waibusnap
 {
 RecordingTargetPicker::RecordingTargetPicker(CaptureFrame frame,
-                                             QVector<RecordingWindowInfo> windows)
+                                             QVector<RecordingWindowInfo> windows,
+                                             RecordingOutput defaultOutput)
     : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint),
       frame_(std::move(frame)), windows_(std::move(windows))
 {
@@ -86,6 +87,16 @@ RecordingTargetPicker::RecordingTargetPicker(CaptureFrame frame,
     hint_->setWordWrap(true);
     hint_->setMaximumWidth(qMax(100, width() - 24));
     setMode(RecordingTargetKind::Region);
+    setDefaultOutput(defaultOutput);
+}
+void RecordingTargetPicker::setDefaultOutput(RecordingOutput output)
+{
+    selection_.output = output;
+    findChild<QPushButton*>(QStringLiteral("recordingPickerOutputVideo"))
+        ->setChecked(output == RecordingOutput::Video);
+    findChild<QPushButton*>(QStringLiteral("recordingPickerOutputGif"))
+        ->setChecked(output == RecordingOutput::Gif);
+    updateHint();
 }
 void RecordingTargetPicker::open(std::function<void(RecordingSelection)> selected,
                                  std::function<void()> cancelled)

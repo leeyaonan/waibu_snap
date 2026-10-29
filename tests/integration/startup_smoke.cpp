@@ -73,6 +73,14 @@ waibusnap::RunOptions isolatedHistory(waibusnap::RunOptions options = {})
     options.historyRoot = QDir(path).filePath(QStringLiteral("history"));
     if (options.settingsFile.isEmpty())
         options.settingsFile = QDir(path).filePath(QStringLiteral("settings.ini"));
+    waibusnap::AppSettings settings(options.settingsFile);
+    auto recording = settings.loadRecordingPreferences(nullptr, false);
+    if (recording.videoDirectory.isEmpty())
+        recording.videoDirectory = QDir(path).filePath(QStringLiteral("video"));
+    if (recording.gifDirectory.isEmpty())
+        recording.gifDirectory = QDir(path).filePath(QStringLiteral("gif"));
+    // 打开其他设置页再保存也会校验录制目录，禁止测试写入真实 Movies / Pictures。
+    settings.saveRecordingPreferences(recording);
     return options;
 }
 }
@@ -678,8 +686,12 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(actions[8]->objectName(), QStringLiteral("recordingOpenGifAction"));
         for (int i : {7, 8})
         {
-            QVERIFY(actions[i]->isEnabled());
-            actions[i]->trigger();
+            QCOMPARE(actions[i]->isEnabled(), recordingCaptureSupported());
+            if (recordingCaptureSupported())
+                actions[i]->trigger();
+            else
+                controller.openResourceBrowser(i == 7 ? QStringLiteral("recording-video")
+                                                      : QStringLiteral("recording-gif"));
             HistoryWindow* browser = nullptr;
             for (auto* widget : QApplication::topLevelWidgets())
                 if (auto* found = qobject_cast<HistoryWindow*>(widget))
@@ -4361,7 +4373,7 @@ class StartupSmokeTest final : public QObject
             defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             actions, startup.actions());
         dialog.show();
-        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(3);
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(4);
         auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("stickerCloseReminderCheck"));
         check->setChecked(true);
         auto* save = dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton"));
@@ -4398,7 +4410,7 @@ class StartupSmokeTest final : public QObject
             defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             actions, startup.actions());
         dialog.show();
-        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(3);
+        dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(4);
         auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("stickerDoubleClickCloseCheck"));
         QVERIFY(check);
         QVERIFY(!check->isChecked());
@@ -4420,7 +4432,7 @@ class StartupSmokeTest final : public QObject
             defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
             enabledActions, startup.actions());
         enabledDialog.show();
-        enabledDialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(3);
+        enabledDialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"))->setCurrentIndex(4);
         auto* enabledCheck =
             enabledDialog.findChild<QCheckBox*>(QStringLiteral("stickerDoubleClickCloseCheck"));
         enabledCheck->setChecked(true);
@@ -8424,17 +8436,17 @@ class StartupSmokeTest final : public QObject
         dialog.show();
         auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("settingsTabs"));
         QVERIFY(tabs);
-        QCOMPARE(tabs->count(), 7);
+        QCOMPARE(tabs->count(), 8);
         QCOMPARE(tabs->currentIndex(), 0);
         const QStringList titles = {QStringLiteral("通用"), QStringLiteral("保存"),
-                                    QStringLiteral("截图"), QStringLiteral("贴图"),
-                                    QStringLiteral("历史"), QStringLiteral("分组"),
-                                    QStringLiteral("水印")};
+                                    QStringLiteral("截图"), QStringLiteral("录制"),
+                                    QStringLiteral("贴图"), QStringLiteral("历史"),
+                                    QStringLiteral("分组"), QStringLiteral("水印")};
         const QStringList pages = {
-            QStringLiteral("settingsGeneralPage"),  QStringLiteral("settingsSavePage"),
-            QStringLiteral("settingsCapturePage"),  QStringLiteral("settingsStickerPage"),
-            QStringLiteral("settingsHistoryPage"),  QStringLiteral("settingsGroupsPage"),
-            QStringLiteral("settingsWatermarkPage")};
+            QStringLiteral("settingsGeneralPage"), QStringLiteral("settingsSavePage"),
+            QStringLiteral("settingsCapturePage"), QStringLiteral("settingsRecordingPage"),
+            QStringLiteral("settingsStickerPage"), QStringLiteral("settingsHistoryPage"),
+            QStringLiteral("settingsGroupsPage"),  QStringLiteral("settingsWatermarkPage")};
         const QList<QStringList> controls = {
             {QStringLiteral("hotkeyEditor"), QStringLiteral("hotkeyHelp"),
              QStringLiteral("quickGunnerHotkeyEditor"), QStringLiteral("quickGunnerHotkeyHelp"),
@@ -8446,6 +8458,8 @@ class StartupSmokeTest final : public QObject
              QStringLiteral("ratioHeightInput"), QStringLiteral("ratioAddButton"),
              QStringLiteral("ratioRestoreButton"), QStringLiteral("quickRatioCombo"),
              QStringLiteral("shapeTemplateList"), QStringLiteral("shapeTemplateImportButton")},
+            {QStringLiteral("recordingDefaultVideo"), QStringLiteral("recordingDefaultGif"),
+             QStringLiteral("recordingResolution")},
             {QStringLiteral("stickerCloseReminderCheck"),
              QStringLiteral("stickerCloseReminderHelp")},
             {QStringLiteral("historyEnabledCheck"), QStringLiteral("historyPrivacyNotice"),
@@ -8471,7 +8485,7 @@ class StartupSmokeTest final : public QObject
         dialog.findChild<QComboBox*>(QStringLiteral("saveFormat"))->setCurrentIndex(1);
         // 最小宽度下，长状态提示和两个列表仍不挤占公共底栏。
         dialog.resize(dialog.minimumSize());
-        for (int page = 0; page < 7; ++page)
+        for (int page = 0; page < 8; ++page)
         {
             QCOMPARE(tabs->tabText(page), titles[page]);
             QCOMPARE(tabs->widget(page)->objectName(), pages[page]);
@@ -8543,7 +8557,7 @@ class StartupSmokeTest final : public QObject
                     QVERIFY(label->height() >= label->heightForWidth(label->width()));
             }
         }
-        tabs->setCurrentIndex(6);
+        tabs->setCurrentIndex(7);
         QTest::keyClick(tabs, Qt::Key_Tab, Qt::ControlModifier);
         QCOMPARE(tabs->currentIndex(), 0);
         QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("autostartHelp"))
@@ -8553,7 +8567,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(startup.requests.isEmpty());
         const QString evidence = qEnvironmentVariable("WAIBUSNAP_SETTINGS_EVIDENCE_DIR");
         if (!evidence.isEmpty())
-            for (int page = 0; page < 7; ++page)
+            for (int page = 0; page < 8; ++page)
             {
                 tabs->setCurrentIndex(page);
                 QApplication::processEvents();
@@ -8567,7 +8581,7 @@ class StartupSmokeTest final : public QObject
     {
         QTest::addColumn<int>("decision");
         QTest::addColumn<int>("lastPage");
-        for (int page = 0; page < 7; ++page)
+        for (int page = 0; page < 8; ++page)
         {
             QTest::newRow(qPrintable(QStringLiteral("save-page-%1").arg(page))) << 0 << page;
             QTest::newRow(qPrintable(QStringLiteral("cancel-page-%1").arg(page))) << 1 << page;
@@ -8674,11 +8688,11 @@ class StartupSmokeTest final : public QObject
         auto* shape = dialog.findChild<QCheckBox*>(QStringLiteral("shapeTemplateToggle0"));
         shape->setChecked(false);
         wide->setValue(7);
-        tabs->setCurrentIndex(3);
+        tabs->setCurrentIndex(4);
         auto* reminder = dialog.findChild<QCheckBox*>(QStringLiteral("stickerCloseReminderCheck"));
         QVERIFY(reminder && reminder->isChecked());
         reminder->setChecked(false);
-        for (int page : {0, 1, 2, 3, 0, 2, 1, lastPage})
+        for (int page : {0, 1, 2, 4, 0, 3, 1, lastPage})
             tabs->setCurrentIndex(page);
         QCOMPARE(editor->keySequence(), QKeySequence(Qt::Key_F10));
         QVERIFY(!check->isChecked());

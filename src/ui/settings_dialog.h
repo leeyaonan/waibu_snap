@@ -4,6 +4,7 @@
 #include "core/shape_mask.h"
 #include "interfaces/autostart.h"
 #include "output/image_output.h"
+#include "ui/recording_settings_page.h"
 #include "ui/watermark_settings_page.h"
 #include <QDialog>
 #include <QKeySequence>
@@ -74,7 +75,8 @@ class SettingsDialog final : public QDialog
                             SaveSettingsActions saveSettings = {},
                             AutostartActions autostartActions = {},
                             HistorySettingsActions historySettings = {},
-                            WatermarkSettingsActions watermarkSettings = {});
+                            WatermarkSettingsActions watermarkSettings = {},
+                            RecordingSettingsActions recordingSettings = {});
 
     void updateHistoryUsage(GroupUsage usage, const QString& notice = {});
     void updateHistoryGroups(const QVector<HistoryGroup>& groups, const QString& currentGroupId);
@@ -128,6 +130,8 @@ class SettingsDialog final : public QDialog
     HistorySettingsActions historySettings_;
     WatermarkSettingsActions watermarkSettings_;
     WatermarkSettingsPage* watermarkPage_ = nullptr;
+    RecordingSettingsActions recordingSettings_;
+    RecordingSettingsPage* recordingPage_ = nullptr;
     QLineEdit* historyDirectory_ = nullptr;
     QCheckBox* historyEnabledCheck_ = nullptr;
     QPushButton* historyGroupNew_ = nullptr;

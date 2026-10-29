@@ -349,6 +349,22 @@ QString HistoryStore::defaultRootDirectory()
     return QDir(QStandardPaths::writableLocation(QStandardPaths::PicturesLocation))
         .filePath(QStringLiteral("WaibuSnap"));
 }
+QStringList HistoryStore::registeredDirectories(QString* error) const
+{
+    QStringList paths;
+    const auto notice = readRegistry(rootDirectory_, paths);
+    if (notice.isEmpty())
+        for (const auto& info :
+             QDir(rootDirectory_)
+                 .entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDir::Name))
+            if (!info.fileName().startsWith(QLatin1Char('.')) &&
+                QFileInfo::exists(groupFile(info.absoluteFilePath())))
+                paths.append(info.absoluteFilePath());
+    paths.removeDuplicates();
+    if (error)
+        *error = notice;
+    return paths;
+}
 HistoryScanResult HistoryStore::scanUnlocked() const
 {
     HistoryScanResult result;

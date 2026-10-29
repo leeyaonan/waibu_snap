@@ -23,16 +23,19 @@ class RecordingPicker
     virtual void open(std::function<void(RecordingSelection)> selected,
                       std::function<void()> cancelled) = 0;
     virtual void dismiss() = 0;
+    virtual void setDefaultOutput(RecordingOutput) {}
 };
 class RecordingTargetPicker final : public QWidget, public RecordingPicker
 {
     Q_OBJECT
   public:
     explicit RecordingTargetPicker(CaptureFrame frame,
-                                   QVector<RecordingWindowInfo> windows = recordingWindows());
+                                   QVector<RecordingWindowInfo> windows = recordingWindows(),
+                                   RecordingOutput defaultOutput = RecordingOutput::Video);
     void open(std::function<void(RecordingSelection)> selected,
               std::function<void()> cancelled) override;
     void dismiss() override;
+    void setDefaultOutput(RecordingOutput output) override;
     RecordingSelection selection() const { return selection_; }
     void setMode(RecordingTargetKind kind);
 

@@ -64,7 +64,7 @@ QSize recordingOutputSize(QSize sourcePixels, RecordingOutput output,
                           RecordingResolution resolution, int gifMaxEdge);
 // bits/s 估算；只用于设置说明与磁盘预估，不替代编码器实际码率。
 qint64 estimatedVideoBitrate(QSize pixels, int fps, RecordingQuality quality);
-// 字节估算：pixels × frames × 0.06 + 1024，明确为估算值。
+// 字节估算：pixels × frames × 0.12 + 1024，依据 R5 实测校准，明确为估算值。
 qint64 estimatedGifBytes(QSize pixels, int fps, int seconds);
 // < 512 MiB 为 Critical，< 2 GiB 为 Low，其余 Normal。
 RecordingDiskState recordingDiskState(qint64 availableBytes);
