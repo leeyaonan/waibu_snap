@@ -1642,11 +1642,11 @@ std::optional<RecordingWindowInfo> readRecordingWindow(NSDictionary* dictionary,
         label += QStringLiteral(" — ") + QString::fromNSString(title);
     // 标题只用于选择器，不写日志；限制标签内存与展示长度。
     label = label.left(160);
-    return RecordingWindowInfo{id,
-                               QRect(qRound(frame.origin.x), qRound(frame.origin.y),
-                                     qRound(frame.size.width), qRound(frame.size.height)),
-                               label,
-                               [dictionary[(__bridge NSString*)kCGWindowIsOnscreen] boolValue]};
+    return RecordingWindowInfo{
+        id,
+        QRect(qRound(frame.origin.x), qRound(frame.origin.y), qRound(frame.size.width),
+              qRound(frame.size.height)),
+        label, [dictionary[(__bridge NSString*)kCGWindowIsOnscreen] boolValue] != NO};
 }
 class MacRecordingEnvironmentObserver final : public RecordingEnvironmentObserver
 {
