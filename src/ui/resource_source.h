@@ -6,6 +6,12 @@
 #include <QVector>
 namespace waibusnap
 {
+enum class ResourcePreview
+{
+    Image,
+    Video,
+    Gif
+};
 struct ResourceItem
 {
     QString id;
@@ -21,6 +27,9 @@ struct ResourceItem
     bool deletable = false;
     qint64 createdAtMs = 0;
     QSize pixelSize;
+    qint64 durationMs = 0;
+    ResourcePreview preview = ResourcePreview::Image;
+    QString mediaError;
     // 来源提供展示标签，窗口不判断历史记录的内部类型。
     QStringList badges;
 };
@@ -42,6 +51,7 @@ struct ResourceCapabilities
     bool reveal = false;
     bool clearAll = false;
     bool configureDirectory = false;
+    bool openExternal = false;
 };
 struct ResourceUsage
 {
@@ -93,6 +103,10 @@ class ResourceSource : public QObject
     virtual ResourceSnapshot snapshot() const = 0;
     virtual void refresh() = 0;
     virtual void setActive(bool) {}
+    virtual ResourceStatus openExternal(const QString&) const
+    {
+        return {false, QStringLiteral("此来源不支持外部打开。")};
+    }
     virtual ResourceClearResult clearAll()
     {
         return {{false, QStringLiteral("此来源不支持清空。")}, 0};

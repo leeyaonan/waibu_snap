@@ -112,6 +112,16 @@ ApplicationController::ApplicationController(
     quickGunnerSource_ = std::make_unique<QuickGunnerResourceSource>(
         [this] { return quickGunner_->preferences().directory; }, settings_.quickGunnerStarsPath(),
         historyActions_);
+    recordingMediaProbe_ = createRecordingMediaProbe();
+    recordingVideoSource_ = std::make_unique<RecordingResourceSource>(
+        RecordingOutput::Video,
+        [this] { return settings_.loadRecordingPreferences().videoDirectory; },
+        settings_.recordingVideoStarsPath(), settings_.recordingVideoMetaPath(),
+        recordingMediaProbe_, historyActions_);
+    recordingGifSource_ = std::make_unique<RecordingResourceSource>(
+        RecordingOutput::Gif, [this] { return settings_.loadRecordingPreferences().gifDirectory; },
+        settings_.recordingGifStarsPath(), settings_.recordingGifMetaPath(), recordingMediaProbe_,
+        historyActions_);
     if (!autostartActions_.query || !autostartActions_.setEnabled)
     {
         const std::shared_ptr<Autostart> autostart = createAutostart();
@@ -234,6 +244,21 @@ ApplicationController::ApplicationController(
     recordingCancelAction_ = recordingMenu_->addAction(QStringLiteral("取消录制"), recording_.get(),
                                                        &RecordingController::cancel);
     recordingCancelAction_->setObjectName(QStringLiteral("recordingCancelAction"));
+    recordingMenu_->addSeparator();
+    recordingOpenVideoAction_ =
+        recordingMenu_->addAction(QStringLiteral("打开录制视频"), this, [this]
+                                  { openResourceBrowser(QStringLiteral("recording-video")); });
+    recordingOpenVideoAction_->setObjectName(QStringLiteral("recordingOpenVideoAction"));
+    recordingOpenGifAction_ =
+        recordingMenu_->addAction(QStringLiteral("打开录制 GIF"), this,
+                                  [this] { openResourceBrowser(QStringLiteral("recording-gif")); });
+    recordingOpenGifAction_->setObjectName(QStringLiteral("recordingOpenGifAction"));
+    connect(recording_.get(), &RecordingController::finished, this,
+            [this]
+            {
+                recordingVideoSource_->directoryChanged();
+                recordingGifSource_->directoryChanged();
+            });
     connect(recording_.get(), &RecordingController::stateChanged, this,
             [this]
             {
@@ -435,6 +460,8 @@ QStringList ApplicationController::reservedQuickGunnerDirectories() const
     for (const auto& group : history_.groups())
         if (!group.absolutePath.isEmpty())
             reserved << group.absolutePath;
+    const auto recording = settings_.loadRecordingPreferences();
+    reserved << recording.videoDirectory << recording.gifDirectory;
     return reserved;
 }
 bool ApplicationController::chooseQuickGunnerDirectory()
@@ -1056,7 +1083,10 @@ void ApplicationController::openResourceBrowser(const QString& sourceId)
     if (!historyWindow_)
     {
         historyWindow_ = new HistoryWindow(history_, settings_, historyActions_,
-                                           quickGunnerSource_.get(), historyEnabled_);
+                                           QVector<ResourceSource*>{quickGunnerSource_.get(),
+                                                                    recordingVideoSource_.get(),
+                                                                    recordingGifSource_.get()},
+                                           historyEnabled_);
         connect(historyWindow_, &HistoryWindow::groupDialogOpenChanged, this,
                 [this](bool open)
                 {
@@ -2085,6 +2115,9 @@ void ApplicationController::refreshRecordingActions()
         action->setVisible(running || saving);
         action->setEnabled(running);
     }
+    const bool browse = !active_ && !settingsOpen_ && !resolvingQuit_ && !quitting_;
+    recordingOpenVideoAction_->setEnabled(browse);
+    recordingOpenGifAction_->setEnabled(browse);
     recordingCancelAction_->setVisible(!idle && !running && !saving);
     recordingCancelAction_->setEnabled(!idle && !running && !saving);
     TrayIconState icon = TrayIconState::Idle;

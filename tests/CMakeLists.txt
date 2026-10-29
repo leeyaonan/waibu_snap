@@ -160,7 +160,7 @@ target_link_libraries(sticker_geometry_test PRIVATE waibusnap_core Qt6::Test wai
 set_target_properties(sticker_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME sticker_geometry COMMAND sticker_geometry_test)
 
-add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke recordingGifPicker
+add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke recordingResourceMenu recordingGifPicker
     scrollReadyDprAndClamping scrollEntryPreparation scrollReadyTransitions scrollPlatformAndMenu scrollControlPlacement
     scrollAutomaticPermissionAndSuspension scrollAutomaticProbeAndBottom scrollManualBottomAndLimit
     scrollResultPreviewCropOutput scrollResultFullOverview scrollResultCloseConfirmation scrollControllerLifecycle
@@ -565,3 +565,22 @@ if(APPLE)
     target_link_libraries(recording_gif_benchmark PRIVATE waibusnap_core Qt6::Gui waibusnap_options)
     target_compile_options(recording_gif_benchmark PRIVATE -fobjc-arc)
 endif()
+
+# R6：共享 GIF / 来源与四来源窗口，标准和高 DPI 使用相同验收矩阵。
+qt_add_executable(recording_resources_probe e2e/recording_resources_probe.cpp)
+target_link_libraries(recording_resources_probe PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(recording_resources_probe PROPERTIES WIN32_EXECUTABLE FALSE)
+foreach(suite IN ITEMS recording_resource_source recording_resources_window)
+    if(suite STREQUAL "recording_resource_source")
+        set(suite_dir unit)
+    else()
+        set(suite_dir integration)
+    endif()
+    qt_add_executable(${suite}_test ${suite_dir}/${suite}_test.cpp)
+    target_link_libraries(${suite}_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+    set_target_properties(${suite}_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME ${suite} COMMAND ${suite}_test -o "${CMAKE_CURRENT_BINARY_DIR}/${suite}-output.txt,txt")
+    add_test(NAME ${suite}_high_dpi COMMAND ${suite}_test -o "${CMAKE_CURRENT_BINARY_DIR}/${suite}-high-dpi-output.txt,txt")
+    set_tests_properties(${suite} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    set_tests_properties(${suite}_high_dpi PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+endforeach()

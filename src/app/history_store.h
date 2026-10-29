@@ -42,6 +42,8 @@ class HistoryStore
   public:
     explicit HistoryStore(QString rootDirectory = {}, CleanupPolicy defaultCleanup = {},
                           HistoryTrash trash = {}, std::function<QString()> excludedDirectory = {});
+    HistoryStore(QString rootDirectory, CleanupPolicy defaultCleanup, HistoryTrash trash,
+                 std::function<QStringList()> excludedDirectories);
     static QString defaultRootDirectory();
     QString rootDirectory() const { return rootDirectory_; }
     // 构造不碰磁盘。首次显式初始化才创建根目录和默认分组。
@@ -79,7 +81,7 @@ class HistoryStore
     HistoryGroupResult createGroupUnlocked(const QString& name, bool isDefault,
                                            const QString& directory,
                                            const QStringList& existingNames);
-    std::function<QString()> excludedDirectory_;
+    std::function<QStringList()> excludedDirectories_;
     QString rootDirectory_;
     CleanupPolicy defaultCleanup_;
     HistoryTrash trash_;

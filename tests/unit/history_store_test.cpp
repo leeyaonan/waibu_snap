@@ -57,6 +57,53 @@ class HistoryStoreTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void multipleExcludedDirectoriesAndLegacyProvider()
+    {
+        QTemporaryDir temp;
+        const auto root = temp.filePath(QStringLiteral("历史"));
+        HistoryStore baseline(root);
+        const auto initial = baseline.initialize();
+        QVERIFY(initial.error.isEmpty());
+        const auto normal = initial.groups.first().group;
+        const auto video = baseline.createGroup(QStringLiteral("视频"));
+        const auto gif = baseline.createGroup(QStringLiteral("GIF"));
+        const auto quick = baseline.createGroup(QStringLiteral("快枪手"));
+        QVERIFY(video.success && gif.success && quick.success);
+        const auto kept = baseline.writeManagedPng(normal.id, image(), HistorySource::Overlay);
+        QVERIFY(kept.success);
+        QVERIFY(baseline.setStarred(normal.id, kept.item.fileName, true).success);
+        for (const auto& group : {video.group, gif.group, quick.group})
+        {
+            QVERIFY(
+                image().save(QDir(group.absolutePath).filePath(QStringLiteral("external.png"))));
+            QVERIFY(baseline.writeManagedPng(group.id, image(), HistorySource::Overlay).success);
+        }
+        QStringList excluded{quick.group.absolutePath, video.group.absolutePath,
+                             gif.group.absolutePath};
+        HistoryStore store(root, {}, {}, [&] { return excluded; });
+        for (const auto& result : {store.initialize(), store.scan()})
+        {
+            QVERIFY(result.error.isEmpty());
+            QCOMPARE(result.groups.size(), 4);
+            for (const auto& group : result.groups)
+                if (group.group.id == normal.id)
+                {
+                    QCOMPARE(group.items.size(), 1);
+                    QVERIFY(group.items.first().starred);
+                }
+                else
+                    QVERIFY(group.items.isEmpty());
+        }
+        QVERIFY(store.itemsForGroup(video.group.id).items.isEmpty());
+        QVERIFY(store.cleanupCandidates(gif.group.id, 9999999999999LL).candidates.isEmpty());
+        HistoryStore legacy(root, {}, {}, [&] { return video.group.absolutePath; });
+        QCOMPARE(legacy.scan().groups.size(), 4);
+        QVERIFY(legacy.itemsForGroup(video.group.id).items.isEmpty());
+        QCOMPARE(legacy.itemsForGroup(gif.group.id).items.size(), 2);
+        excluded.clear();
+        QCOMPARE(store.scan().groups.size(), 4);
+        QVERIFY(QFileInfo::exists(kept.item.absolutePath));
+    }
     void defaultGroupAndOrdinaryFolders()
     {
         QTemporaryDir temporary;

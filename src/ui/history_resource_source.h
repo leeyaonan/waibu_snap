@@ -11,6 +11,7 @@ struct HistoryWindowActions
     std::function<ImageOutputResult(const QImage&)> pinImage;
     HistoryTrash trash;
     HistoryTrash reveal;
+    std::function<ResourceStatus(const QString&)> openExternal;
 };
 class HistoryResourceSource final : public ResourceSource
 {

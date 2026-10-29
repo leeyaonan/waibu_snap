@@ -33,6 +33,7 @@ add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp u
     ui/history_window.cpp ui/history_window.h
     ui/resource_source.cpp ui/resource_source.h
     ui/quick_gunner_resource_source.cpp ui/quick_gunner_resource_source.h
+    ui/recording_resource_source.cpp ui/recording_resource_source.h
     ui/history_resource_source.cpp ui/history_resource_source.h
     ui/group_settings_dialog.cpp ui/group_settings_dialog.h
     ui/text_recognition_task.cpp ui/text_recognition_task.h ui/ocr_dialog.cpp ui/ocr_dialog.h

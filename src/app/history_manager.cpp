@@ -136,7 +136,12 @@ HistoryStatus HistoryManager::initialize()
     store_ = std::make_unique<HistoryStore>(
         rootOverride_.isEmpty() ? preferences_.rootDirectory : rootOverride_,
         preferences_.defaultCleanup, HistoryTrash{},
-        [this] { return settings_.loadQuickGunnerPreferences().directory; });
+        [this]
+        {
+            const auto recording = settings_.loadRecordingPreferences();
+            return QStringList{settings_.loadQuickGunnerPreferences().directory,
+                               recording.videoDirectory, recording.gifDirectory};
+        });
     const auto scanned = store_->initialize();
     snapshot_ = {scanned.groups, {}, scanned.error};
     groups_.clear();
@@ -181,7 +186,12 @@ HistoryStatus HistoryManager::savePreferences(HistoryPreferences preferences)
     {
         candidate = std::make_unique<HistoryStore>(
             preferences.rootDirectory, preferences.defaultCleanup, HistoryTrash{},
-            [this] { return settings_.loadQuickGunnerPreferences().directory; });
+            [this]
+            {
+                const auto recording = settings_.loadRecordingPreferences();
+                return QStringList{settings_.loadQuickGunnerPreferences().directory,
+                                   recording.videoDirectory, recording.gifDirectory};
+            });
         scanned = candidate->initialize();
         if (!scanned.error.isEmpty())
             return {false, QStringLiteral("历史根目录切换失败，旧目录保留：%1").arg(scanned.error)};

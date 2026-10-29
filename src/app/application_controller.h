@@ -19,6 +19,7 @@
 #include "ui/clipboard_sticker_toast.h"
 #include "ui/history_window.h"
 #include "ui/quick_gunner_resource_source.h"
+#include "ui/recording_resource_source.h"
 #include "ui/recording_toast.h"
 #include "ui/scroll_capture_windows.h"
 #include "ui/scroll_result_window.h"
@@ -131,6 +132,8 @@ class ApplicationController final : public QObject
     QAction* recordingStopAction_ = nullptr;
     QAction* recordingDiscardAction_ = nullptr;
     QAction* recordingCancelAction_ = nullptr;
+    QAction* recordingOpenVideoAction_ = nullptr;
+    QAction* recordingOpenGifAction_ = nullptr;
     std::array<std::unique_ptr<HotkeySettings>, 2> recordingHotkeys_;
     std::unique_ptr<RecordingController> recording_;
     std::unique_ptr<RecordingToast> recordingToast_;
@@ -181,6 +184,8 @@ class ApplicationController final : public QObject
     HistoryWindowActions historyActions_;
     std::shared_ptr<FileManager> fileManager_;
     std::unique_ptr<QuickGunnerResourceSource> quickGunnerSource_;
+    std::shared_ptr<RecordingMediaProbe> recordingMediaProbe_;
+    std::unique_ptr<RecordingResourceSource> recordingVideoSource_, recordingGifSource_;
     quint64 historyStickerSequence_ = 0;
     std::unique_ptr<ClipboardStickerToast> clipboardToast_;
     quint64 clipboardStickerSequence_ = 0;

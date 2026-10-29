@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDialog>
+#include <QFileInfo>
 #include <QGraphicsItem>
 #include <QGraphicsScene>
 #include <QGuiApplication>
@@ -15,6 +16,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMovie>
 #include <QPainter>
 #include <QPointer>
 #include <QPushButton>
@@ -126,13 +128,23 @@ void HistoryImageView::drawBackground(QPainter* painter, const QRectF&)
 HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
                              HistoryWindowActions actions, ResourceSource* additionalSource,
                              bool historyEnabled)
+    : HistoryWindow(manager, std::move(settings), std::move(actions),
+                    additionalSource ? QVector<ResourceSource*>{additionalSource}
+                                     : QVector<ResourceSource*>{},
+                    historyEnabled)
+{
+}
+HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
+                             HistoryWindowActions actions,
+                             const QVector<ResourceSource*>& additionalSources, bool historyEnabled)
     : historySource_(new HistoryResourceSource(manager, std::move(actions), this)),
       source_(historySource_), settings_(std::move(settings))
 {
     historySource_->setEnabled(historyEnabled);
     sources_.append(historySource_);
-    if (additionalSource)
-        sources_.append(additionalSource);
+    for (auto* additional : additionalSources)
+        if (additional && !sources_.contains(additional))
+            sources_.append(additional);
     setObjectName(QStringLiteral("historyWindow"));
     setWindowTitle(QStringLiteral("资源浏览器"));
     setAttribute(Qt::WA_DeleteOnClose);
@@ -296,6 +308,8 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
     connect(refreshButton, &QPushButton::clicked, this, &HistoryWindow::refresh);
     connect(fit, &QPushButton::clicked, imageView_, &HistoryImageView::fitImage);
     connect(actual, &QPushButton::clicked, imageView_, &HistoryImageView::actualSize);
+    connect(thumbnails_, &QListWidget::itemDoubleClicked, this, [this] { openSelectedVideo(); });
+    imageView_->viewport()->installEventFilter(this);
     connect(thumbnails_, &QListWidget::currentRowChanged, this, &HistoryWindow::showSelection);
     connect(thumbnails_, &QListWidget::itemChanged, this,
             [this](QListWidgetItem* entry)
@@ -324,21 +338,22 @@ HistoryWindow::HistoryWindow(HistoryManager& manager, AppSettings settings,
         connect(source, &ResourceSource::changed, this,
                 [this, source]
                 {
-                    if (source == source_ || !source_->visible())
+                    if (source == source_ || !source_ || !source_->visible())
                         refreshFromSource();
                     else
                         rebuildSources();
                 });
-    if (additionalSource)
-        connect(additionalSource, &QObject::destroyed, this,
-                [this, additionalSource]
-                {
-                    sources_.removeAll(additionalSource);
-                    if (!source_)
-                        selectSource({});
-                    else
-                        rebuildSources();
-                });
+    for (auto* additional : additionalSources)
+        if (additional)
+            connect(additional, &QObject::destroyed, this,
+                    [this, additional]
+                    {
+                        sources_.removeAll(additional);
+                        if (!source_)
+                            selectSource({});
+                        else
+                            rebuildSources();
+                    });
     connect(historySource_, &HistoryResourceSource::groupDialogOpenChanged, this,
             &HistoryWindow::groupDialogOpenChanged);
     connect(historySource_, &HistoryResourceSource::groupViewRequested, this,
@@ -399,6 +414,7 @@ void HistoryWindow::selectSource(const QString& sourceId)
         rebuildSources();
         return;
     }
+    stopMovie();
     if (source_)
     {
         sourceViews_.insert(source_->id(), {view_, selectedId(), order_});
@@ -413,6 +429,7 @@ void HistoryWindow::selectSource(const QString& sourceId)
     displayedId_.clear();
     source_->refresh();
     snapshot_ = source_->snapshot();
+    updateLayout();
     rebuildSources();
     rebuildGroups(view_);
     rebuildItems(state.selected);
@@ -428,9 +445,13 @@ void HistoryWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     source_->setActive(true);
+    const auto selected = findItem(selectedId());
+    if (selected && selected->preview == ResourcePreview::Gif)
+        showSelection();
 }
 void HistoryWindow::hideEvent(QHideEvent* event)
 {
+    stopMovie();
     source_->setActive(false);
     QWidget::hideEvent(event);
 }
@@ -617,12 +638,40 @@ void HistoryWindow::rebuildItems(const QString& selected, int fallbackRow)
         label += item.starred ? QStringLiteral("\n★ 星标") : QStringLiteral("\n☆ 未星标");
         for (const auto& badge : item.badges)
             label += QStringLiteral(" · ") + badge;
+        if (item.preview != ResourcePreview::Image)
+        {
+            QStringList details;
+            if (item.durationMs > 0)
+                details << QStringLiteral("%1:%2")
+                               .arg(item.durationMs / 60000, 2, 10, QLatin1Char('0'))
+                               .arg((item.durationMs / 1000) % 60, 2, 10, QLatin1Char('0'));
+            if (item.pixelSize.isValid())
+                details << QStringLiteral("%1×%2")
+                               .arg(item.pixelSize.width())
+                               .arg(item.pixelSize.height());
+            details << QStringLiteral("%1 MiB").arg(item.bytes / 1048576.0, 0, 'f', 2);
+            label += QLatin1Char('\n') + details.join(QStringLiteral(" · "));
+            if (!item.mediaError.isEmpty())
+                label += QStringLiteral("\n无法读取媒体信息");
+        }
         auto* entry = new QListWidgetItem(label, thumbnails_);
-        entry->setSizeHint({210, 92});
+        entry->setSizeHint(item.preview == ResourcePreview::Image ? QSize(210, 92)
+                                                                  : QSize(340, 104));
         entry->setData(Qt::UserRole, item.id);
-        entry->setToolTip(item.fileName);
-        entry->setFlags(entry->flags() | Qt::ItemIsUserCheckable);
-        entry->setCheckState(item.starred ? Qt::Checked : Qt::Unchecked);
+        entry->setToolTip(item.preview == ResourcePreview::Image
+                              ? item.fileName
+                              : item.fileName + QLatin1Char('\n') + label +
+                                    (item.preview == ResourcePreview::Video
+                                         ? QStringLiteral("\n双击用系统播放器打开")
+                                         : QString()) +
+                                    (item.mediaError.isEmpty()
+                                         ? QString()
+                                         : QLatin1Char('\n') + item.mediaError));
+        if (source_->capabilities().star)
+        {
+            entry->setFlags(entry->flags() | Qt::ItemIsUserCheckable);
+            entry->setCheckState(item.starred ? Qt::Checked : Qt::Unchecked);
+        }
         if (item.id == selected)
             selectedRow = thumbnails_->count() - 1;
     }
@@ -634,6 +683,7 @@ void HistoryWindow::rebuildItems(const QString& selected, int fallbackRow)
 }
 HistoryWindow::~HistoryWindow()
 {
+    stopMovie();
     if (source_)
     {
         source_->setProtectedItem({});
@@ -652,6 +702,7 @@ void HistoryWindow::showSelection()
     const auto* entry = thumbnails_->currentItem();
     if (!entry)
     {
+        stopMovie();
         imageView_->setImage({});
         imageView_->hide();
         empty_->setText(!snapshot_.error.isEmpty() ? snapshot_.error
@@ -662,9 +713,24 @@ void HistoryWindow::showSelection()
                             ? QStringLiteral("还没有截图历史。完成截图后可在这里查看。")
                         : view_ == QStringLiteral("starred") ? QStringLiteral("还没有星标图片。")
                                                              : QStringLiteral("此分组暂无记录。"));
+        if (source_->id() == QStringLiteral("recording-video") && snapshot_.error.isEmpty() &&
+            view_ != QStringLiteral("starred"))
+            empty_->setText(
+                QStringLiteral("还没有录制视频。使用托盘「录制 → 开始录制…」录制第一段。"));
+        if (source_->id() == QStringLiteral("recording-gif") && snapshot_.error.isEmpty() &&
+            view_ != QStringLiteral("starred"))
+            empty_->setText(QStringLiteral("还没有录制 GIF。开始录制时选择 GIF 即可。"));
         empty_->show();
         return;
     }
+    const QString key = selected ? selected->absolutePath + QChar::Null +
+                                       QString::number(selected->bytes) + QChar::Null +
+                                       QString::number(selected->createdAtMs)
+                                 : QString();
+    if (!selected || selected->preview != ResourcePreview::Gif || movieKey_ != key)
+        stopMovie();
+    if (movie_ && movieKey_ == key)
+        return;
     const bool preserveView = displayedId_ == selectedId() && displayedOriginal_ == showOriginal_ &&
                               !imageView_->image().isNull();
     // 切图前释放上一张主图；同条目刷新保留缩放和平移。
@@ -678,6 +744,59 @@ void HistoryWindow::showSelection()
     imageView_->setVisible(result.success);
     empty_->setText(result.error);
     empty_->setVisible(!result.success);
+    imageView_->setToolTip(selected && selected->preview == ResourcePreview::Video
+                               ? QStringLiteral("双击用系统播放器打开")
+                               : QString());
+    if (selected && selected->preview == ResourcePreview::Gif && result.success &&
+        failedMovieKey_ != key && isVisible())
+    {
+        auto* movie = new QMovie(selected->absolutePath, QByteArrayLiteral("gif"), this);
+        movie->setObjectName(QStringLiteral("resourceGifMovie"));
+        movie->setCacheMode(QMovie::CacheNone);
+        movie_ = movie;
+        movieKey_ = key;
+        connect(movie, &QMovie::frameChanged, this,
+                [this, movie]
+                {
+                    if (movie_ != movie)
+                        return;
+                    imageView_->setImage(movie->currentImage(), imageView_->image().size() ==
+                                                                    movie->currentImage().size());
+                    imageView_->show();
+                    empty_->hide();
+                });
+        connect(movie, &QMovie::error, this,
+                [this, movie, key](QImageReader::ImageReaderError)
+                {
+                    failedMovieKey_ = key;
+                    empty_->setText(QStringLiteral("无法读取媒体信息：GIF 播放失败。"));
+                    empty_->show();
+                    imageView_->hide();
+                    movie->stop();
+                    movie->deleteLater();
+                    if (movie_ == movie)
+                    {
+                        movie_ = nullptr;
+                        movieKey_.clear();
+                    }
+                });
+        movie->start();
+    }
+}
+void HistoryWindow::stopMovie()
+{
+    if (movie_)
+    {
+        movie_->stop();
+        delete movie_.data();
+    }
+    movieKey_.clear();
+}
+void HistoryWindow::openSelectedVideo()
+{
+    const auto item = findItem(selectedId());
+    if (item && item->preview == ResourcePreview::Video && source_->capabilities().openExternal)
+        showActionResult(source_->openExternal(item->id));
 }
 QString HistoryWindow::selectedId() const
 {
@@ -746,10 +865,30 @@ void HistoryWindow::updateStatus()
         bytes += item.bytes + item.originalBytes;
     if (!source_->capabilities().cleanup)
     {
-        status_->setText(QStringLiteral("%1 · %2 张 · %3 MiB")
-                             .arg(source_->displayName())
-                             .arg(items_.size())
-                             .arg(bytes / 1048576.0, 0, 'f', 2));
+        const bool media = source_->id() == QStringLiteral("recording-video") ||
+                           source_->id() == QStringLiteral("recording-gif");
+        status_->setText(
+            (media ? QStringLiteral("%1 · %2 项 · %3 MiB") : QStringLiteral("%1 · %2 张 · %3 MiB"))
+                .arg(source_->displayName())
+                .arg(items_.size())
+                .arg(bytes / 1048576.0, 0, 'f', 2));
+        const auto selected = findItem(selectedId());
+        if (selected && selected->preview != ResourcePreview::Image)
+        {
+            QString details;
+            if (selected->durationMs > 0)
+                details += QStringLiteral(" · %1 秒").arg(selected->durationMs / 1000.0, 0, 'f', 2);
+            if (selected->pixelSize.isValid())
+                details += QStringLiteral(" · %1×%2")
+                               .arg(selected->pixelSize.width())
+                               .arg(selected->pixelSize.height());
+            details += QStringLiteral(" · %1 MiB").arg(selected->bytes / 1048576.0, 0, 'f', 2);
+            if (!selected->mediaError.isEmpty())
+                details += QStringLiteral(" · 无法读取媒体信息");
+            if (selected->preview == ResourcePreview::Video)
+                details += QStringLiteral(" · 双击用系统播放器打开");
+            status_->setText(status_->text() + details);
+        }
         return;
     }
     status_->setText(
@@ -773,14 +912,14 @@ void HistoryWindow::showActionResult(const ResourceStatus& result)
 void HistoryWindow::toggleStar()
 {
     const auto item = findItem(selectedId());
-    if (!item)
+    if (!item || !source_->capabilities().star)
         return;
     const auto result = source_->setStarred(item->id, !item->starred);
     showActionResult(result);
 }
 void HistoryWindow::outputImage(bool pin, bool closeAfter)
 {
-    if (selectedId().isEmpty())
+    if (selectedId().isEmpty() || (pin ? !source_->canPin() : !source_->canCopy()))
         return;
     const auto result = source_->outputImage(selectedId(), showOriginal_, pin);
     showActionResult(result);
@@ -789,6 +928,33 @@ void HistoryWindow::outputImage(bool pin, bool closeAfter)
 }
 void HistoryWindow::deleteSelection()
 {
+    const auto item = findItem(selectedId());
+    if (!item || !item->deletable || !source_->capabilities().deleteItem)
+        return;
+    if (item->preview != ResourcePreview::Image)
+    {
+        const QPointer<ResourceSource> target(source_);
+        const QPointer<HistoryWindow> guard(this);
+        QMessageBox confirm(QMessageBox::Warning, QStringLiteral("删除录制"),
+                            item->preview == ResourcePreview::Gif
+                                ? QStringLiteral("将把这个 GIF 移到回收站？")
+                                : QStringLiteral("将把这段录制移到回收站？"),
+                            QMessageBox::Yes | QMessageBox::Cancel, this);
+        confirm.setObjectName(QStringLiteral("recordingDeleteConfirm"));
+        confirm.setDefaultButton(QMessageBox::Cancel);
+        confirm.button(QMessageBox::Yes)->setText(QStringLiteral("移到回收站"));
+        confirm.button(QMessageBox::Cancel)->setText(QStringLiteral("取消"));
+        emit groupDialogOpenChanged(true);
+        const int answer = confirm.exec();
+        if (!guard || !target)
+            return;
+        emit groupDialogOpenChanged(false);
+        if (answer != QMessageBox::Yes || target != source_)
+            return;
+        stopMovie();
+        showActionResult(target->deleteItem(item->id));
+        return;
+    }
     const auto result = source_->deleteItem(selectedId());
     showActionResult(result);
 }
@@ -866,6 +1032,9 @@ void HistoryWindow::loadVisibleThumbnails()
 void HistoryWindow::updateLayout()
 {
     const bool narrow = width() < 900;
+    const bool media = source_ && source_->capabilities().openExternal;
+    const bool gif = source_ && source_->id() == QStringLiteral("recording-gif");
+    thumbnails_->setMinimumWidth(!narrow && (media || gif) ? 350 : 100);
     // splitter 恢复也会恢复方向；列表流向始终从当前宽度推导。
     groups_->setFlow(narrow ? QListView::LeftToRight : QListView::TopToBottom);
     thumbnails_->setFlow(narrow ? QListView::LeftToRight : QListView::TopToBottom);
@@ -896,6 +1065,15 @@ bool HistoryWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == thumbnails_->viewport() && event->type() == QEvent::Resize)
         scheduleThumbnails();
+    if (watched == imageView_->viewport() && event->type() == QEvent::MouseButtonDblClick)
+    {
+        const auto selected = findItem(selectedId());
+        if (selected && selected->preview != ResourcePreview::Image)
+        {
+            openSelectedVideo();
+            return true;
+        }
+    }
     if (event->type() == QEvent::KeyPress)
     {
         const auto* key = static_cast<QKeyEvent*>(event);
@@ -976,6 +1154,7 @@ void HistoryWindow::saveWindowState()
 }
 void HistoryWindow::closeEvent(QCloseEvent* event)
 {
+    stopMovie();
     source_->setProtectedItem({});
     source_->setActive(false);
     saveWindowState();
