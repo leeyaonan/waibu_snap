@@ -334,8 +334,15 @@ class RecordingResourcesWindowTest final : public QObject
         QVERIFY(reserved.contains(f.videos) && reserved.contains(f.gifs));
         auto* open = child<QAction>(c.menu(), "recordingOpenVideoAction");
         auto* gif = child<QAction>(c.menu(), "recordingOpenGifAction");
-        QVERIFY(open->isEnabled() && gif->isEnabled());
+        QCOMPARE(open->isEnabled(), recordingCaptureSupported());
+        QCOMPARE(gif->isEnabled(), recordingCaptureSupported());
         open->trigger();
+        if (!recordingCaptureSupported())
+        {
+            // R7 禁用 Windows 整个录制子菜单；已有文件仍可从资源浏览器切换来源。
+            QVERIFY(!ApplicationControllerTestAccess::window(c));
+            c.openResourceBrowser(QStringLiteral("recording-video"));
+        }
         auto* w = ApplicationControllerTestAccess::window(c);
         QVERIFY(w);
         QCOMPARE(w->selectedSourceId(), QStringLiteral("recording-video"));
@@ -346,9 +353,15 @@ class RecordingResourcesWindowTest final : public QObject
         QCOMPARE(child<QListWidget>(w, "historyThumbnails")->count(), 3);
         ApplicationControllerTestAccess::settingsOpen(c, true);
         QVERIFY(!open->isEnabled() && !gif->isEnabled());
+        c.openResourceBrowser(QStringLiteral("recording-gif"));
+        QCOMPARE(w->selectedSourceId(), QStringLiteral("recording-video"));
         ApplicationControllerTestAccess::settingsOpen(c, false);
-        QVERIFY(open->isEnabled() && gif->isEnabled());
-        gif->trigger();
+        QCOMPARE(open->isEnabled(), recordingCaptureSupported());
+        QCOMPARE(gif->isEnabled(), recordingCaptureSupported());
+        if (recordingCaptureSupported())
+            gif->trigger();
+        else
+            c.openResourceBrowser(QStringLiteral("recording-gif"));
         QCOMPARE(w->selectedSourceId(), QStringLiteral("recording-gif"));
         w->close();
     }

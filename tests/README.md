@@ -1508,6 +1508,7 @@ Windows 首轮 CI 补强：除文件系统隐藏属性外，显式过滤点号�
 本机受控原生复现（macOS，已有Qt6.11.2 / WaibuSnap Dev；不发起新权限申请）：
 
 ```bash
+mkdir -p /private/tmp/waibusnap-r7-native-settings
 QT_QPA_PLATFORM=cocoa \
 WAIBUSNAP_RECORDING_SETTINGS_EVIDENCE=/private/tmp/waibusnap-r7-native-settings \
 build/macos/tests/recording_settings_test parameterGroupsRoundTrip \

@@ -542,8 +542,10 @@ set_tests_properties(recording_controller PROPERTIES ENVIRONMENT "QT_QPA_PLATFOR
 qt_add_executable(recording_settings_test integration/recording_settings_test.cpp)
 target_link_libraries(recording_settings_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
 set_target_properties(recording_settings_test PROPERTIES WIN32_EXECUTABLE FALSE)
-add_test(NAME recording_settings COMMAND recording_settings_test)
-add_test(NAME recording_settings_high_dpi COMMAND recording_settings_test)
+add_test(NAME recording_settings COMMAND recording_settings_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/recording_settings-output.txt,txt")
+add_test(NAME recording_settings_high_dpi COMMAND recording_settings_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/recording_settings-high-dpi-output.txt,txt")
 set_tests_properties(recording_settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 set_tests_properties(recording_settings_high_dpi PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
 
