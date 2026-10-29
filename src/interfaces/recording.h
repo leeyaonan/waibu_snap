@@ -35,7 +35,6 @@ struct RecordingEvent
 };
 struct RecordingRequest
 {
-    // R2 只支持 Video；Gif 返回明确错误。
     RecordingOutput output = RecordingOutput::Video;
     RecordingTargetKind targetKind = RecordingTargetKind::Display;
     DisplayTarget display;
@@ -54,7 +53,7 @@ struct RecordingRequest
     double systemGain = 1.0;
     double microphoneGain = 1.0;
     bool showCursor = true;
-    // R2 不实现 GIF 限时；视频忽略该值，0 表示不限。
+    // GIF必须为正数；视频0表示不限。
     int maxDurationMs = 0;
     // 目标目录内隐藏 .part；停止成功后原子改名为 finalPath。
     QString tempPath;
@@ -67,7 +66,7 @@ class RecordingSession
     virtual ~RecordingSession() = default;
     // GUI 线程 start / pause / resume / stop / discard；事件在 GUI 线程交付。
     // 对象必须存活到 Finished / Failed；析构后不得再回调。
-    // start 的校验失败（参数非法、输出为 GIF）直接返回 false + 中文 error；
+    // start 的校验失败（参数非法）直接返回 false + 中文 error；
     // 屏幕录制权限拒绝时在 start 返回 false 前同步交付 PermissionDenied，回调内不得销毁会话。
     virtual bool start(const RecordingRequest& request, EventCallback callback, QString* error) = 0;
     // 暂停 / 恢复 / 停止 / 丢弃均幂等；终态后调用无副作用。

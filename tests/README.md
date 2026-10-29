@@ -1394,3 +1394,57 @@ open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --control --keep /
 Qt / CG / SCK 的同一窗口ID与全局左上坐标一致；3秒倒计时完成后才 Started，暂停边框可见 / 穿透，恢复后停止保存、Toast成功回调与 `.part` 收口通过。成片时长没有多出倒计时3秒或暂停0.5秒；仍需逐帧目视自身UI排除。Retina复验在原命令增加 `--control-retina`（明确注入最高DPR目标，冻结帧 / 会话仍为真实平台管线）。最终报告为 `/private/tmp/waibusnap-r4-control-native-3.txt` 与 `/private/tmp/waibusnap-r4-control-retina.txt`；成品仅保存在本机临时目录，未上传。首轮测试窗口初始几何未稳定、原生 QTest mouseMove 未送达选择器，修正探针等待与Qt事件投递后复验通过，没有改动生产坐标转换。
 
 首轮 [CI 40805252769](https://github.com/leeyaonan/waibu_snap/actions/runs/40805252769) 的 macOS arm64构建 / CTest / lint及Windows检查通过；Intel交叉构建发现 Objective-C `BOOL` 在x86_64为signed char，聚合初始化C++ bool触发窄化错误，改为显式 `!= NO`。本机补充x86_64生产源文件语法编译、录制专项4/4、lint和ObjC门禁通过；完整双端 / Intel结果以PR最新检查为准。上述原生取证不覆盖真实热键手感、最小化 / 关闭 / 移动、拔屏、锁屏等人工项。
+
+## v009 R5：流式 GIF 录制管线
+
+R5 的 `src/core/gif_encoder.*` 为纯 C++ / Qt，共享层双端编译。GIF89a / Netscape 无限循环、每帧局部 256 色表、6-bit RGB 直方图 popularity 调色板、固定 bin→index 扩散表、LZW（9–12 位与字典清空）、255 字节 sub-block、64 KiB 写缓存；不缓存动画，不抖动。同频 bin 使用稳定散列打破并列，防止色表只覆盖低 RGB 索引。延迟按累计百分之一秒分配，12fps / 360 帧正好累计 30 秒。
+
+macOS 复用 SCK 和 R4 状态机：SCK 工作队列只转换 / 更新最新 QImage；固定帧率定时器把快照投递到独立 GIF 串行队列，最多一个在途任务，繁忙时跳过并计丢帧。首帧后才启动定时器，静态重复最新帧；暂停不写入，恢复清空旧快照并等待新画面；按成功帧数累计有效时长，到限时发 AutoStop。停止等在途任务完成后收尾 / 刷新 / 原子改名，丢弃清理 `.part` 且无 Finished；不创建 AVAssetWriter 或音频轨。
+
+自动覆盖：`recording_gif`（双端 CTest）回读颜色 / 奇数尺寸 / 8与16帧 / 10、12、15fps / 累计时长 / 无限循环、QMovie真实播放跨循环、LZW位宽增长与多次清空、渐变色域、非法路径 / 零帧 / 取消 / 已有文件保护。请求、控制器、UI标准 / 高DPI与startup_smoke新增GIF分支，既有视频和互斥 / 退出用例保留。`estimatedGifBytes` 及其 R1 断言不改。
+
+### 独立编码器测量（macOS，不注册 CTest）
+
+```bash
+# 构建前按 scripts/README.md 设置本机已有 Qt 6.11.2。
+bash scripts/build-project.sh
+QT_QPA_PLATFORM=offscreen build/macos/tests/recording_gif_benchmark --paced
+QT_QPA_PLATFORM=offscreen build/macos/tests/recording_gif_benchmark --static --paced
+```
+
+固定1280×720 / 12fps / 360帧，--paced按真实30秒输入；记录baseline / 内核峰值RSS / 增量、编码总时长 / 平均 / 最慢帧、finish、CPU秒数与成品字节数。测量在QMovie回读前完成，避免把解码缓存计入编码峰值；进程每次独立运行。
+
+2026-10-29动态渐变基线：峰值增量 **13.75MiB**、平均 **16.10ms/帧**、最慢59.02ms、finish1.07ms、编码5796.91ms、CPU5.791秒 / 墙钟30.006秒，**36700098字节**，360帧 / 30000ms / 无限循环 / QMovie加载通过。ImageIO相同参数基线28.6MB、峰值增量2.57GiB / finalize5.25秒已触发ADR备选，不用于生产。自研成品约大28%，用户已确认接受实测体积，估算公式是否校准留R7之前讨论；大小不是硬门槛。完整ImageIO原型及对照留在本地工作区研究文档。
+
+### 原生 GIF 验证步骤
+
+先用既有证书签名探针，再从访达或open启动；不从终端直接运行bundle二进制，不修改TCC数据库。授权开关已开但预检失败时，先查签名 / designated requirement；本轮遇到旧ad-hoc cdhash失配，通过系统设置重新登记同一已授权探针后恢复。构建后应保持稳定证书，避免再次绑定临时哈希。
+
+```bash
+codesign --force --sign "WaibuSnap Dev" --identifier local.waibusnap.recording-probe --timestamp=none build/macos/bin/WaibuSnapRecordingProbe.app
+# 2秒动态 + 限时：约24帧，Finished.autoStopped，GIF回读2秒。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-dynamic --gif-seconds 2 --seconds 4 --report /tmp/waibusnap-r5-auto.txt
+# 静态补帧：完全静态的独立进程窗口，仍24帧 / 2秒。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-static --gif-seconds 2 --seconds 4 --report /tmp/waibusnap-r5-static.txt
+# 暂停：1秒 + 暂停1秒 + 1秒，成片约2秒。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-dynamic --pause --report /tmp/waibusnap-r5-pause.txt
+# 参数：960 / 10fps、原尺寸。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-dynamic --gif-max-edge 960 --gif-fps 10 --report /tmp/waibusnap-r5-960.txt
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-dynamic --gif-max-edge 0 --report /tmp/waibusnap-r5-native-size.txt
+# 4K源：独立测试窗口按所在屏幕DPR创建3840×2160物理内容，再由SCK降采样到1280×720。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-4k --report /tmp/waibusnap-r5-4k.txt
+# 丢弃：无Finished、成品、.part。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-dynamic --discard --report /tmp/waibusnap-r5-discard.txt
+# 30秒端到端：360帧 / 30秒，记录内核峰值与CPU；--keep可保存本机成品。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --gif-dynamic --gif-seconds 30 --seconds 32 --report /tmp/waibusnap-r5-long.txt
+# 真实选择器 / 倒计时 / 暂停边框 / 保存 / Toast回调：区域、窗口、全屏。
+open -W -n build/macos/bin/WaibuSnapRecordingProbe.app --args --gif --control --report /tmp/waibusnap-r5-control.txt
+```
+
+原生窗口使用独立子进程，避免被SCK自应用排除；每轮重新激活普通layer=0测试窗口，以保证真实枚举与选择器命中受控目标。4K路径验证真实窗口表面 / SCK输出，不等于4K物理显示器或全屏硬件验收。QMovie回读帧数 / 时长 / 循环 / 首帧，ffprobe可独立确认无音轨。Preview / Quick Look与真实桌面文字、渐变、动画观感须人工核对。
+
+本轮不提供资源浏览器GIF预览（R6），不提供录制设置页或GIF参数UI（R7），不改麦克风 / 视频混音、Windows原生采集或R1体积估算；Windows仅共享编码器 / 校验 / UI测试，录制入口继续禁用。
+
+2026-10-29本机受控原生结果（macOS27.0.1 / arm64 / Qt6.11.2）：动态限时24帧 / 2000ms / 105059字节；静态补帧24 / 2000 / 99822；暂停22 / 1830 / 91856（墙钟约3秒，暂停1秒未入片）；960/10为20 / 2000 / 75767；原尺寸25 / 2080 / 243407；3840×2160窗口源经SCK降至1280×720，24 / 2000 / 100311；丢弃无Finished / 成品 / .part，均PASS。30秒动态360帧 / 30000ms / 1529016字节、丢帧0、峰值RSS96.03MiB / 基线64.03MiB / 增量32MiB、CPU6.199秒 / 墙钟30.223秒。QMovie可加载 / 无限循环，另有定时播放跨循环单测；ffprobe独立检查9个成品均只有GIF视频流，无音轨。
+
+真实控制器三目标最终复验通过：区域320×220 / 2170ms，窗口520×392 / 2080ms且命中正确ID，全屏1280×720 / 2080ms；3秒倒计时结束才采集，暂停边框可见穿透，恢复保存 / Toast回调和.part收口通过。先前一轮窗口目标被其他应用遮挡，置顶尝试又使其离开layer=0枚举；最终只调整测试窗口激活方式，保留生产枚举过滤，不把失败轮次计为通过。原始报告保留本机临时目录，不上传桌面或音频。

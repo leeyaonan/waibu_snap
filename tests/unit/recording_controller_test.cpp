@@ -271,6 +271,79 @@ class RecordingControllerTest : public QObject
         if (kind == 2)
             QCOMPARE(r.sourcePixelRect, QRect(0, 0, 1600, 1200));
     }
+    void gifRequestAndLifecycle_data()
+    {
+        QTest::addColumn<int>("ending");
+        QTest::newRow("stop") << 0;
+        QTest::newRow("auto-limit") << 1;
+        QTest::newRow("disk") << 2;
+        QTest::newRow("discard") << 3;
+    }
+    void gifRequestAndLifecycle()
+    {
+        QFETCH(int, ending);
+        RecordingHarness h;
+        auto p = h.preferences();
+        p.gifDirectory = h.directory.path();
+        p.gifFps = 10;
+        p.gifMaxEdge = 960;
+        p.gifMaxSeconds = 15;
+        p.systemAudio = p.microphone = true;
+        p.microphoneDeviceId = QStringLiteral("设备");
+        RecordingController c(h.dependencies());
+        c.startSelection(p);
+        h.drain();
+        RecordingSelection selection;
+        selection.output = RecordingOutput::Gif;
+        selection.pixelRect = QRect(0, 0, 1501, 1101);
+        h.fake->selected(selection);
+        h.drain();
+        const auto r = c.request();
+        QCOMPARE(r.output, RecordingOutput::Gif);
+        QCOMPARE(r.outputPixels, recordingOutputSize(selection.pixelRect.size(),
+                                                     RecordingOutput::Gif, p.resolution, 960));
+        QCOMPARE(r.fps, 10);
+        QCOMPARE(r.maxDurationMs, 15000);
+        QVERIFY(!r.systemAudio && !r.microphoneEnabled && r.microphoneDeviceId.isEmpty());
+        QCOMPARE(r.systemGain, 0);
+        QCOMPARE(r.microphoneGain, 0);
+        QVERIFY(r.finalPath.endsWith(QStringLiteral(".gif")));
+        QVERIFY(r.tempPath.endsWith(QStringLiteral(".gif.part")));
+        QCOMPARE(QFileInfo(r.finalPath).absolutePath(), h.directory.path());
+        h.event(RecordingEventType::Started);
+        c.pause();
+        QCOMPARE(c.state(), State::Paused);
+        c.resume();
+        QCOMPARE(c.state(), State::Recording);
+        if (ending == 3)
+        {
+            c.discard();
+            QCOMPARE(c.state(), State::Idle);
+            QCOMPARE(h.fake->discards, 1);
+            return;
+        }
+        if (ending == 0)
+            c.stopAndSave();
+        if (ending == 1)
+            h.event(RecordingEventType::AutoStop);
+        if (ending == 2)
+        {
+            h.fake->disk = 1;
+            h.advance(c, 2000);
+        }
+        QCOMPARE(c.state(), State::Finalizing);
+        h.event(RecordingEventType::Finished, 2000);
+        QCOMPARE(c.state(), State::Idle);
+        QCOMPARE(h.fake->lastToast.autoStopped, ending != 0);
+        QCOMPARE(h.fake->toasts, 1);
+        p.gifDirectory = h.directory.filePath(QStringLiteral("missing-gif"));
+        c.startSelection(p);
+        h.drain();
+        h.fake->selected(selection);
+        h.drain();
+        QCOMPARE(c.state(), State::Idle);
+        QVERIFY(!QFileInfo::exists(p.gifDirectory));
+    }
     void invalidDirectoryAndRevalidation()
     {
         RecordingHarness h;

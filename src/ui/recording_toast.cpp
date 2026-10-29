@@ -20,9 +20,12 @@ RecordingToast::RecordingToast(RecordingEvent event, bool success,
     setStyleSheet(QStringLiteral(
         "QWidget { background: #282b31; color: white; } QPushButton { padding: 6px; }"));
     auto* layout = new QVBoxLayout(this);
-    const QString title = !success            ? QStringLiteral("录制失败")
-                          : event.autoStopped ? QStringLiteral("录制已自动停止")
-                                              : QStringLiteral("录制已保存");
+    const bool gif = event.path.endsWith(QStringLiteral(".gif"), Qt::CaseInsensitive);
+    const QString title =
+        !success ? QStringLiteral("录制失败")
+        : event.autoStopped
+            ? (gif ? QStringLiteral("GIF 已自动停止") : QStringLiteral("录制已自动停止"))
+            : (gif ? QStringLiteral("GIF 已保存") : QStringLiteral("录制已保存"));
     layout->addWidget(new QLabel(title, this));
     QString details = success ? QStringLiteral("%1 · %2 · %3×%4")
                                     .arg(recordingDuration(event.recordedMs),
@@ -30,6 +33,8 @@ RecordingToast::RecordingToast(RecordingEvent event, bool success,
                                     .arg(event.pixelSize.width())
                                     .arg(event.pixelSize.height())
                               : QString();
+    if (success && gif)
+        details += QStringLiteral(" · GIF · 循环");
     if (event.droppedFrames)
         details += QStringLiteral(" · 因性能丢弃 %1 帧").arg(event.droppedFrames);
     if (!event.message.isEmpty())

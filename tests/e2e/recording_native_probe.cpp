@@ -12,6 +12,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QImageReader>
+#include <QMovie>
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -56,6 +58,8 @@ bool check(Transcript& transcript, bool condition, const QString& description)
 
 struct ProbeOptions
 {
+    bool gif = false, controlled = false, stationary = false, fourK = false;
+    int gifSeconds = 30, gifFps = 12, gifMaxEdge = 1280;
     bool audio = false;
     bool microphone = false;
     bool requestMicrophonePermission = false;
@@ -181,6 +185,42 @@ int runProbe(const ProbeOptions& options)
                         .arg(options.systemGain)
                         .arg(options.microphoneGain)
                         .arg(options.expectMicrophoneFallback));
+    QProcess controlledTarget;
+    quint64 controlledId = 0;
+    QSize controlledPixels;
+    if (options.gif && options.controlled)
+    {
+        QStringList args{options.stationary ? QStringLiteral("--gif-target-static")
+                                            : QStringLiteral("--gif-target-dynamic")};
+        if (options.fourK)
+            args << QStringLiteral("--gif-target-4k") << QStringLiteral("--control-retina");
+        controlledTarget.start(QCoreApplication::applicationFilePath(), args);
+        controlledTarget.waitForStarted(5000);
+        QByteArray targetOutput;
+        QElapsedTimer wait;
+        wait.start();
+        while (!targetOutput.contains("TARGET ") && wait.elapsed() < 5000)
+        {
+            QCoreApplication::processEvents();
+            controlledTarget.waitForReadyRead(20);
+            targetOutput += controlledTarget.readAllStandardOutput();
+        }
+        const auto fields =
+            targetOutput.mid(targetOutput.indexOf("TARGET ") + 7).trimmed().split(' ');
+        controlledId = fields.value(0).toULongLong();
+        const double dpr = fields.value(5).toDouble();
+        controlledPixels =
+            QSize(qRound(fields.value(3).toInt() * dpr), qRound(fields.value(4).toInt() * dpr));
+        if (!controlledId || controlledPixels.isEmpty())
+        {
+            transcript.line(QStringLiteral("FAIL: 受控窗口启动失败。"));
+            return finish(transcript, options, 1);
+        }
+        transcript.line(QStringLiteral("受控窗口源：%1×%2，静态=%3")
+                            .arg(controlledPixels.width())
+                            .arg(controlledPixels.height())
+                            .arg(options.stationary));
+    }
     const auto topology = waibusnap::createDisplayTopology();
     if (!topology)
     {
@@ -204,9 +244,10 @@ int runProbe(const ProbeOptions& options)
             QRect(displayPixels.width() / 4, displayPixels.height() / 4,
                   std::max(2, displayPixels.width() / 2), std::max(2, displayPixels.height() / 2));
     }
-    QSize outputPixels =
-        waibusnap::recordingOutputSize(sourcePixelRect.size(), waibusnap::RecordingOutput::Video,
-                                       waibusnap::RecordingResolution::P720, 0);
+    const auto output =
+        options.gif ? waibusnap::RecordingOutput::Gif : waibusnap::RecordingOutput::Video;
+    QSize outputPixels = waibusnap::recordingOutputSize(
+        sourcePixelRect.size(), output, waibusnap::RecordingResolution::P720, options.gifMaxEdge);
     if (outputPixels.isEmpty())
         outputPixels = QSize(1280, 720);
     transcript.line(QStringLiteral("目标显示器：%1，逻辑 %2×%3，DPR %4，选区 %5×%6，输出 %7×%8")
@@ -227,19 +268,26 @@ int runProbe(const ProbeOptions& options)
     }
     directory.setAutoRemove(false);
     const QString tempPath =
-        directory.filePath(QStringLiteral(".waibusnap-recording-%1.mp4.part")
-                               .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-    const QString finalPath = directory.filePath(QStringLiteral("WaibuSnap-native-probe.mp4"));
+        directory.filePath(QStringLiteral(".waibusnap-recording-%1.%2.part")
+                               .arg(QUuid::createUuid().toString(QUuid::WithoutBraces),
+                                    options.gif ? QStringLiteral("gif") : QStringLiteral("mp4")));
+    const QString finalPath =
+        directory.filePath(options.gif ? QStringLiteral("WaibuSnap-native-probe.gif")
+                                       : QStringLiteral("WaibuSnap-native-probe.mp4"));
     transcript.line(QStringLiteral("临时目录：%1").arg(directory.path()));
 
     waibusnap::RecordingRequest request;
-    request.output = waibusnap::RecordingOutput::Video;
+    request.output = output;
+    request.windowId = controlledId;
     request.targetKind = options.region ? waibusnap::RecordingTargetKind::Region
                                         : waibusnap::RecordingTargetKind::Display;
+    if (controlledId)
+        request.targetKind = waibusnap::RecordingTargetKind::Window;
     request.display = target;
     request.sourcePixelRect = sourcePixelRect;
     request.outputPixels = outputPixels;
-    request.fps = 30;
+    request.fps = options.gif ? options.gifFps : 30;
+    request.maxDurationMs = options.gif ? options.gifSeconds * 1000 : 0;
     request.quality = waibusnap::RecordingQuality::Low;
     request.systemAudio = options.audio;
     request.microphoneEnabled = options.microphone;
@@ -256,6 +304,9 @@ int runProbe(const ProbeOptions& options)
         transcript.line(QStringLiteral("FAIL: createRecordingSession() 返回空。"));
         return finish(transcript, options, 1);
     }
+    const auto usageBefore = recordingProbeProcessUsage();
+    QElapsedTimer wall;
+    wall.start();
     ProbeResult result;
     QEventLoop loop;
     QObject actionContext;
@@ -307,7 +358,7 @@ int runProbe(const ProbeOptions& options)
                     QTimer::singleShot(2000, &actionContext, [&] { session->resume(); });
                     QTimer::singleShot(3000, &actionContext, [&] { session->stop(); });
                 }
-                else
+                else if (!options.gif || options.seconds < options.gifSeconds)
                 {
                     QTimer::singleShot(options.seconds * 1000, &actionContext,
                                        [&] { session->stop(); });
@@ -325,6 +376,7 @@ int runProbe(const ProbeOptions& options)
                 break;
             case waibusnap::RecordingEventType::AutoStop:
                 transcript.line(QStringLiteral("事件：AutoStop %1").arg(event.message));
+                session->stop();
                 break;
             case waibusnap::RecordingEventType::Finished:
                 result.finished = true;
@@ -362,6 +414,11 @@ int runProbe(const ProbeOptions& options)
     timeout.stop();
     QObject::disconnect(&actionContext, nullptr, nullptr, nullptr);
     session.reset();
+    if (controlledTarget.state() != QProcess::NotRunning)
+    {
+        controlledTarget.terminate();
+        controlledTarget.waitForFinished(5000);
+    }
 
     int failures = 0;
     const auto expect = [&](bool condition, const QString& description)
@@ -398,6 +455,55 @@ int runProbe(const ProbeOptions& options)
     expect(leftovers.isEmpty(),
            QStringLiteral("临时目录没有其他 .part：%1").arg(leftovers.join(QStringLiteral(", "))));
 
+    if (options.gif)
+    {
+        const auto usage = recordingProbeProcessUsage();
+        transcript.line(
+            QStringLiteral(
+                "性能：峰值RSS=%1 MiB，基线=%2 MiB，峰值增量=%3 MiB，CPU=%4秒，墙钟=%5ms")
+                .arg(usage.peakBytes / 1048576.0)
+                .arg(usageBefore.residentBytes / 1048576.0)
+                .arg((usage.peakBytes - usageBefore.residentBytes) / 1048576.0)
+                .arg(usage.cpuSeconds - usageBefore.cpuSeconds)
+                .arg(wall.elapsed()));
+        QImageReader reader(finalPath);
+        expect(reader.imageCount() > 1,
+               QStringLiteral("GIF静态补帧 / 帧数 > 1：%1帧").arg(reader.imageCount()));
+        expect(reader.loopCount() == -1, QStringLiteral("GIF无限循环"));
+        const auto first = reader.read();
+        expect(first.size() == outputPixels, QStringLiteral("GIF尺寸与请求一致"));
+        int duration = reader.nextImageDelay();
+        while (!reader.read().isNull())
+            duration += reader.nextImageDelay();
+        const int expectedMs =
+            (options.pause ? 2 : qMin(options.seconds, options.gifSeconds)) * 1000;
+        expect(qAbs(duration - expectedMs) < 400,
+               QStringLiteral("GIF有效时长%1ms，预期约%2ms").arg(duration).arg(expectedMs));
+        expect(qAbs(duration - result.finishedEvent.recordedMs) <= 10,
+               QStringLiteral("事件与GIF帧延迟累计时长一致"));
+        if (!options.pause && options.seconds >= options.gifSeconds)
+            expect(result.finishedEvent.autoStopped, QStringLiteral("达到最长时长自动停止标记"));
+        QMovie movie(finalPath);
+        expect(movie.jumpToFrame(0) && movie.loopCount() == -1,
+               QStringLiteral("QMovie可加载并无限循环"));
+        expect(usage.peakBytes - usageBefore.residentBytes <= 256LL * 1024 * 1024,
+               QStringLiteral("峰值RSS增量≤256MiB"));
+        transcript.line(QStringLiteral("GIF成品：%1字节，%2帧，%3ms，路径%4")
+                            .arg(QFileInfo(finalPath).size())
+                            .arg(movie.frameCount())
+                            .arg(duration)
+                            .arg(finalPath));
+        if (!options.keepDirectory.isEmpty())
+        {
+            QDir().mkpath(options.keepDirectory);
+            const auto copy = QDir(options.keepDirectory)
+                                  .filePath(QStringLiteral("recording-%1.gif")
+                                                .arg(QDateTime::currentMSecsSinceEpoch()));
+            expect(QFile::copy(finalPath, copy), QStringLiteral("保存合成取证副本：%1").arg(copy));
+        }
+        transcript.line(failures ? QStringLiteral("结果：FAIL") : QStringLiteral("结果：PASS"));
+        return finish(transcript, options, failures ? 1 : 0);
+    }
     const auto probe = waibusnap::createRecordingMediaProbe();
     expect(bool(probe), QStringLiteral("媒体探测可创建"));
     if (probe)
@@ -483,6 +589,20 @@ int main(int argc, char* argv[])
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("WaibuSnap v009 R3 录制原生探针"));
     parser.addHelpOption();
+    parser.addOption({QStringLiteral("gif-static"), QStringLiteral("录制独立静态测试窗口。")});
+    parser.addOption({QStringLiteral("gif-dynamic"), QStringLiteral("录制独立动态测试窗口。")});
+    parser.addOption({QStringLiteral("gif-4k"), QStringLiteral("3840×2160物理像素受控源降采样。")});
+    parser.addOption({QStringLiteral("gif-target-4k"), QStringLiteral("内部4K目标子进程。")});
+    parser.addOption({QStringLiteral("gif"), QStringLiteral("录制无音轨GIF。")});
+    parser.addOption({QStringLiteral("gif-seconds"), QStringLiteral("GIF最长秒数。"),
+                      QStringLiteral("seconds"), QStringLiteral("30")});
+    parser.addOption({QStringLiteral("gif-fps"), QStringLiteral("GIF帧率10/12/15。"),
+                      QStringLiteral("fps"), QStringLiteral("12")});
+    parser.addOption({QStringLiteral("gif-max-edge"), QStringLiteral("GIF最长边，0为原尺寸。"),
+                      QStringLiteral("pixels"), QStringLiteral("1280")});
+    parser.addOption({QStringLiteral("gif-target-static"), QStringLiteral("内部静态目标子进程。")});
+    parser.addOption(
+        {QStringLiteral("gif-target-dynamic"), QStringLiteral("内部动态目标子进程。")});
     parser.addOption(
         {QStringLiteral("control-retina"), QStringLiteral("R4 探针明确选择最高 DPR 显示器。")});
     parser.addOption({QStringLiteral("control"), QStringLiteral("运行 R4 受控原生控制面探针。")});
@@ -519,6 +639,14 @@ int main(int argc, char* argv[])
                       QStringLiteral("path")});
     parser.process(app);
     ProbeOptions options;
+    options.gif = parser.isSet(QStringLiteral("gif"));
+    options.stationary = parser.isSet(QStringLiteral("gif-static"));
+    options.fourK = parser.isSet(QStringLiteral("gif-4k"));
+    options.controlled =
+        options.stationary || options.fourK || parser.isSet(QStringLiteral("gif-dynamic"));
+    options.gifSeconds = parser.value(QStringLiteral("gif-seconds")).toInt();
+    options.gifFps = parser.value(QStringLiteral("gif-fps")).toInt();
+    options.gifMaxEdge = parser.value(QStringLiteral("gif-max-edge")).toInt();
     options.audio = parser.isSet(QStringLiteral("audio"));
     options.microphone = parser.isSet(QStringLiteral("microphone"));
     options.microphoneDeviceId = parser.value(QStringLiteral("mic-device"));
@@ -549,10 +677,22 @@ int main(int argc, char* argv[])
         options.reportPath = QFileInfo(options.reportPath).absoluteFilePath();
     if (!options.keepDirectory.isEmpty())
         options.keepDirectory = QFileInfo(options.keepDirectory).absoluteFilePath();
+    if (options.gif)
+    {
+        options.audio = options.microphone = false;
+        options.microphoneDeviceId.clear();
+        options.systemGain = options.microphoneGain = 0;
+    }
+    if (parser.isSet(QStringLiteral("gif-target-static")) ||
+        parser.isSet(QStringLiteral("gif-target-dynamic")))
+        return runRecordingControlTarget(parser.isSet(QStringLiteral("control-retina")),
+                                         parser.isSet(QStringLiteral("gif-target-static")), true,
+                                         parser.isSet(QStringLiteral("gif-target-4k")));
     if (parser.isSet(QStringLiteral("control-target")))
         return runRecordingControlTarget(parser.isSet(QStringLiteral("control-retina")));
     if (parser.isSet(QStringLiteral("control")))
         return runRecordingControlProbe(options.reportPath, options.keepDirectory,
-                                        parser.isSet(QStringLiteral("control-retina")));
+                                        parser.isSet(QStringLiteral("control-retina")),
+                                        options.gif);
     return runProbe(options);
 }

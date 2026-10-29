@@ -160,7 +160,7 @@ target_link_libraries(sticker_geometry_test PRIVATE waibusnap_core Qt6::Test wai
 set_target_properties(sticker_geometry_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME sticker_geometry COMMAND sticker_geometry_test)
 
-add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke
+add_test(NAME startup_smoke_sticker_high_dpi COMMAND startup_smoke recordingGifPicker
     scrollReadyDprAndClamping scrollEntryPreparation scrollReadyTransitions scrollPlatformAndMenu scrollControlPlacement
     scrollAutomaticPermissionAndSuspension scrollAutomaticProbeAndBottom scrollManualBottomAndLimit
     scrollResultPreviewCropOutput scrollResultFullOverview scrollResultCloseConfirmation scrollControllerLifecycle
@@ -552,4 +552,16 @@ if(APPLE)
     target_compile_options(recording_windows_test PRIVATE -fobjc-arc)
     add_test(NAME recording_windows COMMAND recording_windows_test)
     set_tests_properties(recording_windows PROPERTIES TIMEOUT 30)
+endif()
+
+qt_add_executable(recording_gif_test unit/recording_gif_test.cpp)
+target_link_libraries(recording_gif_test PRIVATE waibusnap_core Qt6::Widgets Qt6::Test waibusnap_options)
+set_target_properties(recording_gif_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME recording_gif COMMAND recording_gif_test)
+set_tests_properties(recording_gif PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+if(APPLE)
+    qt_add_executable(recording_gif_benchmark e2e/recording_gif_benchmark.mm)
+    target_link_libraries(recording_gif_benchmark PRIVATE waibusnap_core Qt6::Gui waibusnap_options)
+    target_compile_options(recording_gif_benchmark PRIVATE -fobjc-arc)
 endif()

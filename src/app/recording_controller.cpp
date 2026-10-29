@@ -140,7 +140,10 @@ bool RecordingController::validateDirectory()
 {
     const auto directory = QFileInfo(request_.finalPath).absolutePath();
     // 首次使用只初始化内置默认目录；自定义路径失效时不擅自重建。
-    if (directory == defaultRecordingVideoDirectory() && !QFileInfo::exists(directory))
+    const auto defaultDirectory = request_.output == RecordingOutput::Gif
+                                      ? defaultRecordingGifDirectory()
+                                      : defaultRecordingVideoDirectory();
+    if (directory == defaultDirectory && !QFileInfo::exists(directory))
         QDir().mkpath(directory);
     const QFileInfo info(directory);
     QTemporaryFile probe(QDir(directory).filePath(QStringLiteral(".waibusnap-write-XXXXXX")));
@@ -157,8 +160,8 @@ void RecordingController::selected(quint64 token, RecordingSelection selection)
         return;
     picker_->dismiss();
     picker_.reset();
-    if (selection.output != RecordingOutput::Video)
-        return fail(QStringLiteral("GIF 将在 R5 接入，本次请选择视频。"));
+    request_.output = selection.output;
+    const bool gif = selection.output == RecordingOutput::Gif;
     request_.display = display_;
     request_.targetKind = selection.kind;
     request_.windowId = selection.windowId;
@@ -192,25 +195,28 @@ void RecordingController::selected(quint64 token, RecordingSelection selection)
                               source.width() / dpr, source.height() / dpr)
                            .toAlignedRect();
     }
-    request_.outputPixels = recordingOutputSize(source, RecordingOutput::Video,
-                                                preferences_.resolution, preferences_.gifMaxEdge);
-    request_.fps = preferences_.videoFps;
-    request_.quality = preferences_.quality;
-    request_.systemAudio = preferences_.systemAudio;
-    request_.microphoneEnabled = preferences_.microphone;
-    request_.microphoneDeviceId = preferences_.microphoneDeviceId;
-    request_.systemGain = preferences_.systemVolumePercent / 100.0;
-    request_.microphoneGain = preferences_.microphoneVolumePercent / 100.0;
+    request_.outputPixels = recordingOutputSize(source, selection.output, preferences_.resolution,
+                                                preferences_.gifMaxEdge);
+    request_.fps = gif ? preferences_.gifFps : preferences_.videoFps;
+    if (!gif)
+        request_.quality = preferences_.quality;
+    request_.systemAudio = !gif && preferences_.systemAudio;
+    request_.microphoneEnabled = !gif && preferences_.microphone;
+    request_.microphoneDeviceId = gif ? QString() : preferences_.microphoneDeviceId;
+    request_.systemGain = gif ? 0 : preferences_.systemVolumePercent / 100.0;
+    request_.microphoneGain = gif ? 0 : preferences_.microphoneVolumePercent / 100.0;
     request_.showCursor = preferences_.showCursor;
-    if ((!preferences_.videoDirectory.isEmpty() &&
-         !QDir::isAbsolutePath(preferences_.videoDirectory)) ||
-        preferences_.videoDirectory.contains(QChar::Null))
+    const auto directory = gif ? preferences_.gifDirectory : preferences_.videoDirectory;
+    request_.maxDurationMs = gif ? preferences_.gifMaxSeconds * 1000 : 0;
+    if ((!directory.isEmpty() && !QDir::isAbsolutePath(directory)) ||
+        directory.contains(QChar::Null))
         return fail(QStringLiteral("录制目录必须是合法的绝对路径。"));
-    request_.finalPath = suggestedRecordingPath(preferences_.videoDirectory, RecordingOutput::Video,
-                                                dependencies_.now());
-    request_.tempPath = QDir(QFileInfo(request_.finalPath).absolutePath())
-                            .filePath(QStringLiteral(".waibusnap-recording-%1.mp4.part")
-                                          .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    request_.finalPath = suggestedRecordingPath(directory, selection.output, dependencies_.now());
+    request_.tempPath =
+        QDir(QFileInfo(request_.finalPath).absolutePath())
+            .filePath(QStringLiteral(".waibusnap-recording-%1.%2.part")
+                          .arg(QUuid::createUuid().toString(QUuid::WithoutBraces),
+                               gif ? QStringLiteral("gif") : QStringLiteral("mp4")));
     if (!validateDirectory())
         return;
     const QString error = validateRecordingRequest(request_);

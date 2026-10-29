@@ -9,6 +9,7 @@
 #include "session/session_metrics.h"
 #include "ui/annotation_text_edit.h"
 #include "ui/ocr_dialog.h"
+#include "ui/recording_target_picker.h"
 #include "ui/selection_overlay.h"
 #include "ui/settings_dialog.h"
 #include "ui/text_recognition_task.h"
@@ -661,6 +662,23 @@ class StartupSmokeTest final : public QObject
 {
     Q_OBJECT
   private slots:
+    void recordingGifPicker()
+    {
+        waibusnap::CaptureFrame f;
+        f.display = {5, QRect(0, 0, 800, 600), 1, 1, QRect(0, 0, 800, 570)};
+        f.pixels = QImage(800, 600, QImage::Format_RGB32);
+        f.pixels.fill(Qt::black);
+        waibusnap::RecordingTargetPicker picker(f, {});
+        bool selected = false;
+        picker.open([&](waibusnap::RecordingSelection s)
+                    { selected = s.output == waibusnap::RecordingOutput::Gif; }, {});
+        auto* gif = picker.findChild<QPushButton*>(QStringLiteral("recordingPickerOutputGif"));
+        QVERIFY(gif && gif->isVisible());
+        gif->click();
+        picker.setMode(waibusnap::RecordingTargetKind::Display);
+        QTest::keyClick(&picker, Qt::Key_Return);
+        QVERIFY(selected);
+    }
     void initTestCase() { qApp->setQuitOnLastWindowClosed(false); }
     void scrollEntryPreparation_data()
     {

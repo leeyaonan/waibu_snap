@@ -11,3 +11,10 @@ struct RecordingProbeAudioInfo
 };
 // 仅探针使用，不改变 RecordingMediaProbe 的公共契约。
 RecordingProbeAudioInfo recordingProbeAudioInfo(const QString& path);
+
+struct RecordingProbeUsage
+{
+    qint64 residentBytes = 0, peakBytes = 0;
+    double cpuSeconds = 0;
+};
+RecordingProbeUsage recordingProbeProcessUsage();
