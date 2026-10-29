@@ -268,8 +268,9 @@ class RecordingResourceSourceTest final : public QObject
         auto source = f.source();
         QVERIFY(QFile::remove(path));
         // Windows 上 QFile::link 写快捷方式，macOS 写符号链接；两者都必须拒绝。
-        const auto shortcut = QDir(f.directory).filePath(QStringLiteral("shortcut.mp4"));
+        const auto shortcut = QDir(f.directory).filePath(QStringLiteral("shortcut.mp4.lnk"));
         QVERIFY(QFile::link(outside, shortcut));
+        QVERIFY(QFileInfo(shortcut).isShortcut() || QFileInfo(shortcut).isSymbolicLink());
         source->refresh();
         QVERIFY(source->snapshot().items.isEmpty());
         QVERIFY(!source->deleteItem(shortcut).success);

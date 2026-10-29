@@ -47,6 +47,8 @@ RecordingResourceSource::RecordingResourceSource(RecordingOutput kind, Directory
                                       : file.canonicalFilePath());
             }
     }
+    // Windows 的原子替换要求先释放星标读取句柄，剪枝才可提交。
+    stars.close();
     readMetadata();
     debounce_.setInterval(200);
     debounce_.setSingleShot(true);
@@ -100,8 +102,8 @@ QString RecordingResourceSource::configuredDirectory() const
 }
 bool RecordingResourceSource::mediaFile(const QFileInfo& file) const
 {
-    return file.isFile() && !file.isHidden() && !file.isSymLink() && !file.isJunction() &&
-           !file.isShortcut() &&
+    return file.isFile() && !file.fileName().startsWith(QLatin1Char('.')) && !file.isHidden() &&
+           !file.isSymLink() && !file.isJunction() && !file.isShortcut() &&
            file.suffix().compare(kind_ == RecordingOutput::Gif ? QStringLiteral("gif")
                                                                : QStringLiteral("mp4"),
                                  Qt::CaseInsensitive) == 0;
