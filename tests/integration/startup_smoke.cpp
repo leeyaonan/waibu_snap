@@ -3790,8 +3790,8 @@ class StartupSmokeTest final : public QObject
         QVERIFY(controls->isVisible());
         QEvent barLeave(QEvent::Leave);
         QApplication::sendEvent(controlsBar, &barLeave);
-        QTest::qWait(250);
-        QVERIFY(!controls->isVisible());
+        // 产品隐藏定时器为 180ms，固定 250ms 在 CI 上余量不足，改为条件等待而非放宽产品行为。
+        QTRY_VERIFY_WITH_TIMEOUT(!controls->isVisible(), 2000);
 
         sticker->setEditing(true);
         auto* toolbar = sticker->findChild<QWidget*>(QStringLiteral("stickerEditToolbar"));
