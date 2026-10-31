@@ -1,91 +1,9 @@
 #include "interfaces/recording.h"
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
-#import <CoreVideo/CoreVideo.h>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QtTest>
-#include <unistd.h>
-
-namespace
-{
-bool writeTestVideo(const QString& path, int width, int height, int frames, int fps)
-{
-    @autoreleasepool
-    {
-        NSURL* url = [NSURL fileURLWithPath:path.toNSString()];
-        NSError* error = nil;
-        AVAssetWriter* writer = [[AVAssetWriter alloc] initWithURL:url
-                                                          fileType:AVFileTypeMPEG4
-                                                             error:&error];
-        if (!writer)
-            return false;
-        NSDictionary* settings = @{
-            AVVideoCodecKey : AVVideoCodecTypeH264,
-            AVVideoWidthKey : @(width),
-            AVVideoHeightKey : @(height),
-        };
-        AVAssetWriterInput* input = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
-                                                                   outputSettings:settings];
-        input.expectsMediaDataInRealTime = NO;
-        NSDictionary* attributes = @{
-            (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
-            (id)kCVPixelBufferWidthKey : @(width),
-            (id)kCVPixelBufferHeightKey : @(height),
-        };
-        AVAssetWriterInputPixelBufferAdaptor* adaptor =
-            [[AVAssetWriterInputPixelBufferAdaptor alloc] initWithAssetWriterInput:input
-                                                       sourcePixelBufferAttributes:attributes];
-        if (![writer canAddInput:input])
-            return false;
-        [writer addInput:input];
-        if (![writer startWriting])
-            return false;
-        [writer startSessionAtSourceTime:kCMTimeZero];
-        CVPixelBufferPoolRef pool = adaptor.pixelBufferPool;
-        if (!pool)
-            return false;
-        for (int frame = 0; frame < frames; ++frame)
-        {
-            for (int attempt = 0; attempt < 5000 && !input.isReadyForMoreMediaData; ++attempt)
-                ::usleep(1000);
-            if (!input.isReadyForMoreMediaData)
-                return false;
-            CVPixelBufferRef buffer = nullptr;
-            if (CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &buffer) !=
-                kCVReturnSuccess)
-                return false;
-            CVPixelBufferLockBaseAddress(buffer, 0);
-            auto* pixels = static_cast<uint8_t*>(CVPixelBufferGetBaseAddress(buffer));
-            const size_t stride = CVPixelBufferGetBytesPerRow(buffer);
-            for (int y = 0; y < height; ++y)
-                for (int x = 0; x < width; ++x)
-                {
-                    uint8_t* pixel = pixels + y * stride + x * 4;
-                    pixel[0] = uint8_t(frame * 7 + x % 256);
-                    pixel[1] = uint8_t(y % 256);
-                    pixel[2] = uint8_t(180);
-                    pixel[3] = 255;
-                }
-            CVPixelBufferUnlockBaseAddress(buffer, 0);
-            const BOOL appended = [adaptor appendPixelBuffer:buffer
-                                        withPresentationTime:CMTimeMake(frame, fps)];
-            CVPixelBufferRelease(buffer);
-            if (!appended)
-                return false;
-        }
-        [input markAsFinished];
-        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-        [writer finishWritingWithCompletionHandler:^{
-          dispatch_semaphore_signal(semaphore);
-        }];
-        if (dispatch_semaphore_wait(semaphore,
-                                    dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC)) != 0)
-            return false;
-        return writer.status == AVAssetWriterStatusCompleted;
-    }
-}
-} // namespace
 
 class RecordingMediaProbeTest final : public QObject
 {
@@ -95,7 +13,36 @@ class RecordingMediaProbeTest final : public QObject
     {
         QVERIFY(directory_.isValid());
         videoPath_ = directory_.filePath(QStringLiteral("probe-video.mp4"));
-        QVERIFY(writeTestVideo(videoPath_, 320, 240, 30, 30));
+        const QString fixture = QFINDTESTDATA("../fixtures/recording/probe-video.mp4");
+        if (fixture.isEmpty())
+            QSKIP("缺少 tests/fixtures/recording/probe-video.mp4，请完整检出仓库测试夹具。");
+        QFile source(fixture);
+        QVERIFY2(source.open(QIODevice::ReadOnly), qPrintable(source.errorString()));
+        QVERIFY2(source.size() > 0 && source.size() < 100 * 1024,
+                 "媒体夹具必须非空且小于 100 KiB，请按 tests/README.md 重新生成。");
+        QVERIFY(!source.readAll().isEmpty());
+        QVERIFY2(QFile::copy(fixture, videoPath_), "无法复制媒体夹具到临时目录。");
+        // 已存在的夹具损坏或被替换必须失败，不能以跳过掩盖探测回归。
+        const auto probe = waibusnap::createRecordingMediaProbe();
+        QVERIFY(probe);
+        const auto info = probe->probe(videoPath_);
+        QVERIFY2(info.valid, qPrintable(info.error));
+        QVERIFY2(info.durationMs >= 900 && info.durationMs <= 1100,
+                 qPrintable(QStringLiteral("夹具时长 %1 ms").arg(info.durationMs)));
+        QCOMPARE(info.pixelSize, QSize(320, 240));
+        @autoreleasepool
+        {
+            AVURLAsset* asset =
+                [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:videoPath_.toNSString()]
+                                    options:nil];
+            QCOMPARE(asset.tracks.count, NSUInteger(1));
+            AVAssetTrack* track = asset.tracks.firstObject;
+            QVERIFY([track.mediaType isEqualToString:AVMediaTypeVideo]);
+            QVERIFY(track.formatDescriptions.count > 0);
+            const auto format =
+                (__bridge CMFormatDescriptionRef)track.formatDescriptions.firstObject;
+            QCOMPARE(CMFormatDescriptionGetMediaSubType(format), kCMVideoCodecType_H264);
+        }
         QVERIFY(QFileInfo::exists(videoPath_));
     }
     void probesDurationAndPixels()

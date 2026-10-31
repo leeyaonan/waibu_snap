@@ -1549,3 +1549,42 @@ open -n build/macos/bin/WaibuSnapRecordingProbe.app --args --settings-preview
 5. 默认GIF重新开选择器，本次切换不回写；取消 / Esc不写、失败重试、进行中会话参数不变。
 6. 通用页F3 / F4改键、重复 / 非法键拒绝、真实注册 / 系统功能键占用 / 重启保留；启动期保存退出不得停留或残留半成品。
 7. 多Space / 全屏、Windows / Intel实机、长会话与同步沿用R2–R6待验清单。
+
+
+## 2a：固定媒体探测夹具与 H.264 能力失败收口（BUG-0005）
+
+`recording_media_probe` 默认 CTest 只读取仓库内 `tests/fixtures/recording/probe-video.mp4`，不调用 AVAssetWriter 生成测试输入。`QFINDTESTDATA("../fixtures/recording/probe-video.mp4")` 根据测试源文件路径查找，在源码 / 构建目录或其他工作目录启动均可；找到后复制到独立临时目录，不修改仓库文件。缺失时中文 QSKIP（请完整检出夹具），存在但不可读、空、超过体积预算、非 H.264 / 含其他轨、时长或尺寸错误时初始化失败，不静默跳过。
+
+夹具为原创程序化渐变，无外部素材：**320×240 / H.264 / 30帧 / 30fps / 约1秒 / 仅视频轨 / <100 KiB**。当前夹具 11407 字节，SHA-256 `703a5d5bda154decec4ec18641bae489d1bd3ae08d4cc03cf126b2f84ed06125`。前置自检重新读取并探测文件。原 `probesDurationAndPixels` 的 **900–1100ms、320×240**、`thumbnailRespectsBounds`、`rejectsMissingAndInvalidFiles`、`rejectsTruncatedGif` 四个测试及全部断言保留。早期 R2 / R3 章节的现场生成描述为历史记录，以本节为当前执行方式；Windows 不编译这些 `.mm` 测试，MP4 经 `.gitattributes` 标记 binary，两端检出不转换字节。
+
+### 手动重建与更新
+
+从源码仓库根目录执行，沿用已配置 macOS Qt 构建树，无新增依赖：
+
+```bash
+cmake --build build/macos --target make_recording_fixture
+# 输出必须不存在；请选本次新临时路径，工具拒绝覆盖已有文件。
+build/macos/tests/make_recording_fixture /tmp/waibusnap-probe-video-new.mp4
+```
+
+`make_recording_fixture` 是 EXCLUDE_FROM_ALL 手动目标，不注册 CTest。原 writeTestVideo 写帧路径迁入该工具，每阶段检查 writer / input / adaptor / pixelBufferPool、canAddInput、writer 状态、ready、持有像素池生命周期、格式 / 尺寸 / stride、锁定 / append / finalize 和超时，错误打印阶段、status、writer.error、ready并返回非零。编码由父进程监督的子进程执行；nil 检查无法捕获驱动 SIGSEGV，子进程异常 / 超时由父进程报告失败（正常非零退出），临时目录自动清理，不发布半成品。父进程回读时长 / 尺寸 / 体积合格后才复制到目标。
+
+更新时先生成到新路径，检查工具结果；已有 ffprobe 时可独立核对（工具不要求安装它）：
+
+```bash
+ffprobe -v error -show_entries stream=codec_name,codec_type,width,height,duration,nb_frames \
+    -show_entries format=duration,size -of json /tmp/waibusnap-probe-video-new.mp4
+# 核对成功后，明确替换这一受管夹具，再运行测试与 diff。
+cp /tmp/waibusnap-probe-video-new.mp4 tests/fixtures/recording/probe-video.mp4
+ctest --test-dir build/macos -R '^recording_media_probe$' --repeat until-fail:20 --output-on-failure
+```
+
+提交更新后的 MP4、必要说明与检验结果；不可用 QSKIP 代替有效夹具。生成的码流与字节数随 macOS 编码器版本变化，不要求逐字节重现。
+
+### 编码器不可用的真实失败路径
+
+macOS `MacRecordingSession::start` 在创建 AVAssetWriter / `ensureWriterStarted` 和采集权限查询之前调用缓存的 `macH264EncoderAvailable`；通过 `VTCopyVideoEncoderList` 按 CodecType 查 H.264，接受硬件与软件编码器。不改变视频 / 音频 / GIF 参数。列表存在只代表能力声明，不保证驱动运行期健康；2a 的主修复是测试输入解耦，根因仍未确定。
+
+`recording_encoder` 默认 CTest 运行只读枚举（CI 可无编码器，不要求硬件存在）与私有查询注入。不可用用例使用真实 MacRecordingSession 和 RecordingController，fake 其他系统依赖：断言 Failed 事件 / failed 信号、中文失败 Toast、丢弃临时文件、无成品 / 隐藏 `.part`、普通失败不发 quitReady、启动中保存退出只发一次 quitReady。控制器现有状态枚举不含 Failed，失败后回到 Idle，未为本次新增状态。既有贴纸 250ms 断言没有修改。
+
+本机 macOS 27.0.1 / arm64 / Qt 6.11.2：完整 CTest **73/73（196.47秒）**、主 / 高 DPI 冒烟 **515 / 444**、媒体探测连续 **20次 × 6项**（无失败 / 无跳过）、编码器专项 **5项**、clang-format **18.1.8** / lint / ObjC 门禁通过。手动生成器连续5次重建成功；主动终止编码子进程后父进程正常返回1，未发布成品且无临时目录残留。已有授权下真实录制5秒 MP4成功：回读4767ms、1108×720、零丢帧、无 `.part`；这是受控原生验证，不替代复杂画面人工验收。双端 CI 结果见关联修复 PR；Windows / Intel 实机与原始 CI SIGSEGV 精确复现仍未验证。

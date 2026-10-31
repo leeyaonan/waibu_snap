@@ -1,3 +1,4 @@
+#include "platform/macos/recording_services.h"
 #include "core/gif_encoder.h"
 #include "interfaces/recording.h"
 #include "platform/macos/recording_audio_pipeline.h"
@@ -9,6 +10,7 @@
 #import <CoreVideo/CoreVideo.h>
 #include <QColorSpace>
 #include <QCoreApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -1376,6 +1378,10 @@ void beginSetup(const std::shared_ptr<RecordingState>& state)
 class MacRecordingSession final : public RecordingSession
 {
   public:
+    explicit MacRecordingSession(std::function<bool()> encoderAvailable)
+        : encoderAvailable_(std::move(encoderAvailable))
+    {
+    }
     ~MacRecordingSession() override
     {
         const auto state = std::move(state_);
@@ -1415,7 +1421,10 @@ class MacRecordingSession final : public RecordingSession
             setError(validation);
             return false;
         }
-        if (!hasScreenRecordingPermission())
+        // 在创建写入器、查询采集内容与申请权限之前拒绝无编码器环境。
+        const bool encoderAvailable =
+            request.output != RecordingOutput::Video || encoderAvailable_();
+        if (encoderAvailable && !hasScreenRecordingPermission())
         {
             const QString explanation = permissionExplanation();
             setError(explanation);
@@ -1442,6 +1451,11 @@ class MacRecordingSession final : public RecordingSession
         dispatch_async(state->workQueue, ^{
           @autoreleasepool
           {
+              if (!encoderAvailable)
+              {
+                  failSession(state, QStringLiteral("当前环境不支持 H.264 编码，无法开始录制"));
+                  return;
+              }
               beginSetup(state);
           }
         });
@@ -1517,6 +1531,7 @@ class MacRecordingSession final : public RecordingSession
     }
 
   private:
+    std::function<bool()> encoderAvailable_;
     std::shared_ptr<RecordingState> state_;
 };
 
@@ -1665,7 +1680,40 @@ class MacRecordingMediaProbe final : public RecordingMediaProbe
 
 std::unique_ptr<RecordingSession> createRecordingSession()
 {
-    return std::make_unique<MacRecordingSession>();
+    return createMacRecordingSession(macH264EncoderAvailable);
+}
+
+std::unique_ptr<RecordingSession>
+createMacRecordingSession(std::function<bool()> h264EncoderAvailable)
+{
+    return std::make_unique<MacRecordingSession>(std::move(h264EncoderAvailable));
+}
+
+bool macH264EncoderAvailable()
+{
+    static const bool available = []
+    {
+        @autoreleasepool
+        {
+            CFArrayRef list = nullptr;
+            const OSStatus status = VTCopyVideoEncoderList(nullptr, &list);
+            NSArray* encoders = CFBridgingRelease(list);
+            bool found = false;
+            if (status == noErr)
+                for (NSDictionary* encoder in encoders)
+                {
+                    NSNumber* codec = encoder[(__bridge NSString*)kVTVideoEncoderList_CodecType];
+                    if (codec.unsignedIntValue == kCMVideoCodecType_H264)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+            qInfo() << "H.264 编码能力查询：状态" << status << "，可用" << found;
+            return found;
+        }
+    }();
+    return available;
 }
 
 bool recordingCaptureSupported() { return true; }

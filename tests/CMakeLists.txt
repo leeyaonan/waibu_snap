@@ -114,7 +114,7 @@ if(APPLE)
     add_test(NAME sticker_window_behavior COMMAND sticker_window_behavior_test)
     set_tests_properties(sticker_window_behavior PROPERTIES TIMEOUT 30)
 
-    # 媒体探测不依赖屏幕录制权限：测试视频由 AVAssetWriter 现场生成。
+    # 媒体探测只读固定夹具，不在测试进程内创建 AVAssetWriter。
     qt_add_executable(recording_media_probe_test unit/recording_media_probe_test.mm)
     target_link_libraries(recording_media_probe_test PRIVATE waibusnap_platform Qt6::Test
         waibusnap_options "${AVFoundation_FRAMEWORK}" "${CoreMedia_FRAMEWORK}"
@@ -123,6 +123,20 @@ if(APPLE)
     add_test(NAME recording_media_probe COMMAND recording_media_probe_test -o
         "${CMAKE_CURRENT_BINARY_DIR}/recording_media_probe-output.txt,txt")
     set_tests_properties(recording_media_probe PROPERTIES TIMEOUT 60)
+
+    # 手动夹具生成器隔离原生编码，不参与默认构建或 CTest。
+    add_executable(make_recording_fixture EXCLUDE_FROM_ALL tools/make_recording_fixture.mm)
+    target_link_libraries(make_recording_fixture PRIVATE waibusnap_platform Qt6::Core
+        waibusnap_options "${AVFoundation_FRAMEWORK}" "${CoreMedia_FRAMEWORK}"
+        "${CoreVideo_FRAMEWORK}")
+    target_compile_options(make_recording_fixture PRIVATE -fobjc-arc)
+
+    qt_add_executable(recording_encoder_test unit/recording_encoder_test.mm)
+    target_link_libraries(recording_encoder_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+    target_compile_options(recording_encoder_test PRIVATE -fobjc-arc)
+    add_test(NAME recording_encoder COMMAND recording_encoder_test)
+    set_tests_properties(recording_encoder PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 30)
 
     qt_add_executable(recording_microphone_test unit/recording_microphone_test.mm)
     target_link_libraries(recording_microphone_test PRIVATE waibusnap_platform Qt6::Test waibusnap_options)
