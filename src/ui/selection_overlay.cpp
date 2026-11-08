@@ -3225,6 +3225,12 @@ void SelectionOverlay::openQrDialog()
             [this]
             {
                 qrDialog_ = nullptr;
+                // 重试扫描期间关闭弹窗：让在途结果失效，避免结果返回后再次弹窗。
+                if (recognizingQr_)
+                {
+                    ++qrToken_;
+                    recognizingQr_ = false;
+                }
                 if (!finished_)
                 {
                     updateToolbar();

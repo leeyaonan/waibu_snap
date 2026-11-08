@@ -785,8 +785,14 @@ void StickerWindow::openQrDialog()
             [this]
             {
                 qrDialog_ = nullptr;
+                // 重试扫描期间关闭弹窗：让在途结果失效，避免结果返回后再次弹窗。
+                if (qrRecognizing_)
+                {
+                    ++qrToken_;
+                    qrRecognizing_ = false;
+                }
                 updateEditToolbar();
-                if (!closed_ && editing_)
+                if (!closed_ && editing_ && !quitInteraction_)
                 {
                     activateWindow();
                     setFocus(Qt::OtherFocusReason);

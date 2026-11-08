@@ -273,6 +273,32 @@ class QrUiTest final : public QObject
         auto* status = overlay.findChild<QLabel*>(QStringLiteral("outputStatus"));
         QVERIFY(status && status->text().contains(QStringLiteral("选区已变化")));
     }
+    void overlayClosingRetryCancelsScan()
+    {
+        auto engine = std::make_shared<QrStub>();
+        engine->delayMs = 250;
+        engine->results = {
+            {true, {}, {code(QStringLiteral("https://example.com/first"), {20, 20, 100, 100})}},
+            {true, {}, {code(QStringLiteral("https://example.com/second"), {20, 20, 100, 100})}}};
+        OverlayActions actions;
+        actions.qrRecognizer = engine;
+        SelectionOverlay overlay(frame(), actions);
+        overlay.show();
+        drag(overlay, {100, 100}, {650, 450});
+        QTest::mouseClick(button(overlay, "qrToolButton"), Qt::LeftButton);
+        QTRY_VERIFY(!overlay.isRecognizingQr());
+        auto* resultDialog = dialog(overlay);
+        QVERIFY(resultDialog);
+        QTest::mouseClick(resultDialog->findChild<QPushButton*>(QStringLiteral("qrRetryButton")),
+                          Qt::LeftButton);
+        QVERIFY(overlay.isRecognizingQr());
+        QTest::mouseClick(resultDialog->findChild<QPushButton*>(QStringLiteral("qrCloseButton")),
+                          Qt::LeftButton);
+        QTRY_VERIFY(!dialog(overlay));
+        QVERIFY(!overlay.isRecognizingQr());
+        QTest::qWait(400);
+        QVERIFY(!dialog(overlay));
+    }
     void stickerCopyAndOpenUrl()
     {
         auto engine = std::make_shared<QrStub>();

@@ -120,6 +120,7 @@ void QrResultDialog::setResult(const QrRecognitionResult& result)
         content_->hide();
         retry_->show();
         copy_->setEnabled(false);
+        copy_->setText(QStringLiteral("复制内容"));
         open_->setEnabled(false);
         return;
     }
@@ -131,6 +132,7 @@ void QrResultDialog::setResult(const QrRecognitionResult& result)
         content_->hide();
         retry_->show();
         copy_->setEnabled(false);
+        copy_->setText(QStringLiteral("复制内容"));
         open_->setEnabled(false);
         return;
     }
@@ -170,6 +172,7 @@ void QrResultDialog::updateOpenState()
     open_->setEnabled(canOpen);
     open_->setToolTip(canOpen ? QStringLiteral("使用系统默认浏览器打开")
                               : QStringLiteral("内容不是 http/https 链接"));
+    open_->setAccessibleName(open_->toolTip());
 }
 QString QrResultDialog::currentText() const
 {
