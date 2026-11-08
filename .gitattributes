@@ -25,3 +25,6 @@
 
 # 原始 Qt 诊断日志保留工具输出的行尾空格。
 tests/fixtures/visibility/*.txt whitespace=-blank-at-eol
+
+# 第三方 quirc 源码保持上游原样，不因上游行尾空白阻塞 diff 检查。
+third_party/quirc/* whitespace=-blank-at-eol

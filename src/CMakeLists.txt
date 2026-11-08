@@ -6,9 +6,10 @@ add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp c
     core/recording.cpp
     core/storage_directory.cpp
     core/recording_audio.cpp
+    core/quirc_qr_recognizer.cpp
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options)
+target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options waibusnap_quirc)
 add_library(waibusnap_output STATIC output/image_output.cpp output/annotation_renderer.cpp output/watermark_renderer.cpp)
 target_include_directories(waibusnap_output PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_output PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
@@ -38,6 +39,7 @@ add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp u
     ui/history_resource_source.cpp ui/history_resource_source.h
     ui/group_settings_dialog.cpp ui/group_settings_dialog.h
     ui/text_recognition_task.cpp ui/text_recognition_task.h ui/ocr_dialog.cpp ui/ocr_dialog.h
+    ui/qr_recognition_task.cpp ui/qr_recognition_task.h ui/qr_result_dialog.cpp ui/qr_result_dialog.h
     ui/clipboard_sticker_toast.cpp ui/clipboard_sticker_toast.h
     ui/annotation_text_edit.cpp ui/annotation_text_edit.h
     ui/settings_dialog.cpp ui/settings_dialog.h

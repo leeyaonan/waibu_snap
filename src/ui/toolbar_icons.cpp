@@ -224,6 +224,22 @@ static void drawIcon(QPainter& p, int id, const QRectF& box, const QColor& fg, c
         p.drawLine(QPointF(9, 12.8), QPointF(10.8, 10.8));
         break;
     }
+    case 28: // 二维码（三个定位角 + 数据块）
+    {
+        p.drawRect(QRectF(2.5, 2.5, 5, 5));
+        p.drawRect(QRectF(10.5, 2.5, 5, 5));
+        p.drawRect(QRectF(2.5, 10.5, 5, 5));
+        p.setPen(Qt::NoPen);
+        p.setBrush(fg);
+        p.drawRect(QRectF(4.2, 4.2, 1.6, 1.6));
+        p.drawRect(QRectF(12.2, 4.2, 1.6, 1.6));
+        p.drawRect(QRectF(4.2, 12.2, 1.6, 1.6));
+        p.drawRect(QRectF(10.5, 10.5, 1.8, 1.8));
+        p.drawRect(QRectF(13.7, 10.5, 1.8, 1.8));
+        p.drawRect(QRectF(10.5, 13.7, 1.8, 1.8));
+        p.drawRect(QRectF(13.7, 13.7, 1.8, 1.8));
+        break;
+    }
     }
     p.restore();
 }
