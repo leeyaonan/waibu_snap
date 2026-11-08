@@ -6,6 +6,8 @@
 #include "ui/annotation_text_edit.h"
 #include "ui/annotation_toolbar_style.h"
 #include "ui/ocr_dialog.h"
+#include "ui/qr_recognition_task.h"
+#include "ui/qr_result_dialog.h"
 #include "ui/text_recognition_task.h"
 #include <QAction>
 #include <QCheckBox>
@@ -14,6 +16,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDebug>
+#include <QDesktopServices>
 #include <QFocusEvent>
 #include <QGridLayout>
 #include <QGuiApplication>
@@ -126,6 +129,8 @@ StickerWindow::StickerWindow(QImage image, QPoint position, bool saved, StickerA
     if (!actions_.setClipboardText)
         actions_.setClipboardText = [](const QString& text)
         { QGuiApplication::clipboard()->setText(text); };
+    if (!actions_.openUrl)
+        actions_.openUrl = [](const QUrl& url) { return QDesktopServices::openUrl(url); };
     if (!actions_.confirmClose)
         actions_.confirmClose = [](QWidget* parent)
         {
@@ -323,6 +328,12 @@ void StickerWindow::setEditing(bool editing)
     hide();
     destroy();
     editing_ = editing;
+    if (!editing_)
+    {
+        ++qrToken_;
+        qrRecognizing_ = false;
+        qrResult_ = {};
+    }
     if (!editing_ && ocrMode_)
         exitOcrMode();
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
@@ -609,7 +620,7 @@ void StickerWindow::focusForKeyboard()
 void StickerWindow::toggleOcrMode()
 {
     if (closed_ || !editing_ || hasPendingInteraction() || quitInteraction_ || saveDialogOpen_ ||
-        ocrRecognizing_ || draft_)
+        ocrRecognizing_ || qrRecognizing_ || qrDialog_ || draft_)
         return;
     if (ocrMode_)
     {
@@ -705,6 +716,75 @@ void StickerWindow::openOcrDialog()
             [this]
             {
                 ocrDialog_ = nullptr;
+                updateEditToolbar();
+                if (!closed_ && editing_)
+                {
+                    activateWindow();
+                    setFocus(Qt::OtherFocusReason);
+                }
+            });
+    editToolbar_->hide();
+    if (statusWindow_)
+        statusWindow_->hide();
+    dialog->open();
+    updateEditToolbar();
+}
+void StickerWindow::startQrRecognition()
+{
+    if (closed_ || !editing_ || quitInteraction_ || saveDialogOpen_ || confirmingClose_ ||
+        confirmingDoubleClickClose_ || ocrMode_ || ocrRecognizing_ || qrRecognizing_ || draft_)
+        return;
+    finishText(true);
+    if (!actions_.qrRecognizer)
+        actions_.qrRecognizer = createQrRecognizer();
+    const quint64 token = ++qrToken_;
+    qrRecognizing_ = true;
+    qrResult_ = {};
+    if (!qrDialog_)
+        showStatus(QStringLiteral("正在识别二维码…"), false);
+    if (qrDialog_)
+        qrDialog_->setScanning();
+    auto* task = new QrRecognitionTask(actions_.qrRecognizer, renderedImage(), token, this);
+    connect(
+        task, &QrRecognitionTask::completed, this,
+        [this](quint64 completedToken, QrRecognitionResult result)
+        {
+            if (closed_ || !editing_ || completedToken != qrToken_ || quitInteraction_)
+                return;
+            qrRecognizing_ = false;
+            qrResult_ = std::move(result);
+            if (qrDialog_)
+                qrDialog_->setResult(qrResult_);
+            else if (!qrResult_.ok)
+                showStatus(QStringLiteral("识别失败：%1").arg(qrResult_.explanation), false);
+            else if (qrResult_.codes.isEmpty())
+                showStatus(QStringLiteral("未识别到二维码"), false);
+            else
+                openQrDialog();
+            updateEditToolbar();
+            update();
+        },
+        Qt::QueuedConnection);
+    connect(task, &QThread::finished, task, &QObject::deleteLater);
+    task->start();
+    updateEditToolbar();
+    update();
+}
+void StickerWindow::openQrDialog()
+{
+    if (closed_ || !editing_ || qrDialog_ || qrResult_.codes.isEmpty())
+        return;
+    auto* dialog = new QrResultDialog(this, actions_.openUrl);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    qrDialog_ = dialog;
+    dialog->setResult(qrResult_);
+    connect(dialog, &QrResultDialog::retryRequested, this, &StickerWindow::startQrRecognition);
+    connect(dialog, &QrResultDialog::copyRequested, this,
+            [this](const QString& text) { actions_.setClipboardText(text); });
+    connect(dialog, &QDialog::finished, this,
+            [this]
+            {
+                qrDialog_ = nullptr;
                 updateEditToolbar();
                 if (!closed_ && editing_)
                 {
@@ -1131,6 +1211,8 @@ void StickerWindow::closeEvent(QCloseEvent* event)
         }
     }
     closed_ = true;
+    ++qrToken_;
+    qrRecognizing_ = false;
     dragging_ = false;
     statusTimeout_.stop();
     if (controls_)
@@ -1231,6 +1313,10 @@ void StickerWindow::ensureEditToolbar()
         editMainBar_, QStringLiteral("stickerEditOcrToolButton"),
         QStringLiteral("取字（文字识别）：拖选文字，再次点击退出"), ToolbarIcon::Ocr, true);
     connect(ocrButton_, &QPushButton::clicked, this, &StickerWindow::toggleOcrMode);
+    qrButton_ =
+        annotation_toolbar::makeButton(editMainBar_, QStringLiteral("stickerEditQrToolButton"),
+                                       QStringLiteral("扫码（识别二维码）"), ToolbarIcon::QrCode);
+    connect(qrButton_, &QPushButton::clicked, this, &StickerWindow::startQrRecognition);
     extractAllTextButton_ = annotation_toolbar::makeButton(
         editMainBar_, QStringLiteral("stickerEditExtractAllTextButton"), QStringLiteral("提取全文"),
         ToolbarIcon::ExtractAllText);
@@ -1411,6 +1497,9 @@ void StickerWindow::ensureEditToolbar()
     ocrAction->setData(ocrButton_->objectName());
     ocrAction->setCheckable(true);
     connect(ocrAction, &QAction::triggered, ocrButton_, &QPushButton::click);
+    auto* qrAction = editMenu_->addAction(qrButton_->icon(), QStringLiteral("扫码"));
+    qrAction->setData(qrButton_->objectName());
+    connect(qrAction, &QAction::triggered, qrButton_, &QPushButton::click);
     auto* selectAction = editMenu_->addAction(selectButton_->icon(), QStringLiteral("选择"));
     selectAction->setData(selectButton_->objectName());
     selectAction->setCheckable(true);
@@ -1440,6 +1529,7 @@ void StickerWindow::layoutEditMainBar(int availableWidth)
     for (auto* button : toolButtons_)
         tools.append(button);
     tools.append(ocrButton_);
+    tools.append(qrButton_);
     if (ocrMode_ && extractAllTextButton_)
         tools.append(extractAllTextButton_);
     QVector<QWidget*> actions = {undoButton_, redoButton_, saveButton_, copyButton_, doneButton_};
@@ -1498,7 +1588,7 @@ void StickerWindow::positionEditToolbar()
 {
     if (!editToolbar_)
         return;
-    if (!editing_ || closed_ || ocrDialog_)
+    if (!editing_ || closed_ || ocrDialog_ || qrDialog_)
     {
         editToolbar_->hide();
         return;
@@ -1538,16 +1628,18 @@ void StickerWindow::updateEditToolbar()
 {
     if (!editToolbar_)
         return;
-    if (!editing_ || ocrDialog_)
+    if (!editing_ || ocrDialog_ || qrDialog_)
     {
         editToolbar_->hide();
         return;
     }
     const bool available = editing_ && !saveDialogOpen_ && !confirmingClose_ && !quitInteraction_ &&
-                           !draft_ && !ocrDialog_;
+                           !draft_ && !ocrDialog_ && !qrDialog_;
     editToolbar_->setEnabled(available);
     ocrButton_->setChecked(ocrMode_);
-    ocrButton_->setEnabled(available && !ocrRecognizing_);
+    ocrButton_->setEnabled(available && !ocrRecognizing_ && !qrRecognizing_ && !qrDialog_);
+    qrButton_->setEnabled(available && !ocrMode_ && !ocrRecognizing_ && !qrRecognizing_ &&
+                          !qrDialog_);
     extractAllTextButton_->setVisible(ocrMode_);
     extractAllTextButton_->setEnabled(available && ocrMode_ && !ocrRecognizing_);
     undoButton_->setEnabled(!ocrMode_ && history_.canUndo());
@@ -2249,6 +2341,13 @@ void StickerWindow::mouseDoubleClickEvent(QMouseEvent* event)
 }
 void StickerWindow::keyPressEvent(QKeyEvent* event)
 {
+    if (qrDialog_)
+    {
+        if (event->key() == Qt::Key_Escape)
+            qrDialog_->reject();
+        event->accept();
+        return;
+    }
     if (ocrMode_)
     {
         if (ocrDialog_)
@@ -2315,6 +2414,13 @@ void StickerWindow::keyPressEvent(QKeyEvent* event)
 void StickerWindow::setQuitInteraction(bool busy)
 {
     quitInteraction_ = busy;
+    if (busy)
+    {
+        ++qrToken_;
+        qrRecognizing_ = false;
+        if (qrDialog_)
+            qrDialog_->reject();
+    }
     dragging_ = false;
     draft_.reset();
     controls_->setEnabled(!busy && !saveDialogOpen_);

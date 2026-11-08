@@ -7,6 +7,7 @@
 #include "core/text_layout.h"
 #include "core/watermark.h"
 #include "interfaces/capture_provider.h"
+#include "interfaces/qr_recognizer.h"
 #include "output/annotation_renderer.h"
 #include "output/image_output.h"
 #include "output/image_save.h"
@@ -14,6 +15,7 @@
 #include <QLabel>
 #include <QPointer>
 #include <QTimer>
+#include <QUrl>
 #include <QVector>
 #include <QWidget>
 #include <functional>
@@ -28,6 +30,7 @@ namespace waibusnap
 class AnnotationTextEdit;
 class AnnotationColorPalette;
 class OcrDialog;
+class QrResultDialog;
 class WatermarkService;
 struct OverlayActions : ImageSaveActions
 {
@@ -42,7 +45,9 @@ struct OverlayActions : ImageSaveActions
     QString shapeTemplateDir;
     QString shapeTemplateNotice;
     std::shared_ptr<const TextRecognizer> recognizer;
+    std::shared_ptr<const QrRecognizer> qrRecognizer;
     std::function<void(const QString&)> setClipboardText;
+    std::function<bool(const QUrl&)> openUrl;
     std::function<ImageOutputResult(const QImage&)> copyImage;
     std::function<ImageOutputResult(const QImage&)> pinImage;
     WatermarkService* watermarks = nullptr;
@@ -58,6 +63,7 @@ class SelectionOverlay final : public QWidget
     void enterScrollReady(QRect preset = {});
     bool isTextMode() const { return textMode_; }
     bool isRecognizingText() const { return recognizingText_; }
+    bool isRecognizingQr() const { return recognizingQr_; }
     QString selectedOcrText() const;
     QVector<QRectF> ocrHighlightBoxes() const;
     QRect hoveredWindowPixels() const { return hoveredWindowPixels_; }
@@ -149,6 +155,8 @@ class SelectionOverlay final : public QWidget
     void exitTextMode();
     void startOcrRecognition();
     void openOcrDialog();
+    void startQrRecognition();
+    void openQrDialog();
     text_layout::TokenPosition textAt(QPointF position, bool nearest) const;
     void selectOcrTo(QPointF position);
     void pinSelection();
@@ -276,6 +284,7 @@ class SelectionOverlay final : public QWidget
     QPushButton* undoButton_ = nullptr;
     QPushButton* redoButton_ = nullptr;
     QPushButton* ocrButton_ = nullptr;
+    QPushButton* qrButton_ = nullptr;
     QPushButton* extractAllTextButton_ = nullptr;
     QPushButton* watermarkToolButton_ = nullptr;
     QComboBox* watermarkPresetCombo_ = nullptr;
@@ -312,6 +321,11 @@ class SelectionOverlay final : public QWidget
     text_layout::TokenPosition ocrAnchor_;
     QVector<text_layout::SelectionRange> ocrSelection_;
     QPointer<OcrDialog> ocrDialog_;
+    bool recognizingQr_ = false;
+    quint64 qrToken_ = 0;
+    QRect qrScanSelection_;
+    QrRecognitionResult qrResult_;
+    QPointer<QrResultDialog> qrDialog_;
     QShortcut* undoShortcut_ = nullptr;
     QShortcut* redoShortcut_ = nullptr;
     QRect selection_;

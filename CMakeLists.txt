@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(WaibuSnap VERSION 0.0.1 LANGUAGES CXX)
+project(WaibuSnap VERSION 0.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,6 +35,7 @@ else()
     target_compile_options(waibusnap_options INTERFACE -Wall -Wextra -Wpedantic)
 endif()
 
+add_subdirectory(third_party/quirc)
 add_subdirectory(src)
 if(BUILD_TESTING)
     find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Test)

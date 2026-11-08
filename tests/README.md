@@ -16,6 +16,8 @@
 | `startup_smoke`（v001 OCR） | 取字模式进入 / 再点退出 / 切工具与五标注一级组 / 取字及六个子项入口、保存状态、选区与标注隔离、无放大镜 / 微调；英文 / 中文 / emoji 双击、正反跨行与标点空格拖选、盒与绘制高亮、UTF-16 复制计数、三态快捷键与整图码 10；650 ms 替身进度 / 立即 Esc / 过期结果、退出重进计数；模态弹窗四态 / 重试 / Esc 三层与临时编辑关闭不改图；只读局部纯文本复制、编辑后的粗体 / 斜体 / 下划线（含快捷键）/ 字号 / 颜色 / 两类列表 HTML、双格式 / 纯文本输出、任务析构等待；合成输入含遮盖 / 马赛克且 DPR=1、无词盒整行回落。全部 24 个数据用例进入主套件与 2 倍 DPR 子集 |
 | `text_layout` | 连续英数 / 撇号与 CJK、中英混排、空白标点、emoji / ZWJ / 扩展 CJK 代理对；行高中位数段落阈值等号边界、最近词 / 整行回落 / 无词、正反跨行与忠实 UTF-16 切片及非法位置 |
 | `text_recognizer_real_engine` | 固定 12 行 PNG、真实后台任务、实际系统语言列表与引擎可用性、英文关键子串、macOS 支持中文时的关键子串 / 不支持的明确说明；行盒坐标 / 词索引，空白图成功空结果与空图中文错误；Windows 有引擎必须识别成功，无引擎断言中文语言包原因；无静默跳过。默认计时 1 次，`WAIBUSNAP_OCR_BENCHMARK=1` 计时 30 次 |
+| `qr_recognizer_real_engine` | 固定 URL / 非链接 / 双码 PNG 经真实后台任务识别；macOS Vision 与 vendored quirc 交叉验证同一夹具，检查文本精确值、多码按位置排序、盒在图像内、空白图成功空结果与空图中文错误；不静默跳过 |
+| `qr_ui` | 覆盖层「扫码」：真实后台替身、选区合成图输入、URL 复制 / 打开分流、非链接打开禁用、多码列表切换、重试替换结果、无码 / 失败状态、选区变化丢弃结果；贴图编辑面扫码、结果弹窗隐藏 / 恢复工具条；`openUrl` / `setClipboardText` 全部注入，不使用真实浏览器 |
 | `startup_smoke`（C02 登录启动） | 双向开关与重新打开、双向失败重试、未变化 / 取消 / 编辑器与复选框 Esc 零调用、保存时系统状态变化、待批准与 notice 优先；组合保存顺序与三阶段错误保留 / 重试幂等、无 INI 新键；控制器经菜单保存与重开取消；全部 query / setEnabled 使用替身，2 倍 DPR 子集包含同样 21 个数据用例 |
 | `startup_smoke`（托盘图标） | `trayIconUsesEmbeddedPlatformAssets`：内嵌确认稿能解码且含 alpha、图标非空、macOS 18 / 36px 与模板标记、Windows 彩色版 16 / 32px 与非模板、1x / 2x 输出物理尺寸及 DPR；真实应用子进程在临时工作目录检查托盘图标可解码，再运行原托盘 / 贴图生命周期冒烟；不做像素级外观断言 |
 | `startup_smoke` | 真正应用子进程加载动态库、按 objectName 查找七个旧托盘动作与新增「打开历史…」入口、关闭临时窗口后仍驻留、设置打开期间忽略热键触发，再触发实际托盘「退出」；窗口悬停命中、单击吸附及 3 逻辑像素容差、有选区时悬停抑制、吸附后移动 / 调整 / 清除 / 再吸附、未命中单击、手动拖选替换与手势回到起点不误吸附、枚举错误仍可框选；设置对话框单组合输入、预填、Fn 说明、中文按钮、非法拒绝、注册失败保旧与文件不变、成功持久化、取消 / Esc 不保存；保留首帧、Retina 框选、全部移动 / 八方向调整、复制失败重试与码 10、保存失败 / 取消 / 冲突 / 原文件保护 / 面板焦点 / dirty 标记，以及无输出取消全部用例；受控参数仍需显式测试模式；选区后延迟创建工具栏、六个中文工具按钮 / 切换与取消激活、边角和选区外绘图优先、三档样式、按钮 / 系统快捷键撤销重做与 dirty 标记、分叉清除；文本预编辑保护、候选 / 编辑 / 会话 Esc 分层、中文及换行合成、空编辑不入栈、点击别处 / 工具栏空白 / ⌘或Ctrl+Enter / 复制保存前提交、编辑结束清理预编辑状态；已知直线 PNG 全图逐像素回读、复制与保存内容一致、会话结束历史清空；钉图先提交文本、合成图 / DPR=1 与码 11、失败保留重试、保存状态及负坐标放置继承；两张贴图独立、悬停 / 滚轮锚点 / 按钮缩放夹取与中心稳定、拖动、关闭销毁、编辑态空工具时允许拖动、工具激活后只绘制；贴图原像素保存 / 复制失败重试、后缀碰撞 / 取消 / 面板期间退出；屏外找回、退出销毁包括待删除窗口 |
@@ -1588,3 +1590,11 @@ macOS `MacRecordingSession::start` 在创建 AVAssetWriter / `ensureWriterStarte
 `recording_encoder` 默认 CTest 运行只读枚举（CI 可无编码器，不要求硬件存在）与私有查询注入。不可用用例使用真实 MacRecordingSession 和 RecordingController，fake 其他系统依赖：断言 Failed 事件 / failed 信号、中文失败 Toast、丢弃临时文件、无成品 / 隐藏 `.part`、普通失败不发 quitReady、启动中保存退出只发一次 quitReady。控制器现有状态枚举不含 Failed，失败后回到 Idle，未为本次新增状态。既有贴纸 250ms 断言没有修改。
 
 本机 macOS 27.0.1 / arm64 / Qt 6.11.2：完整 CTest **73/73（196.47秒）**、主 / 高 DPI 冒烟 **515 / 444**、媒体探测连续 **20次 × 6项**（无失败 / 无跳过）、编码器专项 **5项**、clang-format **18.1.8** / lint / ObjC 门禁通过。手动生成器连续5次重建成功；主动终止编码子进程后父进程正常返回1，未发布成品且无临时目录残留。已有授权下真实录制5秒 MP4成功：回读4767ms、1108×720、零丢帧、无 `.part`；这是受控原生验证，不替代复杂画面人工验收。双端 CI 结果见关联修复 PR；Windows / Intel 实机与原始 CI SIGSEGV 精确复现仍未验证。
+
+## FEAT-0005：截图二维码识别（2026-11-08）
+
+新增 `tests/fixtures/qr-url.png`、`qr-text.png`、`qr-multi.png`，载荷分别为 `https://example.com/waibu?q=1`、`hello waibusnap` 与两者并排；使用 `tests/tools/make_qr_fixtures.py`（开发期依赖 `qrcode[pil]`）可重建，构建与 CI 不依赖该脚本。`qr-multi.png` 同时覆盖一图多码与 quirc 的误检跳过路径（quirc 可能报出第三个定位候选，但解码失败被忽略）。
+
+`qr_recognizer_real_engine` 通过 `QrRecognitionTask` 在真实工作线程运行，不直接调用引擎：macOS 校验 Vision 与 quirc 两套实现，Windows 校验生产 quirc。`qr_ui` 使用 `QrStub` 注入固定结果与延迟，覆盖覆盖层 / 贴图的按钮、后台线程、复制 / 打开回调、多结果切换、重试、空 / 失败、选区变化丢弃与工具条恢复；`openUrl` 返回替身值，不启动浏览器。
+
+本机 macOS / arm64、Qt 6.11.2 Release：完整 CTest **75/75（212.10 秒）**；`startup_smoke` **515**、`startup_smoke_sticker_high_dpi` **444**；`qr_recognizer_real_engine` **8**、`qr_ui` **9**；clang-format **18.1.8**、`scripts/lint-code.sh`、`git diff --check` 通过。Windows 的 MSVC C11 / quirc 构建、真实识别和 Intel 交叉构建以双端 CI 为准；本机结论不替代 Windows 实机与用户真机验收。

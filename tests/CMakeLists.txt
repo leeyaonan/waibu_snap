@@ -245,6 +245,21 @@ target_link_libraries(text_layout_test PRIVATE waibusnap_core Qt6::Test waibusna
 set_target_properties(text_layout_test PROPERTIES WIN32_EXECUTABLE FALSE)
 add_test(NAME text_layout COMMAND text_layout_test)
 
+qt_add_executable(qr_recognizer_test integration/qr_recognizer_test.cpp)
+target_link_libraries(qr_recognizer_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+target_compile_definitions(qr_recognizer_test PRIVATE
+    WAIBUSNAP_QR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+set_target_properties(qr_recognizer_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME qr_recognizer_real_engine COMMAND qr_recognizer_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/qr-recognizer-output.txt,txt")
+set_tests_properties(qr_recognizer_real_engine PROPERTIES TIMEOUT 60)
+
+qt_add_executable(qr_ui_test integration/qr_ui_test.cpp)
+target_link_libraries(qr_ui_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(qr_ui_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME qr_ui COMMAND qr_ui_test)
+set_tests_properties(qr_ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
 qt_add_executable(text_recognizer_test integration/text_recognizer_test.cpp)
 target_link_libraries(text_recognizer_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
 target_compile_definitions(text_recognizer_test PRIVATE

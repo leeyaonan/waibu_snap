@@ -1,6 +1,7 @@
 #pragma once
 #include "core/annotation.h"
 #include "core/text_layout.h"
+#include "interfaces/qr_recognizer.h"
 #include "interfaces/sticker_window_behavior.h"
 #include "interfaces/text_recognizer.h"
 #include "output/annotation_renderer.h"
@@ -10,6 +11,7 @@
 #include "ui/toolbar_icons.h"
 #include <QPointer>
 #include <QTimer>
+#include <QUrl>
 #include <QWidget>
 #include <functional>
 #include <memory>
@@ -28,6 +30,7 @@ namespace waibusnap
 {
 class AnnotationTextEdit;
 class AnnotationColorPalette;
+class QrResultDialog;
 enum class StickerCloseDecision
 {
     Cancel,
@@ -63,7 +66,9 @@ struct StickerActions : ImageSaveActions
     // 返回 true 表示用户选择“开启并关闭”。
     std::function<bool(QWidget*)> confirmDoubleClickClose;
     std::shared_ptr<const TextRecognizer> recognizer;
+    std::shared_ptr<const QrRecognizer> qrRecognizer;
     std::function<void(const QString&)> setClipboardText;
+    std::function<bool(const QUrl&)> openUrl;
 };
 class StickerWindow final : public QWidget
 {
@@ -77,6 +82,7 @@ class StickerWindow final : public QWidget
     void setSaved(bool saved) { saved_ = saved; }
     bool isOcrMode() const { return ocrMode_; }
     bool isOcrRecognizing() const { return ocrRecognizing_; }
+    bool isQrRecognizing() const { return qrRecognizing_; }
     QString selectedOcrText() const;
     QVector<QRectF> ocrHighlightBoxes() const;
     // 绘图工具在画布上滚轮调线宽；其他状态沿用光标锚点缩放。
@@ -89,7 +95,8 @@ class StickerWindow final : public QWidget
     void forceClose();
     bool hasPendingInteraction() const
     {
-        return saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_ || ocrDialog_;
+        return saveDialogOpen_ || confirmingClose_ || confirmingDoubleClickClose_ || ocrDialog_ ||
+               qrDialog_;
     }
     void setQuitInteraction(bool busy);
     const QVector<Annotation>& annotations() const { return history_.annotations(); }
@@ -162,6 +169,8 @@ class StickerWindow final : public QWidget
     void exitOcrMode();
     void startOcrRecognition();
     void openOcrDialog();
+    void startQrRecognition();
+    void openQrDialog();
     void copySelectedOcrText();
     text_layout::TokenPosition ocrTextAt(QPointF position, bool nearest) const;
     void selectOcrTo(QPointF position);
@@ -200,6 +209,7 @@ class StickerWindow final : public QWidget
     QPushButton* copyButton_ = nullptr;
     QPushButton* doneButton_ = nullptr;
     QPushButton* ocrButton_ = nullptr;
+    QPushButton* qrButton_ = nullptr;
     QPushButton* extractAllTextButton_ = nullptr;
     QShortcut* undoShortcut_ = nullptr;
     QShortcut* redoShortcut_ = nullptr;
@@ -239,6 +249,10 @@ class StickerWindow final : public QWidget
     Annotation textDraft_;
     std::unique_ptr<StickerFocusSession> focusSession_;
     QPointer<OcrDialog> ocrDialog_;
+    bool qrRecognizing_ = false;
+    quint64 qrToken_ = 0;
+    QrRecognitionResult qrResult_;
+    QPointer<QrResultDialog> qrDialog_;
     TextRecognitionResult ocrResult_;
     text_layout::TokenPosition ocrAnchor_;
     QVector<text_layout::SelectionRange> ocrSelection_;

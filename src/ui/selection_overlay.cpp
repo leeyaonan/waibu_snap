@@ -12,6 +12,8 @@
 #include "ui/annotation_text_edit.h"
 #include "ui/annotation_toolbar_style.h"
 #include "ui/ocr_dialog.h"
+#include "ui/qr_recognition_task.h"
+#include "ui/qr_result_dialog.h"
 #include "ui/scroll_capture_windows.h"
 #include "ui/text_recognition_task.h"
 #include "ui/toolbar_icons.h"
@@ -20,6 +22,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDebug>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFocusEvent>
 #include <QHBoxLayout>
@@ -105,6 +108,8 @@ SelectionOverlay::SelectionOverlay(CaptureFrame frame, OverlayActions actions,
     if (!actions_.setClipboardText)
         actions_.setClipboardText = [](const QString& text)
         { QApplication::clipboard()->setText(text); };
+    if (!actions_.openUrl)
+        actions_.openUrl = [](const QUrl& url) { return QDesktopServices::openUrl(url); };
     recognitionProgress_.setSingleShot(true);
     connect(&recognitionProgress_, &QTimer::timeout, this,
             [this]
@@ -211,6 +216,9 @@ void SelectionOverlay::ensureToolbar()
                             QStringLiteral("取字（文字识别）"), ToolbarIcon::Ocr);
     ocrButton_->setCheckable(true);
     connect(ocrButton_, &QPushButton::clicked, this, &SelectionOverlay::toggleTextMode);
+    qrButton_ = makeButton(toolbar_, QStringLiteral("qrToolButton"),
+                           QStringLiteral("扫码（识别二维码）"), ToolbarIcon::QrCode);
+    connect(qrButton_, &QPushButton::clicked, this, &SelectionOverlay::startQrRecognition);
     longImageButton_ =
         makeButton(toolbar_, QStringLiteral("longImageButton"),
                    scrollSupported_ ? QStringLiteral("截长图：以当前选区为滚动采集区域")
@@ -561,6 +569,7 @@ void SelectionOverlay::layoutToolbar(int availableWidth)
     if (watermarkToolButton_)
         tools.append(watermarkToolButton_);
     tools.append(ocrButton_);
+    tools.append(qrButton_);
     tools.append(longImageButton_);
     QVector<QWidget*> actions;
     if (textMode_)
@@ -964,8 +973,11 @@ void SelectionOverlay::updateToolbar()
                               dragMode_ == DragMode::None);
     redoShortcut_->setEnabled(!textMode_ && !editingText && !saveDialogOpen_ &&
                               dragMode_ == DragMode::None);
-    copyShortcut_->setEnabled(!editingText && !saveDialogOpen_ && !ocrDialog_);
+    copyShortcut_->setEnabled(!editingText && !saveDialogOpen_ && !ocrDialog_ && !qrDialog_);
     ocrButton_->setChecked(textMode_);
+    ocrButton_->setEnabled(!recognizingQr_ && !qrDialog_);
+    qrButton_->setEnabled(!textMode_ && !recognizingQr_ && !qrDialog_ && !selection_.isEmpty() &&
+                          dragMode_ == DragMode::None && !saveDialogOpen_);
     extractAllTextButton_->setVisible(textMode_);
     const QRect bounds = availableRect();
     layoutToolbar(bounds.width());
@@ -1022,7 +1034,8 @@ void SelectionOverlay::updateToolbar()
 
 void SelectionOverlay::enterScrollReady(QRect preset)
 {
-    if (finished_ || scrollReady_ || saveDialogOpen_ || ocrDialog_ || !scrollSupported_)
+    if (finished_ || scrollReady_ || saveDialogOpen_ || ocrDialog_ || qrDialog_ ||
+        !scrollSupported_)
         return;
     if (!preset.isEmpty())
         setSelection(preset & frame_.pixels.rect());
@@ -1144,7 +1157,7 @@ void SelectionOverlay::showStatus(const QString& text, bool temporary)
 }
 void SelectionOverlay::copySelection()
 {
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
         dragMode_ != DragMode::None)
         return;
     finishText(true);
@@ -1161,7 +1174,7 @@ void SelectionOverlay::copySelection()
 }
 void SelectionOverlay::pinSelection()
 {
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
         dragMode_ != DragMode::None)
         return;
     finishText(true);
@@ -1184,7 +1197,7 @@ QPoint SelectionOverlay::selectionGlobalPosition() const
 }
 void SelectionOverlay::saveSelection()
 {
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
         dragMode_ != DragMode::None)
         return;
     finishText(true);
@@ -1230,7 +1243,7 @@ void SelectionOverlay::saveSelection()
 }
 bool SelectionOverlay::exportToPath(const QString& path)
 {
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ || selection_.isEmpty() ||
         dragMode_ != DragMode::None || path.isEmpty())
         return false;
     finishText(true);
@@ -1571,7 +1584,8 @@ void SelectionOverlay::mousePressEvent(QMouseEvent* event)
 {
     if (scrollReady_)
         return;
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || event->button() != Qt::LeftButton)
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ ||
+        event->button() != Qt::LeftButton)
         return;
     hideMagnifier();
     if (watermarkToolActive_)
@@ -1703,7 +1717,7 @@ void SelectionOverlay::mouseMoveEvent(QMouseEvent* event)
 {
     if (scrollReady_)
         return;
-    if (ocrDialog_ || finished_ || saveDialogOpen_)
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_)
         return;
     if (watermarkGesture_ != WatermarkGesture::None)
     {
@@ -1746,7 +1760,7 @@ void SelectionOverlay::mouseReleaseEvent(QMouseEvent* event)
 {
     if (scrollReady_)
         return;
-    if (ocrDialog_)
+    if (ocrDialog_ || qrDialog_)
         return;
     if (watermarkGesture_ != WatermarkGesture::None && event->button() == Qt::LeftButton)
     {
@@ -1830,10 +1844,15 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
         event->accept();
         return;
     }
-    if (ocrDialog_)
+    if (ocrDialog_ || qrDialog_)
     {
         if (event->key() == Qt::Key_Escape)
-            ocrDialog_->reject();
+        {
+            if (ocrDialog_)
+                ocrDialog_->reject();
+            if (qrDialog_)
+                qrDialog_->reject();
+        }
         event->accept();
     }
     else if (finished_ || saveDialogOpen_)
@@ -1879,6 +1898,8 @@ void SelectionOverlay::keyPressEvent(QKeyEvent* event)
     {
         if (ocrDialog_)
             ocrDialog_->reject();
+        else if (qrDialog_)
+            qrDialog_->reject();
         else if (textMode_)
             exitTextMode();
         else
@@ -2061,6 +2082,10 @@ void SelectionOverlay::closeEvent(QCloseEvent* event)
     {
         hoveredWindowPixels_ = {};
         finished_ = true;
+        ++qrToken_;
+        recognizingQr_ = false;
+        if (qrDialog_)
+            qrDialog_->reject();
         exitTextMode();
         hideMagnifier();
         discardAnnotations();
@@ -2073,6 +2098,10 @@ void SelectionOverlay::complete(int outcome)
         return;
     scrollReady_ = false;
     finished_ = true;
+    ++qrToken_;
+    recognizingQr_ = false;
+    if (qrDialog_)
+        qrDialog_->reject();
     exitTextMode();
     hideMagnifier();
     hoveredWindowPixels_ = {};
@@ -2090,7 +2119,7 @@ QPointF SelectionOverlay::physicalPoint(QPointF position) const
 }
 void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
 {
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
         return;
     watermarkToolActive_ = false;
     watermarkSelected_ = false;
@@ -2117,7 +2146,7 @@ void SelectionOverlay::activateTool(AnnotationType type, bool toggle)
 }
 void SelectionOverlay::toggleSelectMode()
 {
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ || dragMode_ != DragMode::None)
         return;
     watermarkToolActive_ = false;
     watermarkSelected_ = false;
@@ -2142,7 +2171,7 @@ void SelectionOverlay::toggleSelectMode()
 }
 void SelectionOverlay::toggleWatermarkTool()
 {
-    if (finished_ || saveDialogOpen_ || ocrDialog_ || dragMode_ != DragMode::None ||
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || qrDialog_ || dragMode_ != DragMode::None ||
         !actions_.watermarks)
         return;
     if (!actions_.watermarks->currentPreset())
@@ -2214,7 +2243,7 @@ void SelectionOverlay::maybeApplyAutoWatermark()
         return;
     }
     if (watermarkAutoAttempted_ || selection_.isEmpty() || dragMode_ == DragMode::Create ||
-        textMode_ || scrollReady_ || finished_ || saveDialogOpen_ || ocrDialog_)
+        textMode_ || scrollReady_ || finished_ || saveDialogOpen_ || ocrDialog_ || qrDialog_)
         return;
     watermarkAutoAttempted_ = true;
     applyWatermarkPreset();
@@ -2273,7 +2302,7 @@ void SelectionOverlay::syncWatermarkBar()
                   : QStringLiteral("请先在设置 → 水印中创建预设"));
     watermarkToolButton_->setAccessibleName(watermarkToolButton_->toolTip());
     const bool showBar = watermarkToolActive_ && hasPreset && !selection_.isEmpty() && !textMode_ &&
-                         !finished_ && !saveDialogOpen_ && !ocrDialog_;
+                         !finished_ && !saveDialogOpen_ && !ocrDialog_ && !qrDialog_;
     watermarkBar_->setVisible(showBar);
     if (!showBar)
         return;
@@ -2662,7 +2691,7 @@ void SelectionOverlay::wheelEvent(QWheelEvent* event)
 {
     const bool widthTool = activeTool_ && annotationUsesLineWidth(*activeTool_);
     const bool textTool = activeTool_ && *activeTool_ == AnnotationType::Text;
-    if (finished_ || saveDialogOpen_ || ocrDialog_ || textMode_ || scrollReady_ ||
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || qrDialog_ || textMode_ || scrollReady_ ||
         watermarkToolActive_ || (!widthTool && !textTool) ||
         !logicalSelection().contains(event->position()))
     {
@@ -3002,8 +3031,8 @@ void SelectionOverlay::discardAnnotations()
 }
 void SelectionOverlay::toggleTextMode()
 {
-    if (finished_ || saveDialogOpen_ || ocrDialog_ || selection_.isEmpty() ||
-        dragMode_ != DragMode::None)
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || qrDialog_ || recognizingQr_ ||
+        selection_.isEmpty() || dragMode_ != DragMode::None)
         return;
     watermarkToolActive_ = false;
     watermarkSelected_ = false;
@@ -3101,7 +3130,7 @@ void SelectionOverlay::startOcrRecognition()
 }
 void SelectionOverlay::openOcrDialog()
 {
-    if (!textMode_ || finished_ || saveDialogOpen_ || ocrDialog_)
+    if (!textMode_ || finished_ || saveDialogOpen_ || ocrDialog_ || qrDialog_)
         return;
     auto* dialog = new OcrDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -3113,6 +3142,89 @@ void SelectionOverlay::openOcrDialog()
             [this]
             {
                 ocrDialog_ = nullptr;
+                if (!finished_)
+                {
+                    updateToolbar();
+                    activateWindow();
+                    setFocus(Qt::OtherFocusReason);
+                }
+            });
+    updateToolbar();
+    dialog->open();
+}
+void SelectionOverlay::startQrRecognition()
+{
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || selection_.isEmpty() ||
+        dragMode_ != DragMode::None || textMode_ || recognizingQr_)
+        return;
+    finishText(true);
+    if (!actions_.qrRecognizer)
+        actions_.qrRecognizer = createQrRecognizer();
+    const quint64 token = ++qrToken_;
+    qrScanSelection_ = selection_;
+    recognizingQr_ = true;
+    qrResult_ = {};
+    statusTimeout_.stop();
+    if (status_)
+        status_->hide();
+    if (!qrDialog_)
+        showStatus(QStringLiteral("正在识别二维码…"), false);
+    if (qrDialog_)
+        qrDialog_->setScanning();
+    auto* task = new QrRecognitionTask(
+        actions_.qrRecognizer, renderAnnotatedSelection(frame_.pixels, annotations(), selection_),
+        token, this);
+    connect(
+        task, &QrRecognitionTask::completed, this,
+        [this](quint64 completedToken, QrRecognitionResult result)
+        {
+            if (completedToken != qrToken_ || finished_)
+                return;
+            if (selection_ != qrScanSelection_)
+            {
+                recognizingQr_ = false;
+                showStatus(QStringLiteral("选区已变化，已取消本次扫码"), true);
+                updateToolbar();
+                return;
+            }
+            recognizingQr_ = false;
+            qrResult_ = std::move(result);
+            if (qrDialog_)
+                qrDialog_->setResult(qrResult_);
+            else if (!qrResult_.ok)
+                showStatus(QStringLiteral("识别失败：%1").arg(qrResult_.explanation), false);
+            else if (qrResult_.codes.isEmpty())
+                showStatus(QStringLiteral("未识别到二维码"), false);
+            else
+                openQrDialog();
+            updateToolbar();
+            updateCursor(mapFromGlobal(QCursor::pos()));
+            update();
+        },
+        Qt::QueuedConnection);
+    connect(task, &QThread::finished, task, &QObject::deleteLater);
+    task->start();
+    updateToolbar();
+    update();
+}
+void SelectionOverlay::openQrDialog()
+{
+    if (finished_ || qrDialog_ || qrResult_.codes.isEmpty())
+        return;
+    statusTimeout_.stop();
+    if (status_)
+        status_->hide();
+    auto* dialog = new QrResultDialog(this, actions_.openUrl);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    qrDialog_ = dialog;
+    dialog->setResult(qrResult_);
+    connect(dialog, &QrResultDialog::retryRequested, this, &SelectionOverlay::startQrRecognition);
+    connect(dialog, &QrResultDialog::copyRequested, this,
+            [this](const QString& text) { actions_.setClipboardText(text); });
+    connect(dialog, &QDialog::finished, this,
+            [this]
+            {
+                qrDialog_ = nullptr;
                 if (!finished_)
                 {
                     updateToolbar();
@@ -3170,7 +3282,8 @@ void SelectionOverlay::mouseDoubleClickEvent(QMouseEvent* event)
         QWidget::mouseDoubleClickEvent(event);
         return;
     }
-    if (ocrDialog_ || finished_ || saveDialogOpen_ || event->button() != Qt::LeftButton)
+    if (ocrDialog_ || qrDialog_ || finished_ || saveDialogOpen_ ||
+        event->button() != Qt::LeftButton)
         return;
     ocrAnchor_ = textAt(event->position(), false);
     selectingText_ = false;
@@ -3196,7 +3309,7 @@ void SelectionOverlay::copyShortcut()
 {
     if (scrollReady_)
         return;
-    if (finished_ || saveDialogOpen_ || ocrDialog_)
+    if (finished_ || saveDialogOpen_ || ocrDialog_ || qrDialog_)
         return;
     if (!textMode_)
     {

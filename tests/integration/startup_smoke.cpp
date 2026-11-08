@@ -1598,13 +1598,15 @@ class StartupSmokeTest final : public QObject
                                  ->findChildren<QPushButton*>())
             if (control->objectName().endsWith("ToolButton"))
                 ++tools;
-        QCOMPARE(tools, 7);
+        QCOMPARE(tools, 8);
         QCOMPARE(overlay.findChild<QWidget*>(QStringLiteral("annotationToolBar"))
                      ->findChildren<QPushButton*>()
                      .size(),
                  qsizetype(6));
         QVERIFY(!button(overlay, "ocrToolButton")->icon().isNull());
         QCOMPARE(button(overlay, "ocrToolButton")->toolTip(), QStringLiteral("取字（文字识别）"));
+        QVERIFY(!button(overlay, "qrToolButton")->icon().isNull());
+        QCOMPARE(button(overlay, "qrToolButton")->toolTip(), QStringLiteral("扫码（识别二维码）"));
         auto* extract = button(overlay, "extractAllTextButton");
         QVERIFY(extract->isHidden());
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
@@ -3667,7 +3669,7 @@ class StartupSmokeTest final : public QObject
         QVERIFY(!editToolbar->frameGeometry().intersects(sticker->frameGeometry()));
         QVERIFY(!sticker->findChild<QPushButton*>(QStringLiteral("stickerEditMoreButton")));
         auto* menu = sticker->findChild<QMenu*>(QStringLiteral("stickerEditMenu"));
-        QCOMPARE(menu->actions().size(), qsizetype(15));
+        QCOMPARE(menu->actions().size(), qsizetype(16));
         QCOMPARE(menu->actions().last()->data().toString(),
                  QStringLiteral("stickerEditSelectToolButton"));
         menu->actions().last()->trigger();
@@ -6498,7 +6500,7 @@ class StartupSmokeTest final : public QObject
         }
         QCOMPARE(button(overlay, "saveButton")->toolTip(), QStringLiteral("保存（快速保存）"));
         QCOMPARE(button(overlay, "cancelButton")->toolTip(), QStringLiteral("取消（Esc）"));
-        for (int index = 0; index < 19; ++index)
+        for (int index = 0; index < 29; ++index)
         {
             const auto icon = toolbarIcon(static_cast<ToolbarIcon>(index), annotationColors()[0]);
             for (auto mode : {QIcon::Normal, QIcon::Disabled})
@@ -6697,7 +6699,7 @@ class StartupSmokeTest final : public QObject
                 QVERIFY(control->isVisible());
                 QVERIFY(toolbar->rect().contains(control->geometry()));
             }
-        QCOMPARE(toolbar->height(), screenWidth >= 566 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 598 ? 44 : screenWidth > 320 ? 76 : 140);
         clickAnnotationTool(overlay, "coverToolButton");
         QVERIFY(overlay.activeTool() == AnnotationType::Cover);
         clickAnnotationTool(overlay, "mosaicToolButton");
@@ -6711,7 +6713,7 @@ class StartupSmokeTest final : public QObject
         QTest::mouseClick(button(overlay, "ocrToolButton"), Qt::LeftButton);
         QTRY_VERIFY(!overlay.isRecognizingText());
         QVERIFY(button(overlay, "extractAllTextButton")->isVisible());
-        QCOMPARE(toolbar->height(), screenWidth >= 619 ? 44 : screenWidth > 320 ? 76 : 140);
+        QCOMPARE(toolbar->height(), screenWidth >= 651 ? 44 : screenWidth > 320 ? 76 : 140);
         QVERIFY(overlay.rect().contains(toolbar->geometry()));
         for (auto* control : toolbar->findChildren<QPushButton*>())
         {
