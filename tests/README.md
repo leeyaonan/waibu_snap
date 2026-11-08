@@ -1597,4 +1597,4 @@ macOS `MacRecordingSession::start` 在创建 AVAssetWriter / `ensureWriterStarte
 
 `qr_recognizer_real_engine` 通过 `QrRecognitionTask` 在真实工作线程运行，不直接调用引擎：macOS 校验 Vision 与 quirc 两套实现，Windows 校验生产 quirc。`qr_ui` 使用 `QrStub` 注入固定结果与延迟，覆盖覆盖层 / 贴图的按钮、后台线程、复制 / 打开回调、多结果切换、重试、空 / 失败、选区变化丢弃与工具条恢复；`openUrl` 返回替身值，不启动浏览器。
 
-本机 macOS / arm64、Qt 6.11.2 Release：完整 CTest **75/75（212.10 秒）**；`startup_smoke` **515**、`startup_smoke_sticker_high_dpi` **444**；`qr_recognizer_real_engine` **8**、`qr_ui` **9**；clang-format **18.1.8**、`scripts/lint-code.sh`、`git diff --check` 通过。Windows 的 MSVC C11 / quirc 构建、真实识别和 Intel 交叉构建以双端 CI 为准；本机结论不替代 Windows 实机与用户真机验收。
+本机 macOS / arm64、Qt 6.11.2 Release：完整 CTest **75/75（212.10 秒）**；`startup_smoke` **515**、`startup_smoke_sticker_high_dpi` **444**；`qr_recognizer_real_engine` **8**、`qr_ui` **10**；clang-format **18.1.8**、`scripts/lint-code.sh`、`git diff --check` 通过。Windows 的 MSVC C11 / quirc 构建、真实识别和 Intel 交叉构建以双端 CI 为准；本机结论不替代 Windows 实机与用户真机验收。
