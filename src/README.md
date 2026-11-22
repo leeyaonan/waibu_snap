@@ -6,12 +6,14 @@
 | `interfaces/` | 共享平台契约 | 事务式热键、显示器定位、单帧捕获与呈现观察；`window_enumerator` 的前到后全局逻辑外框列表；`platform_workarounds` 的幂等兼容绕行安装入口；`sticker_window_behavior` 的不抢焦点窗口配置契约；`overlay_window_behavior` 的冻结覆盖层窗口层级契约；`tray_icon` 的内嵌菜单栏 / 托盘 QIcon 工厂；`autostart` 的只读状态、开关操作与工厂；`text_recognizer` 的离线识别契约；`qr_recognizer` 的二维码识别契约 |
 | `platform/macos/` | Objective-C++ / 后续 AppKit、ScreenCaptureKit | Carbon 热键映射与事务式替换、CGWindowList 窗口枚举、ScreenCaptureKit / AppKit 单帧原型及外部测量探针；`platform_workarounds` 的 NSEvent 安全 clickCount 绕行；贴图 NSPanel 非激活样式与不随应用失活隐藏；`overlay_window_behavior.mm` 首次显示时幂等设置 NSStatusWindowLevel；`autostart.mm` 通过 SMAppService 注册主应用登录项；`text_recognizer.mm` 使用 Vision；`qr_recognizer.mm` 使用 Vision `VNDetectBarcodesRequest` |
 | `platform/windows/` | MSVC C++ / 后续 Win32、DXGI | 可编译桩，如实返回未实现；兼容绕行与覆盖层层级入口为空实现；贴图焦点行为沿用 Qt 属性，编辑前后通过 Win32 恢复原前台窗口；`text_recognizer.cpp` 使用 C++/WinRT OCR，`qr_recognizer.cpp` 使用 vendored quirc，`autostart` 使用 HKCU Run |
-| `core/` | 图像与标注核心 | `aspect_ratio` 的比例解析 / 格式化 / 去重、内置清单、设置规整与半开物理像素约束；`annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点、屏外找回与剪贴板级联纯函数；`text_layout` 的分词、段落与选择数学；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
+| `core/` | 图像与标注核心 | `multi_display` 的多屏排布排序（行归并 + left / ID 兜底）、并集画布与最大 DPR 换算、`_00` / `_01` 命名与前缀逐毫秒顺延、16384 单边 / 268435456 像素上限； `aspect_ratio` 的比例解析 / 格式化 / 去重、内置清单、设置规整与半开物理像素约束；`annotation` 的八类标注（含实心遮盖与马赛克）、颜色 / 线宽 / 字号预设、箭头几何与 20 步撤销 / 重做；`sticker_geometry` 的缩放夹取 / 步进、物理转逻辑尺寸、锚点、屏外找回与剪贴板级联纯函数；`text_layout` 的分词、段落与选择数学；半开物理像素框选、移动与八方向调整；`window_snapping` 的全局转屏内裁剪、前到后命中与像素边缘取整 |
 | `session/` | 会话与文档状态 | 单会话锁、单调时钟、尺寸与时间 JSONL |
 | `ui/` | Qt Widgets 视图与桌面入口 | 冻结画面悬停 / 单击吸附、框选 / 移动 / 调整；覆盖层五个标注一级入口（三组二选一 + 画笔 / 文本）与取字 / 扫码 / 样式 / 撤销 / 重做 / 复制 / 保存 / 钉图 / 取消工具栏；`text_recognition_task` 后台识别与 `ocr_dialog` 富文本编辑；`qr_recognition_task` 后台二维码识别与 `qr_result_dialog` 复制 / 打开 / 重试；`clipboard_sticker_toast` 的只读失败提示与单次计时；`sticker_window` 的置顶、不抢焦点、拖动、缩放、悬停操作与原像素输出；`annotation_text_edit` 的多行纯文本、输入法预编辑与 Esc 分层；保存面板焦点管理；`settings_dialog` 的单组合输入、目录选择 / 清除、格式及有损提示、登录启动开关、比例增删 / 启停 / 恢复默认 / Shift 快捷、保存 / 取消；无默认主窗口 |
-| `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG / JPEG 原子提交；`image_save` 共享保存决策，格式感知命名与冲突避让；无自动保存 |
+| `output/` | 输出与生命周期 | `annotation_renderer` 的共享绘制和冻结帧标注合成后裁剪、DPR=1 输出、Qt 剪贴板与 PNG / JPEG 原子提交；`image_save` 共享保存决策，格式感知命名与冲突避让；`multi_display_output` 的多屏拼接合成（最大 DPR 上采、PNG 透明 / JPEG 白底留空、无额外边距）与整组原子提交 / 回滚；无自动保存 |
 
 平台相关源码只放 `platform/`，共享接口不暴露系统句柄。CMake 在平台目录选择实现，共享应用不使用平台宏判断。业务依赖方向为应用装配 → 共享模块 / 平台实现，平台实现 → 共享接口；不得从核心反向依赖视图或具体平台。
+
+v010 多显示器截图：`DisplayTopology::allDisplays()` 带默认空实现（既有测试桩无需覆写，Windows 不覆写即等于不支持）；macOS 实现先取系统快照再与 Qt 屏幕逐项核对，任一块不一致整体失败。`app/multi_display_capture` 复用 `CaptureProvider::capture` 并发单帧采集（同一事件循环轮次全部发出），按显示器 ID 而非枚举下标取帧，失败原因按相同文案合并屏列表后**只发一条**通知；任一屏失败即整组不落盘、不闪光。目录校验从 `app/quick_gunner.cpp` 提取为 `app/capture_directory`，快枪手与多屏截图共用同一实现与文案。入口仅「快枪手」菜单的两项（`multiDisplayCaptureAction` / `multiDisplayStitchAction`），不新增默认热键，F2 语义不变；勾选拼接图立即写盘并刷新托盘，设置关闭后同样主动刷新派生入口（L-0003）。
 
 `ApplicationController` 对触发守卫拒绝、会话开始、捕获完成、覆盖层首帧、可交互就绪与会话结束逐次记录中文日志，一行一事、不节流；`fail()` 保留原警告。`sessionWatchdog_` 仅在截图会话中每 5 秒检查，`finish()` 停止；active、无 Qt 模态、无可见覆盖层且会话年龄至少 20 秒时，先输出状态快照，再以新结果码 **12（异常残留自动复位）** 走统一清理，释放锁并恢复菜单。空闲无轮询，不改变有效性能样本集合 `(1, 2, 10, 11)`。该安全网将必须退出重开的状态泄漏降级为自动恢复并留证；取得日志后仍须定位根因，事件循环本身阻塞不在此安全网范围内。冒烟通过友元注入年龄与残留状态，不开放生产运行参数、不把注入当作真实卡死复现。
 
@@ -37,7 +39,7 @@
 
 鼠标按下 / 拖动显示并停止隐藏计时，释放即清空；键盘每次重启同一个 700 ms 单次精确计时器，超时清空锚点 / 采样。工具激活、打开保存面板、关闭 / 完成 / 取消会话也停止计时并清空。输出继续只用冻结帧与标注合成，放大镜没有导出路径；结果码、测量协议、保存和退出语义不变。
 
-`ApplicationController` 持有 `AppSettings`，覆盖层与 `StickerManager` 的 `loadSavePreferences` 回调每次读取同一 INI：`save/quickDirectory` 为空或绝对路径，`save/format` 严格接受 `png` / `jpeg`、默认 `png`。非法键各自回退，读取损坏 INI 整体回退且不改写；保存只更新自己的键，不影响 `hotkey/sequence`。`SettingsDialog` 目录选择默认走 `QFileDialog::getExistingDirectory`，可用 `SaveSettingsActions::chooseDirectory` 注入；目录控件只读，清除恢复每次面板。取消 / Esc 不调用保存回调；快捷键未改变时不重新注册，保存偏好无需被当前平台的快捷键能力阻断。
+`ApplicationController` 持有 `AppSettings`，覆盖层与 `StickerManager` 的 `loadSavePreferences` 回调每次读取同一 INI：`save/quickDirectory` 为空或绝对路径，`save/format` 严格接受 `png` / `jpeg`、默认 `png`，`save/multiDisplayStitch` 只有明确 `true` 才开启（v010）。非法键各自回退，读取损坏 INI 整体回退且不改写；保存只更新自己的键，不影响 `hotkey/sequence`。`SettingsDialog` 目录选择默认走 `QFileDialog::getExistingDirectory`，可用 `SaveSettingsActions::chooseDirectory` 注入；目录控件只读，清除恢复每次面板。取消 / Esc 不调用保存回调；快捷键未改变时不重新注册，保存偏好无需被当前平台的快捷键能力阻断。
 
 `output/image_save` 编入 Widgets 层目标，统一 `chooseImageSaveTarget` / `saveImageToTarget`，覆盖层、贴图与退出逐张保存复用。`ImageSaveActions` 保持 `chooseSavePath(QWidget*, const QString&)` 签名，增加实时偏好读取和测试时刻缝。快速目录按存在 / 目录 / 可写检测，否则回退默认图片目录的原生面板；面板使用所选过滤器规范化后缀，再按最终后缀决定编码。面板嵌套循环用调用者的 `canContinue` / QPointer 保持既有关闭语义；规范化或补后缀碰到另一个已有目标时重新确认，取消不导出。写入错误不转移目标，UI 保留图像、已保存状态与重试提示。
 

@@ -1,50 +1,13 @@
 #include "app/quick_gunner.h"
+#include "app/capture_directory.h"
 #include "app/quick_gunner_save_queue.h"
-#include "core/storage_directory.h"
 #include "ui/quick_gunner_flash_window.h"
 #include "ui/quick_gunner_region_picker.h"
-#include <QDir>
-#include <QFileInfo>
-#include <QTemporaryFile>
 #include <QTimer>
 namespace waibusnap
 {
 namespace
 {
-QString validateDirectory(const QString& directory, const QStringList& reservedDirectories,
-                          QString& cleaned)
-{
-    if (directory.isEmpty() || directory.contains(QChar::Null) || !QDir::isAbsolutePath(directory))
-        return QStringLiteral("请选择快枪手的绝对目录路径。");
-    cleaned = QDir::cleanPath(directory);
-    const QFileInfo info(cleaned);
-    if (info.isSymLink())
-        return QStringLiteral("快枪手目录不能是符号链接。");
-    if (!info.exists())
-        return QStringLiteral("快枪手目录不存在。");
-    if (!info.isDir())
-        return QStringLiteral("快枪手路径不是目录。");
-    const QString canonical = info.canonicalFilePath();
-    if (canonical.isEmpty())
-        return QStringLiteral("无法解析快枪手目录的真实路径。");
-    for (const auto& reserved : reservedDirectories)
-    {
-        if (reserved.isEmpty())
-            continue;
-        const QString other = canonicalStorageDirectory(reserved);
-        if (other.isEmpty())
-            return QStringLiteral("无法解析保留目录，请确认历史根目录和分组目录后重试。");
-        if (storageDirectoriesOverlap(canonical, other))
-            return QStringLiteral("快枪手目录不能与历史根目录或分组目录相同，也不能互相包含。");
-    }
-    QTemporaryFile probe(
-        QDir(canonical).filePath(QStringLiteral(".waibusnap-quick-gunner-XXXXXX")));
-    if (!info.isWritable() || !probe.open() || probe.write("probe", 5) != 5 || !probe.flush())
-        return QStringLiteral("快枪手目录不可写，请选择有写入权限的目录。");
-    if (!probe.remove())
-        return QStringLiteral("快枪手目录写入探针清理失败，请检查目录权限。");
-    return {};
-}
 bool sameDisplay(const DisplayTarget& first, const DisplayTarget& second)
 {
     return first.id == second.id && first.logicalGeometry == second.logicalGeometry &&
@@ -104,7 +67,7 @@ QString QuickGunnerController::setDirectory(const QString& directory,
                                             const QStringList& reservedDirectories)
 {
     QString cleaned;
-    auto error = validateDirectory(directory, reservedDirectories, cleaned);
+    auto error = validateCaptureDirectory(directory, reservedDirectories, cleaned);
     if (!error.isEmpty())
         return error;
     auto next = preferences_;
@@ -255,7 +218,8 @@ QString QuickGunnerController::activate(const QStringList& reservedDirectories)
     if (state_ == State::Framing)
         return QStringLiteral("请先确认或取消机位框选。");
     QString cleaned;
-    const auto error = validateDirectory(preferences_.directory, reservedDirectories, cleaned);
+    const auto error =
+        validateCaptureDirectory(preferences_.directory, reservedDirectories, cleaned);
     if (!error.isEmpty())
         return error;
     if (!preferences_.region || !preferences_.region->isValid())

@@ -1,5 +1,6 @@
 #include "app/application_controller.h"
 #include "app/hotkey_rules.h"
+#include "app/multi_display_capture.h"
 #include "app/quick_gunner_save_queue.h"
 #include "core/sticker_geometry.h"
 #include "core/window_snapping.h"
@@ -93,6 +94,31 @@ ApplicationController::ApplicationController(
                                                            RegionPickerFactory{},
                                                            std::move(quickGunnerDependencies));
     connectQuickGunner();
+    MultiDisplayCaptureDependencies multiDisplayDependencies;
+    multiDisplayDependencies.supported = [] { return regionCaptureSupported(); };
+    multiDisplayDependencies.watermark = [this](const QImage& image)
+    { return quickGunnerWatermark(image); };
+    multiDisplayDependencies.reservedDirectories = [this]
+    { return reservedQuickGunnerDirectories(); };
+    multiDisplayDependencies.notice = [this](const QString& notice)
+    { showQuickGunnerNotice(notice); };
+    multiDisplayDependencies.flash = [this](QRect logicalRegion, int index)
+    {
+        // 独立持有闪光窗：快枪手快门窗是懒创建的，未按过 F2 时不能依赖它。
+        if (!multiDisplayFlash_)
+            multiDisplayFlash_ = std::make_unique<QuickGunnerFlashWindow>();
+        QTimer::singleShot(std::max(0, index) * 60, this,
+                           [this, logicalRegion]
+                           {
+                               // 闪光在采集与落盘之后才出现，不会进入本次画面。
+                               if (multiDisplayFlash_)
+                                   multiDisplayFlash_->flash(logicalRegion);
+                           });
+    };
+    multiDisplay_ = std::make_unique<MultiDisplayCaptureController>(
+        settings_, *displays_, *capture_, std::move(multiDisplayDependencies));
+    connect(multiDisplay_.get(), &MultiDisplayCaptureController::busyChanged, this,
+            [this] { refreshQuickGunnerActions(); });
     if (!historyActions_.copyImage)
         historyActions_.copyImage = copyImageToClipboard;
     if (!historyActions_.pinImage)
@@ -205,6 +231,28 @@ ApplicationController::ApplicationController(
         quickGunnerMenu_->addAction(QStringLiteral("打开快枪手"), this, [this]
                                     { openResourceBrowser(QStringLiteral("quick-gunner")); });
     quickGunnerOpenAction_->setObjectName(QStringLiteral("quickGunnerOpenAction"));
+    multiDisplayCaptureAction_ = quickGunnerMenu_->addAction(
+        QStringLiteral("截取全部显示器"), this, [this] { startMultiDisplayCapture(); });
+    multiDisplayCaptureAction_->setObjectName(QStringLiteral("multiDisplayCaptureAction"));
+    multiDisplayCaptureAction_->setToolTip(QStringLiteral("一次截取全部显示器并保存到快枪手目录"));
+    multiDisplayStitchAction_ = quickGunnerMenu_->addAction(QStringLiteral("额外保存拼接图"));
+    multiDisplayStitchAction_->setObjectName(QStringLiteral("multiDisplayStitchAction"));
+    multiDisplayStitchAction_->setCheckable(true);
+    multiDisplayStitchAction_->setToolTip(QStringLiteral("按截图当时的桌面排布额外生成一张拼接图"));
+    connect(multiDisplayStitchAction_, &QAction::toggled, this,
+            [this](bool enabled)
+            {
+                auto preferences = settings_.loadSavePreferences();
+                preferences.multiDisplayStitch = enabled;
+                const auto error = settings_.saveSavePreferences(preferences);
+                if (!error.isEmpty())
+                {
+                    showQuickGunnerNotice(error);
+                    const QSignalBlocker blocker(multiDisplayStitchAction_);
+                    multiDisplayStitchAction_->setChecked(
+                        settings_.loadSavePreferences().multiDisplayStitch);
+                }
+            });
     quickGunnerFrameAction_ =
         quickGunnerMenu_->addAction(QStringLiteral("调整拍摄区域…"), this,
                                     [this]
@@ -516,6 +564,23 @@ void ApplicationController::setQuickGunnerMode(bool enabled)
     }
     refreshQuickGunnerActions();
 }
+void ApplicationController::startMultiDisplayCapture()
+{
+    if (recordingActive())
+    {
+        showRecordingNotice(QStringLiteral("录制中，已暂停截图 / 快枪手入口"));
+        return;
+    }
+    if (!multiDisplay_ || active_ || settingsOpen_ || quitting_ || resolvingQuit_)
+        return;
+    // 目录未设置时先走既有目录选择，与快门一致，不做隐式创建。
+    if (quickGunner_->preferences().directory.isEmpty() && !chooseQuickGunnerDirectory())
+        return;
+    const auto error = multiDisplay_->start();
+    if (!error.isEmpty())
+        showQuickGunnerNotice(error);
+    refreshQuickGunnerActions();
+}
 void ApplicationController::quickGunnerShutter()
 {
     if (recordingActive())
@@ -540,6 +605,26 @@ void ApplicationController::refreshQuickGunnerActions()
                                                     : QStringLiteral("Windows 原生采集后补"));
     }
     const bool browserEnabled = !active_ && !settingsOpen_ && !quitting_ && !resolvingQuit_;
+    if (multiDisplayCaptureAction_)
+    {
+        // 不依赖快枪手模式与机位；只依赖平台支持、无进行中会话与目录可写。
+        const bool multiDisplayEnabled =
+            quickGunnerActionsEnabled() && multiDisplay_ && !multiDisplay_->busy();
+        multiDisplayCaptureAction_->setEnabled(multiDisplayEnabled);
+        multiDisplayCaptureAction_->setToolTip(
+            regionCaptureSupported()
+                ? (multiDisplay_ && multiDisplay_->busy()
+                       ? QStringLiteral("正在截取全部显示器，请稍后")
+                       : QStringLiteral("一次截取全部显示器并保存到快枪手目录"))
+                : QStringLiteral("多显示器截图暂不支持当前平台（Windows 后补）"));
+    }
+    if (multiDisplayStitchAction_)
+    {
+        const bool stitchEnabled = !quitting_ && !resolvingQuit_;
+        multiDisplayStitchAction_->setEnabled(stitchEnabled);
+        const QSignalBlocker blocker(multiDisplayStitchAction_);
+        multiDisplayStitchAction_->setChecked(settings_.loadSavePreferences().multiDisplayStitch);
+    }
     quickGunnerOpenAction_->setEnabled(browserEnabled);
     quickGunnerDirectoryAction_->setEnabled(!recordingActive() && browserEnabled &&
                                             quickGunner_->state() !=
@@ -1062,6 +1147,8 @@ void ApplicationController::openSettings()
     dialog.exec();
     settingsOpen_ = false;
     refreshStickerActions();
+    // 设置保存后必须主动刷新派生入口（含托盘勾选态）。
+    refreshQuickGunnerActions();
 }
 ImageOutputResult ApplicationController::pinHistoryImage(const QImage& image)
 {
@@ -1896,7 +1983,22 @@ void ApplicationController::quit()
             scrollBar_->hide();
         const int pending = quickGunner_->pendingCaptureCount() + quickGunner_->pendingSaveCount() +
                             int(quickGunner_->capturing());
-        if (pending > 0)
+        // 多显示器一组采集进行中同样属于会丢失的待办；采集很快，提示后即可重试。
+        if (multiDisplay_ && multiDisplay_->busy())
+        {
+            QMessageBox box(QMessageBox::Warning, QStringLiteral("退出多显示器截图"),
+                            QStringLiteral("正在截取全部显示器，现在退出会丢失本次截图。"),
+                            QMessageBox::NoButton);
+            auto* cancel = box.addButton(QStringLiteral("取消退出"), QMessageBox::RejectRole);
+            cancel->setObjectName(QStringLiteral("multiDisplayQuitCancel"));
+            auto* discard = box.addButton(QStringLiteral("仍然退出"), QMessageBox::DestructiveRole);
+            discard->setObjectName(QStringLiteral("multiDisplayQuitDiscard"));
+            box.setDefaultButton(cancel);
+            box.setEscapeButton(cancel);
+            box.exec();
+            backlogCancelled = box.clickedButton() != discard;
+        }
+        if (pending > 0 && !backlogCancelled)
         {
             QMessageBox box(
                 QMessageBox::Warning, QStringLiteral("退出快枪手"),

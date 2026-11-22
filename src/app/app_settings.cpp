@@ -798,6 +798,10 @@ SavePreferences AppSettings::loadSavePreferences() const
         preferences.quickDirectory = directory;
     if (format == QStringLiteral("jpeg"))
         preferences.format = ImageFormat::Jpeg;
+    // 只有明确 true 才开启，其余值一律视为关闭，避免脏值放大保存体积。
+    preferences.multiDisplayStitch =
+        settings.value(QStringLiteral("save/multiDisplayStitch"), false).toString() ==
+        QStringLiteral("true");
     // 非法键独立回退；读取不修复文件，也不触碰热键键。
     return preferences;
 }
@@ -1112,6 +1116,9 @@ QString AppSettings::saveSavePreferences(const SavePreferences& preferences) con
     settings.setValue(QStringLiteral("save/format"), preferences.format == ImageFormat::Jpeg
                                                          ? QStringLiteral("jpeg")
                                                          : QStringLiteral("png"));
+    settings.setValue(QStringLiteral("save/multiDisplayStitch"), preferences.multiDisplayStitch
+                                                                     ? QStringLiteral("true")
+                                                                     : QStringLiteral("false"));
     settings.sync();
     if (settings.status() != QSettings::NoError)
         return QStringLiteral("保存偏好写入失败，请重试保存。");

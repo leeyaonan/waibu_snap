@@ -133,7 +133,10 @@ class HotkeySettingsTest final : public QObject
             QCOMPARE(AppSettings(path).loadStickerCloseReminder(), enabled);
             QSettings ini(path, QSettings::IniFormat);
             QCOMPARE(ini.value(QStringLiteral("sticker/confirmUnsavedClose")).toBool(), enabled);
-            QCOMPARE(ini.allKeys().size(), 4);
+            // 新增多显示器拼接开关后键数 +1；同时确认它不干扰贴图偏好。
+            QCOMPARE(ini.value(QStringLiteral("save/multiDisplayStitch")).toString(),
+                     QStringLiteral("false"));
+            QCOMPARE(ini.allKeys().size(), 5);
             QCOMPARE(settings.loadHotkey().sequence, QKeySequence(Qt::Key_F2));
             QCOMPARE(settings.loadSavePreferences().quickDirectory, temporary.path());
             QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
@@ -280,7 +283,10 @@ class HotkeySettingsTest final : public QObject
             QSettings ini(path, QSettings::IniFormat);
             QCOMPARE(ini.value(QStringLiteral("save/quickDirectory")).toString(), directory);
             QCOMPARE(ini.value(QStringLiteral("save/format")).toString(), QStringLiteral("jpeg"));
-            QCOMPARE(ini.allKeys().size(), 3);
+            // v010 起多写入 save/multiDisplayStitch，键数 3 → 4。
+            QCOMPARE(ini.value(QStringLiteral("save/multiDisplayStitch")).toString(),
+                     QStringLiteral("false"));
+            QCOMPARE(ini.allKeys().size(), 4);
         }
         QVERIFY(settings.saveSavePreferences({}).isEmpty());
         QVERIFY(settings.loadSavePreferences().quickDirectory.isEmpty());

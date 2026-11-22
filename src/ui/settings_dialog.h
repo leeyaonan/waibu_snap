@@ -125,6 +125,7 @@ class SettingsDialog final : public QDialog
     QComboBox* format_ = nullptr;
     AutostartActions autostartActions_;
     QCheckBox* autostartCheck_ = nullptr;
+    QCheckBox* multiDisplayStitchCheck_ = nullptr;
     QCheckBox* stickerCloseReminderCheck_ = nullptr;
     QCheckBox* stickerDoubleClickCloseCheck_ = nullptr;
     HistorySettingsActions historySettings_;

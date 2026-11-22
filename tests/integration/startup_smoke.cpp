@@ -8265,6 +8265,75 @@ class StartupSmokeTest final : public QObject
         QCOMPARE(settings.loadSavePreferences().quickDirectory, temporary.path());
         QCOMPARE(settings.loadSavePreferences().format, ImageFormat::Jpeg);
     }
+    void multiDisplayStitchSettingRoundTrip()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        AppSettings settings(temporary.filePath(QStringLiteral("settings.ini")));
+        // 默认关闭：未写过的键必须视为 false，而不是脏值放大保存体积。
+        QVERIFY(!settings.loadSavePreferences().multiDisplayStitch);
+        auto preferences = settings.loadSavePreferences();
+        preferences.multiDisplayStitch = true;
+        QVERIFY(settings.saveSavePreferences(preferences).isEmpty());
+        QVERIFY(settings.loadSavePreferences().multiDisplayStitch);
+        preferences.multiDisplayStitch = false;
+        QVERIFY(settings.saveSavePreferences(preferences).isEmpty());
+        QVERIFY(!settings.loadSavePreferences().multiDisplayStitch);
+
+        // 设置页复选框与保存值联动，并与托盘勾选态同源。
+        SaveSettingsActions actions;
+        actions.preferences = settings.loadSavePreferences();
+        actions.savePreferences = [&](const SavePreferences& next)
+        { return settings.saveSavePreferences(next); };
+        SettingsDialog dialog(
+            defaultScreenshotHotkey(), [](const QKeySequence&) { return QString(); }, {}, nullptr,
+            actions);
+        dialog.show();
+        auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("multiDisplayStitchCheck"));
+        QVERIFY(check);
+        QVERIFY(!check->isChecked());
+        check->setChecked(true);
+        QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveSettingsButton")),
+                          Qt::LeftButton);
+        QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        QVERIFY(settings.loadSavePreferences().multiDisplayStitch);
+    }
+    void multiDisplayMenuActionsAvailability()
+    {
+        using namespace waibusnap;
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        RunOptions options;
+        options.testMode = true;
+        options.settingsFile = temporary.filePath(QStringLiteral("application.ini"));
+        ApplicationController controller(*qApp, options);
+        auto* capture =
+            controller.menu()->findChild<QAction*>(QStringLiteral("multiDisplayCaptureAction"));
+        auto* stitch =
+            controller.menu()->findChild<QAction*>(QStringLiteral("multiDisplayStitchAction"));
+        QVERIFY(capture);
+        QVERIFY(stitch);
+        // 菜单项确实挂在「快枪手」子菜单下，且拼接图默认为关闭。
+        QVERIFY(controller.menu()
+                    ->findChild<QMenu*>(QStringLiteral("quickGunnerMenu"))
+                    ->actions()
+                    .contains(capture));
+        QVERIFY(stitch->isCheckable());
+        QCOMPARE(stitch->isChecked(),
+                 AppSettings(options.settingsFile).loadSavePreferences().multiDisplayStitch);
+        // Windows 模拟（平台不支持）时置灰并给出对应 tooltip。
+        if (!regionCaptureSupported())
+        {
+            QVERIFY(!capture->isEnabled());
+            QVERIFY(capture->toolTip().contains(QStringLiteral("暂不支持")));
+        }
+        // 勾选即写盘，并在刷新后保持同步。
+        stitch->setChecked(true);
+        QVERIFY(AppSettings(options.settingsFile).loadSavePreferences().multiDisplayStitch);
+        stitch->trigger();
+        QVERIFY(!AppSettings(options.settingsFile).loadSavePreferences().multiDisplayStitch);
+    }
     void saveSettingsEditCancelAndDirectoryInjection_data()
     {
         QTest::addColumn<int>("decision");
@@ -8455,7 +8524,8 @@ class StartupSmokeTest final : public QObject
              QStringLiteral("autostartCheck"), QStringLiteral("autostartHelp")},
             {QStringLiteral("quickDirectory"), QStringLiteral("chooseDirectoryButton"),
              QStringLiteral("clearDirectoryButton"), QStringLiteral("saveFormat"),
-             QStringLiteral("jpegLossNotice")},
+             QStringLiteral("jpegLossNotice"), QStringLiteral("multiDisplayStitchCheck"),
+             QStringLiteral("multiDisplayStitchHelp")},
             {QStringLiteral("ratioList"), QStringLiteral("ratioWidthInput"),
              QStringLiteral("ratioHeightInput"), QStringLiteral("ratioAddButton"),
              QStringLiteral("ratioRestoreButton"), QStringLiteral("quickRatioCombo"),

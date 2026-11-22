@@ -510,6 +510,38 @@ set_target_properties(annotation_transform_test PROPERTIES WIN32_EXECUTABLE FALS
 add_test(NAME annotation_transform COMMAND annotation_transform_test)
 set_tests_properties(annotation_transform PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+qt_add_executable(capture_directory_test unit/capture_directory_test.cpp)
+target_link_libraries(capture_directory_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(capture_directory_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME capture_directory COMMAND capture_directory_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/capture-directory-output.txt,txt")
+set_tests_properties(capture_directory PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(multi_display_capture_test integration/multi_display_capture_test.cpp)
+target_link_libraries(multi_display_capture_test PRIVATE waibusnap_ui Qt6::Test waibusnap_options)
+set_target_properties(multi_display_capture_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME multi_display_capture COMMAND multi_display_capture_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/multi-display-capture-output.txt,txt")
+set_tests_properties(multi_display_capture PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+add_test(NAME multi_display_capture_high_dpi COMMAND multi_display_capture_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/multi-display-capture-high-dpi-output.txt,txt")
+set_tests_properties(multi_display_capture_high_dpi PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=2" TIMEOUT 60)
+
+qt_add_executable(multi_display_output_test unit/multi_display_output_test.cpp)
+target_link_libraries(multi_display_output_test PRIVATE waibusnap_output Qt6::Test waibusnap_options)
+set_target_properties(multi_display_output_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME multi_display_output COMMAND multi_display_output_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/multi-display-output-output.txt,txt")
+set_tests_properties(multi_display_output PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(multi_display_test unit/multi_display_test.cpp)
+target_link_libraries(multi_display_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
+set_target_properties(multi_display_test PROPERTIES WIN32_EXECUTABLE FALSE)
+add_test(NAME multi_display COMMAND multi_display_test -o
+    "${CMAKE_CURRENT_BINARY_DIR}/multi-display-output.txt,txt")
+set_tests_properties(multi_display PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 qt_add_executable(quick_gunner_test unit/quick_gunner_test.cpp)
 target_link_libraries(quick_gunner_test PRIVATE waibusnap_core Qt6::Test waibusnap_options)
 set_target_properties(quick_gunner_test PROPERTIES WIN32_EXECUTABLE FALSE)

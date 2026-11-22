@@ -1598,3 +1598,22 @@ macOS `MacRecordingSession::start` 在创建 AVAssetWriter / `ensureWriterStarte
 `qr_recognizer_real_engine` 通过 `QrRecognitionTask` 在真实工作线程运行，不直接调用引擎：macOS 校验 Vision 与 quirc 两套实现，Windows 校验生产 quirc。`qr_ui` 使用 `QrStub` 注入固定结果与延迟，覆盖覆盖层 / 贴图的按钮、后台线程、复制 / 打开回调、多结果切换、重试、空 / 失败、选区变化丢弃与工具条恢复；`openUrl` 返回替身值，不启动浏览器。
 
 本机 macOS / arm64、Qt 6.11.2 Release：完整 CTest **75/75（212.10 秒）**；`startup_smoke` **515**、`startup_smoke_sticker_high_dpi` **444**；`qr_recognizer_real_engine` **8**、`qr_ui` **10**；clang-format **18.1.8**、`scripts/lint-code.sh`、`git diff --check` 通过。Windows 的 MSVC C11 / quirc 构建、真实识别和 Intel 交叉构建以双端 CI 为准；本机结论不替代 Windows 实机与用户真机验收。
+
+## v010：多显示器截图（2026-11-22）
+
+| CTest 名称 | 覆盖 |
+| --- | --- |
+| `multi_display` | 纯几何与命名：无效输入过滤（id 0 / 空几何 / DPR 非法）、三屏横排按 left 排序且枚举顺序无关、上两块 + 下一块分两行、错开半屏仍同行、上下不重叠分两行、完全重合按 ID 兜底、混用 DPR 取组内最大（4K@2 与 1080p@1 在拼接图中等大且单屏原图尺寸不变）、负坐标并集包围盒与相对偏移、16384 单边 / 268435456 面积边界、单屏仍生成布局；`_00`/`_01` 序号规则、JPEG 后缀、同毫秒前缀逐毫秒顺延、`multiDisplayPrefixAttempts` 用尽返回空串 |
+| `multi_display_output` | 拼接合成：输入与布局不匹配 / 空布局返回空图；上两块 + 下一块时下方左侧留空 alpha=0、PNG 末列仍在屏内（无额外边距）；JPEG 留白为白色；4K@2 + 1080p@1 两屏等大；整组落盘 `_00` 起且全部存在、关闭拼接时 `_01` 起、第二张注入失败时回收已写文件且目录回到空、空请求 / 拼图为空 / 前缀预留失败均拒绝、JPEG 后缀 |
+| `multi_display_capture` | 编排：枚举顺序打乱仍按排布落盘与逐屏闪光（左 → 中 → 右）；单屏失败整组不落盘不闪光且提示「1/2 屏失败」含屏序号与原因；相同原因合并为「第 1 屏、第 3 屏」一处；像素尺寸不匹配拒绝；开启拼接时合成尺寸与「+ 1 张拼接图」文案；拼接超限整组放弃；保存失败上抛原因；`busy` 期间再触发被拒；目录为空 / 平台不支持 / 无显示器 / 显示器层报错 / 布局变化 / 权限缺失六类前置拒绝；空图像被拒 |
+| `multi_display_capture_high_dpi` | 同一批用例在 `QT_SCALE_FACTOR=2` 下复跑，确认 DPR 参与布局与帧尺寸核验时不受缩放影响 |
+| `capture_directory` | 目录校验提取后的行为保持：空 / 相对 / 含 NUL 拒绝、不存在与非目录拒绝、符号链接拒绝、可写目录通过且返回 cleanPath、与历史根目录完全重合 / 被包含 / 包含保留目录三种重叠全部拒绝、无关目录通过 |
+| `startup_smoke`（v010） | `multiDisplayStitchSettingRoundTrip`：未写过的键视为关闭、true / false 往返、设置页 `multiDisplayStitchCheck` 勾选后保存生效；`multiDisplayMenuActionsAvailability`：`multiDisplayCaptureAction` / `multiDisplayStitchAction` 在「快枪手」子菜单、拼接图默认为关且可勾选、平台不支持时置灰并给出 tooltip、勾选即写盘且刷新后保持同步；`settingsTabsContainAllPages` 的「保存」页控件清单加入新复选框与说明 |
+
+本机 macOS 27.0.1 / arm64 / Qt 6.11.2 Release：新增 `multi_display` **16** 项、`multi_display_output` **12** 项、`multi_display_capture` **12** 项、`capture_directory` **7** 项全部通过；完整 CTest **80/80（204.66 秒）**、主冒烟 **517**、`startup_smoke_sticker_high_dpi` 通过、lint / clang-format 18.1.8 通过。
+
+`DisplayTopology::allDisplays()` 采用带默认空实现的虚函数，既有 6 处测试桩（`overlay_visibility_probe`、`quick_gunner_region_picker_test`、`history_ingest_test`、`startup_smoke`、`quick_gunner_capture_test` 等）无需改动即可编译；Windows 不覆写，等于平台不支持，入口据此置灰。
+
+`composeMultiDisplayStitch` 不做静默降采样：画布超过 16384 单边或 268435456 总像素时由 `buildMultiDisplayLayout` 置 `stitchExceedsLimit`，编排层整组放弃并提示，不产生半组文件。屏幕之间空白在 PNG 中 alpha=0、在 JPEG 中为白色；四周不留额外边距。
+
+整组落盘先由 `multiDisplayPrefix` 逐毫秒顺延预留「本组全部目标名都不存在」的前缀，再逐张走既有 `exportPngToPath` / `exportJpegToPath` 原子提交；任一张失败逆序删除本次已写文件，绝不覆盖已有文件。首帧差与端到端耗时（3 屏目标 ≤ 3 秒）、真实三屏 / 混用 DPR / 竖屏 / 负坐标外接屏取证，以及 Windows 实机置灰仍需人工验收，未在自动化中声称通过。

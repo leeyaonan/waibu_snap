@@ -51,6 +51,8 @@ struct RunOptions
     int intervalMs = 1000;
     int holdMs = 250;
 };
+class MultiDisplayCaptureController;
+class QuickGunnerFlashWindow;
 class ApplicationController final : public QObject
 {
     Q_OBJECT
@@ -108,6 +110,7 @@ class ApplicationController final : public QObject
     void showRecordingNotice(const QString& notice);
     void setQuickGunnerMode(bool enabled);
     void quickGunnerShutter();
+    void startMultiDisplayCapture();
     bool chooseQuickGunnerDirectory();
     QStringList reservedQuickGunnerDirectories() const;
     void showQuickGunnerNotice(const QString& notice);
@@ -145,6 +148,8 @@ class ApplicationController final : public QObject
     QAction* quickGunnerFrameAction_ = nullptr;
     QAction* quickGunnerDirectoryAction_ = nullptr;
     QAction* quickGunnerStatusAction_ = nullptr;
+    QAction* multiDisplayCaptureAction_ = nullptr;
+    QAction* multiDisplayStitchAction_ = nullptr;
     bool quickGunnerWatermarkWarned_ = false;
     QAction* settingsAction_ = nullptr;
     QAction* openHistoryAction_ = nullptr;
@@ -176,6 +181,8 @@ class ApplicationController final : public QObject
     std::unique_ptr<CaptureProvider> capture_;
     // 依赖显示器与权限提供者；按逆序先销毁快枪手。
     std::unique_ptr<QuickGunnerController> quickGunner_;
+    std::unique_ptr<MultiDisplayCaptureController> multiDisplay_;
+    std::unique_ptr<QuickGunnerFlashWindow> multiDisplayFlash_;
     std::unique_ptr<WindowEnumerator> windows_;
     std::unique_ptr<PresentationObservation> observation_;
     StickerManager stickers_;

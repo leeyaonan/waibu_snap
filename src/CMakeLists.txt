@@ -2,6 +2,7 @@ add_subdirectory(platform)
 
 add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp core/aspect_ratio.cpp core/text_layout.cpp core/annotation.cpp core/selection_geometry.cpp core/selection_assistance.cpp core/window_snapping.cpp core/sticker_geometry.cpp
     core/history_types.cpp core/history_cleanup.cpp core/watermark.cpp core/quick_gunner.cpp
+    core/multi_display.cpp
     core/gif_encoder.cpp
     core/recording.cpp
     core/storage_directory.cpp
@@ -10,7 +11,8 @@ add_library(waibusnap_core STATIC core/scroll_stitcher.cpp core/shape_mask.cpp c
     session/session_metrics.cpp)
 target_include_directories(waibusnap_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_core PUBLIC Qt6::Gui PRIVATE waibusnap_options waibusnap_quirc)
-add_library(waibusnap_output STATIC output/image_output.cpp output/annotation_renderer.cpp output/watermark_renderer.cpp)
+add_library(waibusnap_output STATIC output/image_output.cpp output/annotation_renderer.cpp output/watermark_renderer.cpp
+    output/multi_display_output.cpp)
 target_include_directories(waibusnap_output PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(waibusnap_output PUBLIC Qt6::Gui waibusnap_core PRIVATE waibusnap_options)
 add_library(waibusnap_settings STATIC app/hotkey_rules.cpp app/app_settings.cpp app/history_store.cpp app/history_manager.cpp app/history_manager.h app/watermark_service.cpp app/watermark_service.h
@@ -24,6 +26,8 @@ add_library(waibusnap_ui STATIC output/image_save.cpp ui/selection_overlay.cpp u
     ui/recording_border_window.cpp ui/recording_border_window.h
     ui/recording_toast.cpp ui/recording_toast.h
     app/quick_gunner.cpp app/quick_gunner.h
+    app/multi_display_capture.cpp app/multi_display_capture.h
+    app/capture_directory.cpp app/capture_directory.h
     app/quick_gunner_save_queue.cpp app/quick_gunner_save_queue.h
     ui/quick_gunner_flash_window.cpp ui/quick_gunner_flash_window.h
     ui/quick_gunner_region_picker.cpp ui/quick_gunner_region_picker.h

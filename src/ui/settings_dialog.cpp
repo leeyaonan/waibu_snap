@@ -222,6 +222,17 @@ SettingsDialog::SettingsDialog(const QKeySequence& current, SaveHotkey save, con
     saveLayout->addWidget(lossNotice);
     connect(format_, &QComboBox::currentIndexChanged, lossNotice,
             [lossNotice](int index) { lossNotice->setVisible(index == 1); });
+    multiDisplayStitchCheck_ =
+        new QCheckBox(QStringLiteral("多显示器截图额外保存拼接图"), saveGroup);
+    multiDisplayStitchCheck_->setObjectName(QStringLiteral("multiDisplayStitchCheck"));
+    multiDisplayStitchCheck_->setChecked(saveSettings_.preferences.multiDisplayStitch);
+    saveLayout->addWidget(multiDisplayStitchCheck_);
+    auto* stitchHelp = new QLabel(QStringLiteral("拼接图按截图当时的桌面排布生成（含系统缩放）。"
+                                                 "屏幕之间的空白在 PNG 中透明，在 JPEG 中为白色。"),
+                                  saveGroup);
+    stitchHelp->setObjectName(QStringLiteral("multiDisplayStitchHelp"));
+    stitchHelp->setWordWrap(true);
+    saveLayout->addWidget(stitchHelp);
     savePageLayout->addWidget(saveGroup);
     savePageLayout->addStretch();
     auto* startupGroup = new QGroupBox(QStringLiteral("启动"), generalPage);
@@ -993,9 +1004,10 @@ void SettingsDialog::save()
                 saveSettings_.recordingHotkeys[i] = sequences[i + 5];
         }
     if (error.isEmpty() && saveSettings_.savePreferences)
-        error = saveSettings_.savePreferences({directory_->text(), format_->currentIndex() == 1
-                                                                       ? ImageFormat::Jpeg
-                                                                       : ImageFormat::Png});
+        error = saveSettings_.savePreferences(
+            {directory_->text(),
+             format_->currentIndex() == 1 ? ImageFormat::Jpeg : ImageFormat::Png,
+             multiDisplayStitchCheck_->isChecked()});
     if (error.isEmpty() && autostartCheck_->isChecked() != autostartActions_.query().enabled)
         error = autostartActions_.setEnabled(autostartCheck_->isChecked());
     if (error.isEmpty() && saveSettings_.saveRatios)

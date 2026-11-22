@@ -1090,10 +1090,26 @@ class QuickGunnerCaptureTest : public QObject
             ApplicationControllerTestAccess::guard(controller, which, false);
             QCOMPARE(mode->isEnabled(), regionCaptureSupported());
         }
+        // v010 新增两项：截取全部显示器 + 额外保存拼接图开关。
+        auto* multiCapture =
+            controller.menu()->findChild<QAction*>(QStringLiteral("multiDisplayCaptureAction"));
+        auto* multiStitch =
+            controller.menu()->findChild<QAction*>(QStringLiteral("multiDisplayStitchAction"));
+        QVERIFY(multiCapture && multiStitch);
+        QCOMPARE(multiCapture->isEnabled(), regionCaptureSupported());
+        QVERIFY(multiStitch->isCheckable());
+        for (int which = 0; which < 4; ++which)
+        {
+            ApplicationControllerTestAccess::guard(controller, which, true);
+            QVERIFY(!multiCapture->isEnabled());
+            ApplicationControllerTestAccess::guard(controller, which, false);
+            QCOMPARE(multiCapture->isEnabled(), regionCaptureSupported());
+        }
         const auto actions = controller.menu()->actions();
         auto* quickMenu = controller.menu()->findChild<QMenu*>(QStringLiteral("quickGunnerMenu"));
         QVERIFY(quickMenu);
-        QCOMPARE(quickMenu->actions(), (QList<QAction*>{mode, open, frame, directory, status}));
+        QCOMPARE(quickMenu->actions(), (QList<QAction*>{mode, open, multiCapture, multiStitch,
+                                                        frame, directory, status}));
         const auto position = actions.indexOf(quickMenu->menuAction());
         QVERIFY(position > 0);
         QCOMPARE(actions[position - 1]->objectName(), QStringLiteral("scrollCaptureAction"));

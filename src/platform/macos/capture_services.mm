@@ -94,6 +94,35 @@ class MacDisplays final : public DisplayTopology
         }
         return false;
     }
+    QVector<DisplayResult> allDisplays() const override
+    {
+        QVector<DisplayResult> result;
+        // 先取系统快照，再与 Qt 屏幕逐项核对；任一块对不上就整体失败，
+        // 避免产出坐标错误的截图。
+        QVector<DisplayTarget> targets;
+        for (NSScreen* screen in NSScreen.screens)
+            targets.append(targetForScreen(screen));
+        if (targets.isEmpty())
+            return {DisplayResult{{}, QStringLiteral("未找到可用显示器。")}};
+        for (const auto& target : targets)
+        {
+            bool matched = false;
+            for (QScreen* qtScreen : QGuiApplication::screens())
+            {
+                if (qtScreen->geometry() == target.logicalGeometry &&
+                    qFuzzyCompare(qtScreen->devicePixelRatio(), target.devicePixelRatio))
+                {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched)
+                return {DisplayResult{
+                    {}, QStringLiteral("系统与 Qt 显示器坐标不一致，请重新启动后重试。")}};
+            result.append({target, {}});
+        }
+        return result;
+    }
 };
 class MacWindowEnumerator final : public WindowEnumerator
 {

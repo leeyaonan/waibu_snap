@@ -13,6 +13,8 @@ struct SavePreferences
 {
     QString quickDirectory;
     ImageFormat format = ImageFormat::Png;
+    // 多显示器截图额外保存拼接图；默认关闭。
+    bool multiDisplayStitch = false;
 };
 struct ImageOutputResult
 {
