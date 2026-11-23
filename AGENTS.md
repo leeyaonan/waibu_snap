@@ -35,3 +35,5 @@
 | 打包 | 本轮未实现，构建树不是分发包 | 本轮未实现，构建树不是分发包 |
 
 脚本只检测已有环境，不擅自安装 Qt。CI 双矩阵负责 Qt 6.11.2 安装、configure、build、ctest 与格式检查；CI 通过不等于 V01–V03 实机验收通过。
+
+> **构建入口铁律（BUG-0007 / L-0010）**：凡改动会让 `build/macos/bin/WaibuSnap.app` 重新链接（源码、CMake、资源、`Info.plist`），收尾必须走 `bash scripts/build-project.sh`。裸 `cmake --build` 只用于 `build/macos/tests/*` 目标级编译——它绕过脚本末尾的 `codesign`，会把「WaibuSnap Dev」稳定签名覆盖成 ad-hoc，cdhash 随重链变化，macOS 27 随即重新索要屏幕录制权限。交付前核对 `codesign -dvv build/macos/bin/WaibuSnap.app` 的 `Authority=WaibuSnap Dev` 与 `Identifier=local.waibusnap.dev`；出现 `Signature=adhoc` 即视为环境已损坏，须立即用构建脚本重签。

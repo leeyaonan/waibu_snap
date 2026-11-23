@@ -80,6 +80,8 @@ WAIBUSNAP_CODESIGN_IDENTITY= bash scripts/build-project.sh
 
 构建仅对 `bin/WaibuSnap.app` 使用 `codesign --force --sign <身份> --identifier local.waibusnap.dev --timestamp=none`，随后验证签名并打印 Authority / Identifier / CDHash 和 designated requirement。无 `--deep`、无 hardened runtime，不签外部 Qt 动态库或 `waibusnap_measure_probe`，不改变 CMake、CTest 或测试脚本。
 
+**不要在已有构建树上用裸 `cmake --build` 收尾**（BUG-0007 / L-0010）：该路径不执行上面的 `codesign`，会把证书签名覆盖成 ad-hoc；cdhash 随重链变化，macOS 27 会重新索要屏幕录制权限。裸 `cmake --build build/macos --target <测试目标>` 只适合编译 `build/macos/tests/*`。只要 `bin/WaibuSnap.app` 被重新链接，一律改用 `bash scripts/build-project.sh`。
+
 手动校验（构建目录按实际配置调整）：
 
 ```bash
