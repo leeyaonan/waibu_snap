@@ -3,19 +3,56 @@
 #include <QFile>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <vector>
 namespace waibusnap
 {
 namespace
 {
 constexpr int kBins = 64 * 64 * 64;
+constexpr int kPaletteColors = 256;
 int bin(QRgb p) { return (qRed(p) >> 2) * 4096 + (qGreen(p) >> 2) * 64 + (qBlue(p) >> 2); }
 struct ColorBin
 {
     quint32 count = 0;
     quint64 r = 0, g = 0, b = 0;
 };
+// 非空颜色桶：6-bit 桶索引、桶内均值与 OkLab 坐标。
+// 切分与选色都在感知空间进行，避免小面积高饱和色被大面积近似色挤掉。
+struct QuantBin
+{
+    int cell = 0;
+    quint32 count = 0;
+    float r = 0.0F, g = 0.0F, b = 0.0F;
+    float lightness = 0.0F, chromaA = 0.0F, chromaB = 0.0F;
+};
+// 中位切分的当前盒子，只记 QuantBin 上的区间；cut 为该盒加权平方误差的最大轴。
+struct QuantBox
+{
+    int start = 0;
+    int length = 0;
+    int axis = 0;
+    float cut = 0.0F;
+};
+float toLinear(float value)
+{
+    return value <= 0.04045F ? value / 12.92F : std::pow((value + 0.055F) / 1.055F, 2.4F);
 }
+// sRGB(0–255) → OkLab。感知空间里红色与蓝色的距离远大于两者各自与相邻色的距离，
+// 因此按误差切分时小面积色会被单独切成一个盒子，而不是按像素数被淘汰。
+void toOklab(float r, float g, float b, float& lightness, float& chromaA, float& chromaB)
+{
+    const float lr = toLinear(r / 255.0F);
+    const float lg = toLinear(g / 255.0F);
+    const float lb = toLinear(b / 255.0F);
+    const float l = std::cbrt(0.4122214708F * lr + 0.5363325363F * lg + 0.0514459929F * lb);
+    const float m = std::cbrt(0.2119034982F * lr + 0.6806995451F * lg + 0.1073969566F * lb);
+    const float s = std::cbrt(0.0883024619F * lr + 0.2817188376F * lg + 0.6299787005F * lb);
+    lightness = 0.2104542553F * l + 0.7936177850F * m - 0.0040720468F * s;
+    chromaA = 1.9779984951F * l - 2.4285922050F * m + 0.4505937099F * s;
+    chromaB = 0.0259040371F * l + 0.7827717662F * m - 0.8086757660F * s;
+}
+} // namespace
 struct GifEncoder::Impl
 {
     QFile file;
@@ -25,6 +62,8 @@ struct GifEncoder::Impl
     bool failed = false;
     QByteArray output;
     std::vector<ColorBin> histogram = std::vector<ColorBin>(kBins);
+    std::vector<QuantBin> colors;
+    std::vector<QuantBox> boxes;
     std::array<quint8, kBins> indices{};
     std::array<bool, kBins> mapped{};
     std::vector<int> queue;
@@ -58,7 +97,8 @@ struct GifEncoder::Impl
         for (int i = 0; i < count; ++i)
             byte(quint8(data[i]));
     }
-    void palette(const QImage& frame)
+    // 统计当前帧的 6-bit 直方图，并整理成带 OkLab 坐标的非空桶列表。
+    void collect(const QImage& frame)
     {
         std::fill(histogram.begin(), histogram.end(), ColorBin{});
         for (int y = 0; y < frame.height(); ++y)
@@ -74,52 +114,158 @@ struct GifEncoder::Impl
                 h.b += qBlue(p);
             }
         }
-        queue.clear();
+        colors.clear();
         for (int i = 0; i < kBins; ++i)
-            if (histogram[size_t(i)].count)
-                queue.push_back(i);
-        const auto compare = [this](int a, int b)
         {
-            const auto ca = histogram[size_t(a)].count, cb = histogram[size_t(b)].count;
-            // 同频bin用稳定散列打破并列，避免仅保留低RGB索引导致整段色域丢失。
-            const auto rank = [](quint32 value)
-            {
-                value ^= value >> 16;
-                value *= 0x7feb352du;
-                value ^= value >> 15;
-                value *= 0x846ca68bu;
-                return value ^ (value >> 16);
-            };
-            return ca == cb ? rank(quint32(a)) < rank(quint32(b)) : ca > cb;
-        };
-        const size_t colors = std::min(size_t(256), queue.size());
-        if (queue.size() > colors)
-            std::nth_element(queue.begin(), queue.begin() + qsizetype(colors), queue.end(),
-                             compare);
-        queue.resize(colors);
-        std::sort(queue.begin(), queue.end(), compare);
-        mapped.fill(false);
-        for (size_t i = 0; i < 256; ++i)
+            const auto& h = histogram[size_t(i)];
+            if (!h.count)
+                continue;
+            QuantBin item;
+            item.cell = i;
+            item.count = h.count;
+            item.r = float(h.r) / float(h.count);
+            item.g = float(h.g) / float(h.count);
+            item.b = float(h.b) / float(h.count);
+            toOklab(item.r, item.g, item.b, item.lightness, item.chromaA, item.chromaB);
+            colors.push_back(item);
+        }
+    }
+    // 重算盒子的加权均值与加权平方误差，误差最大的轴作为下一步切分方向。
+    void updateBox(size_t index)
+    {
+        QuantBox& box = boxes[index];
+        quint64 weight = 0;
+        double sumL = 0.0, sumA = 0.0, sumB = 0.0;
+        for (int i = box.start; i < box.start + box.length; ++i)
         {
-            if (i < colors)
+            const QuantBin& item = colors[size_t(i)];
+            weight += item.count;
+            sumL += double(item.lightness) * item.count;
+            sumA += double(item.chromaA) * item.count;
+            sumB += double(item.chromaB) * item.count;
+        }
+        if (!weight)
+        {
+            box.cut = 0.0F;
+            return;
+        }
+        const double meanL = sumL / double(weight);
+        const double meanA = sumA / double(weight);
+        const double meanB = sumB / double(weight);
+        double error[3] = {0.0, 0.0, 0.0};
+        for (int i = box.start; i < box.start + box.length; ++i)
+        {
+            const QuantBin& item = colors[size_t(i)];
+            const double dL = double(item.lightness) - meanL;
+            const double dA = double(item.chromaA) - meanA;
+            const double dB = double(item.chromaB) - meanB;
+            error[0] += dL * dL * item.count;
+            error[1] += dA * dA * item.count;
+            error[2] += dB * dB * item.count;
+        }
+        box.axis =
+            error[0] >= error[1] ? (error[0] >= error[2] ? 0 : 2) : (error[1] >= error[2] ? 1 : 2);
+        box.cut = float(std::max({error[0], error[1], error[2]}));
+    }
+    // 沿误差最大的轴按加权中位数二分盒子，保证两侧都至少保留一个桶。
+    void split(size_t index)
+    {
+        const QuantBox box = boxes[index];
+        const int axis = box.axis;
+        const auto first = colors.begin() + box.start;
+        std::sort(first, first + box.length,
+                  [axis](const QuantBin& left, const QuantBin& right)
+                  {
+                      const float a =
+                          axis == 0 ? left.lightness : (axis == 1 ? left.chromaA : left.chromaB);
+                      const float b =
+                          axis == 0 ? right.lightness : (axis == 1 ? right.chromaA : right.chromaB);
+                      return a < b;
+                  });
+        quint64 total = 0;
+        for (int i = box.start; i < box.start + box.length; ++i)
+            total += colors[size_t(i)].count;
+        quint64 accumulated = 0;
+        int cut = box.start + box.length - 1;
+        for (int i = box.start; i < box.start + box.length; ++i)
+        {
+            accumulated += colors[size_t(i)].count;
+            if (accumulated * 2 >= total)
             {
-                const int cell = queue[i];
-                const auto& h = histogram[size_t(cell)];
-                byte(quint8(h.r / h.count));
-                byte(quint8(h.g / h.count));
-                byte(quint8(h.b / h.count));
-                indices[size_t(cell)] = quint8(i);
-                mapped[size_t(cell)] = true;
-            }
-            else
-            {
-                byte(0);
-                byte(0);
-                byte(0);
+                cut = std::min(std::max(i, box.start + 1), box.start + box.length - 1);
+                break;
             }
         }
-        // 从256个种子扩散一次，生成完整bin→index表；每像素仅一次查表。
-        // 固定64³空间，避免全像素逐一搜索256色。
+        boxes[index] = QuantBox{box.start, cut - box.start, 0, 0.0F};
+        boxes.push_back(QuantBox{cut, box.start + box.length - cut, 0, 0.0F});
+        updateBox(index);
+        updateBox(boxes.size() - 1);
+    }
+    // 逐帧局部色表：OkLab 加权中位切分选 256 色，再按盒子归属直接建立桶→索引映射。
+    void palette(const QImage& frame)
+    {
+        collect(frame);
+        boxes.clear();
+        mapped.fill(false);
+        queue.clear();
+        if (colors.empty())
+        {
+            for (int i = 0; i < kPaletteColors; ++i)
+            {
+                byte(0);
+                byte(0);
+                byte(0);
+            }
+            return;
+        }
+        boxes.push_back(QuantBox{0, int(colors.size()), 0, 0.0F});
+        updateBox(0);
+        while (int(boxes.size()) < kPaletteColors)
+        {
+            size_t best = boxes.size();
+            float bestCut = 0.0F;
+            for (size_t i = 0; i < boxes.size(); ++i)
+                if (boxes[i].length > 1 && boxes[i].cut > bestCut)
+                {
+                    bestCut = boxes[i].cut;
+                    best = i;
+                }
+            if (best == boxes.size())
+                break;
+            split(best);
+        }
+        for (size_t index = 0; index < boxes.size(); ++index)
+        {
+            const QuantBox& box = boxes[index];
+            quint64 weight = 0;
+            double sumR = 0.0, sumG = 0.0, sumB = 0.0;
+            for (int i = box.start; i < box.start + box.length; ++i)
+            {
+                const QuantBin& item = colors[size_t(i)];
+                weight += item.count;
+                sumR += double(item.r) * item.count;
+                sumG += double(item.g) * item.count;
+                sumB += double(item.b) * item.count;
+            }
+            const double divisor = weight ? double(weight) : 1.0;
+            byte(quint8(sumR / divisor));
+            byte(quint8(sumG / divisor));
+            byte(quint8(sumB / divisor));
+            for (int i = box.start; i < box.start + box.length; ++i)
+            {
+                const int cell = colors[size_t(i)].cell;
+                indices[size_t(cell)] = quint8(index);
+                mapped[size_t(cell)] = true;
+                queue.push_back(cell);
+            }
+        }
+        for (size_t index = boxes.size(); index < size_t(kPaletteColors); ++index)
+        {
+            byte(0);
+            byte(0);
+            byte(0);
+        }
+        // 当前帧未出现的桶从已映射桶向外扩散，保证每像素一次查表即可取到索引。
         for (size_t head = 0; head < queue.size(); ++head)
         {
             const int cell = queue[head];
@@ -238,7 +384,12 @@ struct GifEncoder::Impl
         byte(0);
     }
 };
-GifEncoder::GifEncoder() : impl_(std::make_unique<Impl>()) {}
+GifEncoder::GifEncoder() : impl_(std::make_unique<Impl>())
+{
+    impl_->colors.reserve(4096);
+    impl_->boxes.reserve(kPaletteColors);
+    impl_->queue.reserve(kBins);
+}
 GifEncoder::~GifEncoder()
 {
     if (impl_->file.isOpen())
@@ -269,7 +420,6 @@ bool GifEncoder::start(const QString& path, QSize size, int fps, QString* error)
     impl_->failed = false;
     impl_->output.clear();
     impl_->output.reserve(65536);
-    impl_->queue.reserve(kBins);
     impl_->literal("GIF89a", 6);
     impl_->word(size.width());
     impl_->word(size.height());
@@ -342,4 +492,4 @@ void GifEncoder::cancel()
     impl_->output.clear();
 }
 qint64 GifEncoder::frameCount() const { return impl_->frames; }
-}
+} // namespace waibusnap
